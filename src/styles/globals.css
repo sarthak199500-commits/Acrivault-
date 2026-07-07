@@ -1,0 +1,261 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* Theme-scoped variant. The console is dark-first and almost entirely
+ * token-driven (utilities resolve to variables that flip per [data-theme]).
+ * `light:` is the escape hatch for the rare case a component needs a
+ * light-only treatment — e.g. solid, brand-filled KPI chips — without
+ * disturbing the tuned dark surfaces. */
+@custom-variant light ([data-theme='light'] &);
+
+/* Expose the CSS-variable token contract to Tailwind utilities. The variables
+ * change per [data-theme]; the utility names (bg-surface, text-secondary, …) do not. */
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-press: var(--accent-press);
+  --color-accent-text: var(--accent-text);
+  --color-accent-tint: var(--accent-tint);
+
+  --color-risk-critical: var(--risk-critical);
+  --color-risk-high: var(--risk-high);
+  --color-risk-medium: var(--risk-medium);
+  --color-risk-low: var(--risk-low);
+  --color-risk-minimal: var(--risk-minimal);
+
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-fg: var(--ok-fg);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-fg: var(--warn-fg);
+  --color-crit-bg: var(--crit-bg);
+  --color-crit-fg: var(--crit-fg);
+  --color-info-bg: var(--info-bg);
+  --color-info-fg: var(--info-fg);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-fg: var(--neutral-fg);
+
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
+  --color-cat-8: var(--cat-8);
+
+  --color-grid-line: var(--grid-line);
+
+  --color-nav: var(--nav-bg);
+  --color-nav-border: var(--nav-border);
+  --color-nav-text: var(--nav-text);
+  --color-nav-text-strong: var(--nav-text-strong);
+  --color-nav-eyebrow: var(--nav-eyebrow);
+  --color-nav-hover: var(--nav-hover-bg);
+  --color-nav-active: var(--nav-active-bg);
+  --color-nav-active-text: var(--nav-active-text);
+
+  --color-chip: var(--chip-default-bg);
+  --color-chip-fg: var(--chip-default-fg);
+  --color-chip-prominent: var(--chip-prominent-bg);
+  --color-chip-prominent-fg: var(--chip-prominent-fg);
+  --color-chip-risk: var(--chip-risk-bg);
+  --color-chip-risk-fg: var(--chip-risk-fg);
+  --color-surface-hover-brand: var(--surface-hover-brand);
+
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-pill: var(--r-pill);
+
+  --text-display: var(--fs-display);
+  --text-h1: var(--fs-h1);
+  --text-h2: var(--fs-h2);
+  --text-body: var(--fs-body);
+  --text-small: var(--fs-small);
+  --text-micro: var(--fs-micro);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--border);
+  }
+
+  html {
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+  }
+
+  /* So native controls (date pickers, scrollbars) match the active theme. */
+  :root,
+  [data-theme='dark'] {
+    color-scheme: dark;
+  }
+  [data-theme='light'] {
+    color-scheme: light;
+  }
+
+  /* Tabular figures by default on numeric primitives. */
+  .tnum {
+    font-feature-settings: 'tnum' 1, 'lnum' 1;
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* The single uppercase style in the product: the eyebrow micro-label.
+   * Accent-colored — the one always-on brand moment in both themes (nav group
+   * labels override with --nav-eyebrow for the shell). */
+  .eyebrow {
+    font-size: var(--fs-micro);
+    line-height: var(--lh-micro);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+
+  :focus-visible {
+    outline: var(--focus-w) solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-xs);
+  }
+
+  /* Don't show the focus ring for mouse users who didn't tab here. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+    color: var(--text-primary);
+  }
+
+  /* Themed, unobtrusive scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: var(--r-pill);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+    background-clip: content-box;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: var(--s-2);
+    top: -48px;
+    z-index: var(--z-toast);
+    background: var(--surface);
+    color: var(--text-primary);
+    padding: var(--s-2) var(--s-4);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    transition: top var(--dur-2) var(--ease-standard);
+  }
+  .skip-link:focus {
+    top: var(--s-2);
+  }
+}
+
+/* Reduced motion: manual switch (data-reduced-motion) or OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+@keyframes acv-skeleton {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+/* Transform-only so a mid-animation frame never leaves content semi-transparent. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(12px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Left-anchored mobile navigation sheet. Transform-only, same rationale. */
+@keyframes drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes acv-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}

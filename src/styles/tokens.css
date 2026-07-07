@@ -1,0 +1,319 @@
+/* styles/tokens.css
+ * The single place raw color values live. Theme switching flips these variables
+ * under [data-theme]; Tailwind utility names never change (see globals.css).
+ * Baseline contract derived from brand green #2C8A6E. A designer can refine later.
+ */
+:root {
+  /* Brand accent ramp (green) */
+  --accent: #2c8a6e;
+  --accent-hover: #34a283;
+  --accent-press: #246f59;
+  --accent-300: #6fd9b8;
+  --accent-700: #1c5a48;
+
+  /* Semantic families, fixed across themes (badge bg/fg/line set per theme below) */
+  --success: #3fa888;
+  --warning: #e8a33d;
+  --critical: #e5604a;
+  --info: #5a93d4;
+
+  /* Type */
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --fs-display: 24px;
+  --lh-display: 30px;
+  --fs-h1: 20px;
+  --lh-h1: 28px;
+  --fs-h2: 16px;
+  --lh-h2: 24px;
+  --fs-body: 14px;
+  --lh-body: 20px;
+  --fs-small: 12px;
+  --lh-small: 16px;
+  --fs-micro: 11px;
+  --lh-micro: 14px;
+  --fs-code: 13px;
+
+  /* Full type scale — primitive, scale-named (reference parity). The role tokens
+   * above (display/h1/h2/body/small/micro) are the dense-console subset actually
+   * used in product; the tokens below are the complete scale. Each pairs a size
+   * with its line-height; the display tier carries --tracking-tighter (-2%). */
+  --fs-display-2xl: 72px;  --lh-display-2xl: 90px;
+  --fs-display-xl: 60px;   --lh-display-xl: 72px;
+  --fs-display-lg: 48px;   --lh-display-lg: 60px;
+  --fs-display-md: 36px;   --lh-display-md: 44px;
+  --fs-display-sm: 30px;   --lh-display-sm: 38px;
+  --fs-display-xs: 24px;   --lh-display-xs: 32px;
+  --fs-text-xl: 20px;      --lh-text-xl: 30px;
+  --fs-text-lg: 18px;      --lh-text-lg: 28px;
+  --fs-text-md: 16px;      --lh-text-md: 24px;
+  --fs-text-sm: 14px;      --lh-text-sm: 20px;
+  --fs-text-xs: 12px;      --lh-text-xs: 18px;
+
+  /* Spacing, 4px base */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* Radius */
+  --r-none: 0;
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 9999px;
+
+  /* Layout */
+  --sidebar-w: 248px;
+  --sidebar-collapsed-w: 64px;
+  --topbar-h: 56px;
+  --panel-w: 360px;
+  --rail-w: 320px;
+  --content-max: 1440px;
+
+  /* Density (driven by data-density) */
+  --row-py: 12px;
+  --cell-px: 16px;
+
+  /* Motion */
+  --dur-1: 120ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* Emphasized decelerate — a stronger ease-out for entrances (drawers, overlays). */
+  --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+
+  /* Focus */
+  --focus-w: 2px;
+
+  /* Z-index scale. Order matters: transient floating menus (dropdown) must layer
+     ABOVE sticky page chrome (top bar, table header) but below the modal scrim.
+     --z-raised lifts an element within its local stacking context only (e.g. a
+     sticky section header above sibling rows) without joining the global scale. */
+  --z-raised: 1;
+  --z-sticky: 1000;
+  --z-dropdown: 1100;
+  --z-overlay: 1200;
+  --z-modal: 1300;
+  --z-popover: 1400;
+  --z-toast: 1500;
+  --z-tooltip: 1600;
+
+  /* Risk scale, 5 bands over 0..100. Color only appears for risk. */
+  --risk-critical: #e5604a; /* 80..100 */
+  --risk-high: #e8913d; /* 60..79  */
+  --risk-medium: #d6a93c; /* 40..59  */
+  --risk-low: #3fa888; /* 20..39  */
+  --risk-minimal: var(--text-tertiary); /* 0..19, calm/neutral */
+
+  /* Categorical data-viz sequence: calm, colorblind-aware, red reserved for risk */
+  --cat-1: #3fa888;
+  --cat-2: #5a93d4;
+  --cat-3: #8c7bd8;
+  --cat-4: #e8a33d;
+  --cat-5: #4fb3c4;
+  --cat-6: #9bbf54;
+  --cat-7: #c98bba;
+  --cat-8: #8895a0;
+
+  /* ------------------------------------------------------------------------
+   * Primitive color ramps — the raw palette that semantic tokens build on.
+   * Theme-independent. Semantic tokens (below, per theme) are the usage layer.
+   * ---------------------------------------------------------------------- */
+  --green-50: #ecf7f2;  --green-100: #d2ede2; --green-200: #a6dcc7; --green-300: #6fd9b8;
+  --green-400: #34a283; --green-500: #2c8a6e; --green-600: #246f59; --green-700: #1c5a48;
+  --green-800: #154437; --green-900: #0e2e25;
+
+  --neutral-50: #f4f8f6;  --neutral-100: #e6edea; --neutral-200: #cbd8d3; --neutral-300: #aec0b9;
+  --neutral-400: #879a90; --neutral-500: #6b7e76; --neutral-600: #51635b; --neutral-700: #3c4f49;
+  --neutral-800: #25332e; --neutral-900: #11241f;
+
+  --red-50: #fceeeb;  --red-100: #f8d6cf; --red-200: #f0aa9b; --red-300: #ec8270;
+  --red-400: #e5604a; --red-500: #cf4631; --red-600: #a83928; --red-700: #832c1f;
+  --red-800: #5e2017; --red-900: #3b140e;
+
+  --amber-50: #fbf3e4;  --amber-100: #f6e2bc; --amber-200: #efc97d; --amber-300: #e8a33d;
+  --amber-400: #d6852a; --amber-500: #b86c1e; --amber-600: #935417; --amber-700: #6f3f11;
+  --amber-800: #4b2a0b; --amber-900: #2c1906;
+
+  --blue-50: #ecf2fb;  --blue-100: #d2e0f4; --blue-200: #a6c2e9; --blue-300: #7fb0e0;
+  --blue-400: #5a93d4; --blue-500: #3e76b8; --blue-600: #2e5790; --blue-700: #234571;
+  --blue-800: #182f4e; --blue-900: #0f1e32;
+
+  /* Font weights */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Letter spacing */
+  --tracking-tighter: -0.02em;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.02em;
+  --tracking-eyebrow: 0.08em;
+
+  /* Sizing — icons, controls, avatars */
+  --size-icon-sm: 14px;
+  --size-icon-md: 16px;
+  --size-icon-lg: 20px;
+  --size-control-sm: 32px;
+  --size-control-md: 36px;
+  --size-kpi-tile: 104px;
+  --size-avatar-sm: 28px;
+  --size-avatar-md: 36px;
+  --size-avatar-lg: 48px;
+
+  /* Border widths */
+  --bw-1: 1px;
+  --bw-2: 2px;
+
+  /* Opacity scale */
+  --opacity-faint: 0.4;
+  --opacity-disabled: 0.5;
+  --opacity-muted: 0.7;
+
+  /* Blur */
+  --blur-sm: 8px;
+  --blur-md: 16px;
+
+  /* Breakpoints (reference — CSS media queries can't read custom properties) */
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --bp-xl: 1280px;
+  --bp-2xl: 1536px;
+}
+
+[data-density='compact'] {
+  --row-py: 8px;
+  --cell-px: 12px;
+}
+[data-density='comfortable'] {
+  --row-py: 14px;
+  --cell-px: 16px;
+}
+
+/* DARK (default) */
+:root,
+[data-theme='dark'] {
+  --bg: #0b1a17;
+  --surface: #11241f;
+  --surface-2: #16302a;
+  --surface-hover: #1b3a32;
+  --border: #25453c;
+  --border-strong: #34594e;
+  --text-primary: #ecf3f0;
+  --text-secondary: #b7c7c0;
+  /* Tuned to clear AA (>=4.5:1) on surface-2, the lightest dark surface. */
+  --text-tertiary: #879a90;
+  --accent-text: var(--accent-300);
+  --accent-tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  /* Brand logo mark. The official green (#037c5b) reads ~2.7:1 on this dark bg —
+   * below the 3:1 graphics floor — so the mark uses the brand mid-green here. */
+  --logo-mark: #3fa888;
+  --grid-line: #2c463f;
+  --scrim: rgba(0, 0, 0, 0.62);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55);
+  --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.65);
+  /* semantic badge triplets, tuned to pass on dark surfaces */
+  --ok-bg: color-mix(in srgb, var(--success) 15%, var(--surface));
+  --ok-fg: #6fd9b8;
+  --warn-bg: color-mix(in srgb, var(--warning) 15%, var(--surface));
+  --warn-fg: #f0b45a;
+  --crit-bg: color-mix(in srgb, var(--critical) 16%, var(--surface));
+  --crit-fg: #f08070;
+  --info-bg: color-mix(in srgb, var(--info) 15%, var(--surface));
+  --info-fg: #7fb0e0;
+  --neutral-bg: color-mix(in srgb, var(--text-tertiary) 14%, var(--surface));
+  --neutral-fg: var(--text-secondary);
+  /* Navigation shell (sidebar + mobile nav sheet). Dark theme: the nav shares
+   * the app surfaces — one continuous dark console. */
+  --nav-bg: var(--surface);
+  --nav-border: var(--border);
+  --nav-text: var(--text-secondary);
+  --nav-text-strong: var(--text-primary);
+  --nav-eyebrow: var(--accent-text);
+  --nav-hover-bg: var(--surface-hover);
+  --nav-active-bg: var(--accent-tint);
+  --nav-active-text: var(--accent-text);
+  --nav-logo-mark: var(--logo-mark);
+  /* KPI icon chips + tile hover (KpiTile). Dark: calm muted chips so the
+   * console stays quiet; hover lightens the surface. */
+  --chip-default-bg: var(--surface-2);
+  --chip-default-fg: var(--text-tertiary);
+  --chip-prominent-bg: var(--accent-tint);
+  --chip-prominent-fg: var(--accent-text);
+  --chip-risk-bg: var(--crit-bg);
+  --chip-risk-fg: var(--crit-fg);
+  --surface-hover-brand: var(--surface-hover);
+}
+
+/* LIGHT (mirrors contrast; semantic text uses darker shades to hold 4.5:1).
+ * "Botanical shell, paper canvas": a green-washed canvas so white cards read
+ * as paper, hairlines pulled toward the brand hue, and a deep-green branded
+ * nav shell (see --nav-* below). */
+[data-theme='light'] {
+  --bg: #eef4f1;
+  --surface: #ffffff;
+  --surface-2: #f0f5f2;
+  --surface-hover: #e7efeb;
+  --border: #d5e3dd;
+  --border-strong: #b9c8c2;
+  --text-primary: #0a1f1c;
+  --text-secondary: #3c4f49;
+  --text-tertiary: #5a6f69;
+  --accent-text: var(--accent-700);
+  --accent-tint: color-mix(in srgb, var(--accent) 12%, white);
+  /* Brand logo mark — official green on the light background. */
+  --logo-mark: #037c5b;
+  --grid-line: color-mix(in srgb, var(--border) 70%, transparent);
+  --scrim: rgba(24, 24, 27, 0.5);
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.08);
+  --shadow-md: 0 4px 12px rgba(24, 24, 27, 0.1);
+  --shadow-lg: 0 12px 28px rgba(24, 24, 27, 0.14);
+  --shadow-xl: 0 24px 60px rgba(24, 24, 27, 0.18);
+  --ok-bg: color-mix(in srgb, var(--success) 14%, white);
+  --ok-fg: #1c5a48;
+  --warn-bg: color-mix(in srgb, var(--warning) 16%, white);
+  --warn-fg: #835910; /* ~5.5:1 on --warn-bg (verified AA) */
+  --crit-bg: color-mix(in srgb, var(--critical) 13%, white);
+  --crit-fg: #9e3722; /* ~5.9:1 on --crit-bg (verified AA) */
+  --info-bg: color-mix(in srgb, var(--info) 15%, white);
+  --info-fg: #2e5790; /* ~6.3:1 on --info-bg (verified AA) */
+  --neutral-bg: #f1f1f3;
+  --neutral-fg: var(--text-secondary);
+  /* Navigation shell (sidebar + mobile nav sheet). Light theme: branded deep
+   * forest-green — the brand carries the frame while data surfaces stay paper.
+   * All values verified >=4.5:1 on --nav-bg (green-900). */
+  --nav-bg: var(--green-900);
+  --nav-border: var(--green-800);
+  --nav-text: var(--green-100);
+  --nav-text-strong: var(--green-50);
+  --nav-eyebrow: var(--accent-300);
+  --nav-hover-bg: color-mix(in srgb, white 7%, var(--green-900));
+  --nav-active-bg: color-mix(in srgb, var(--accent) 30%, var(--green-900));
+  --nav-active-text: var(--accent-300);
+  /* Official green (#037c5b) is too dark on the green-900 shell; use the brand
+   * mid-green, same as the dark theme's mark. */
+  --nav-logo-mark: #3fa888;
+  /* KPI icon chips + tile hover (KpiTile). Light: the paper canvas carries
+   * more brand — solid AA-darkened fills with a white glyph (mirrors the
+   * primary/danger buttons); hover is a brand whisper instead of gray. */
+  --chip-default-bg: color-mix(in srgb, var(--accent) 86%, black);
+  --chip-default-fg: #ffffff;
+  --chip-prominent-bg: color-mix(in srgb, var(--accent) 86%, black);
+  --chip-prominent-fg: #ffffff;
+  --chip-risk-bg: color-mix(in srgb, var(--critical) 82%, black);
+  --chip-risk-fg: #ffffff;
+  --surface-hover-brand: color-mix(in srgb, var(--accent) 8%, white);
+}

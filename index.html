@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Acrivault — Securing every identity that has no face</title>
+    <script>
+      // Apply persisted theme/density before first paint to avoid a flash.
+      (function () {
+        try {
+          var ui = JSON.parse(localStorage.getItem('acrivault.ui') || '{}');
+          var state = ui.state || {};
+          var theme = state.theme;
+          if (theme !== 'dark' && theme !== 'light') {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          document.documentElement.setAttribute('data-theme', theme);
+          if (state.density) document.documentElement.setAttribute('data-density', state.density);
+          if (state.reducedMotion) document.documentElement.setAttribute('data-reduced-motion', 'true');
+        } catch (e) {
+          /* keep dark default */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

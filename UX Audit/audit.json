@@ -1,0 +1,285 @@
+{
+  "exec": {
+    "overallScore": 85,
+    "overallGrade": "B+",
+    "verdict": "Acrivault's first-run experience is polished, calm, and credible — a strong foundation that already does the hard things well: every data view ships with designed loading / empty / error / populated states, the visual language is restrained (color reserved for risk), dark and light themes are at parity, and the security-trust narrative (read-only, agentless, mandatory MFA, AI-agent-first) is genuinely reassuring for a security buyer. The most material gap is responsive: below the medium breakpoint the primary navigation disappears entirely, leaving the app effectively un-navigable on a phone. Two product-credibility issues also stand out — the identity count shown during onboarding (1,211) does not reconcile with the dashboard total (1,500), and the dashboard's single most important security signal (Critical risk) is rendered with no more emphasis than a benign count, despite the product's stated principle that color appears only where there is risk. None of these are structural; they are high-leverage refinements on an otherwise above-average enterprise console.",
+    "topThemes": [
+      { "theme": "Mobile navigation is missing", "detail": "On viewports below the md breakpoint the sidebar is hidden and there is no hamburger or drawer to reach it — Dashboard, Inventory and every other destination become unreachable. This is the single highest-impact issue and affects every in-shell screen." },
+      { "theme": "Counts must reconcile end-to-end", "detail": "Onboarding's scan and review report 1,211 correlated identities while the dashboard immediately states 1,500. For a product whose value proposition is deduplicated, reconciled identity counts, an unreconciled number in the very first session quietly erodes trust." },
+      { "theme": "Let risk earn its color", "detail": "The design system deliberately reserves color for risk and keeps the resting view calm — a real strength — but the dashboard hero applies that principle inconsistently: the Critical-risk KPI is styled identically to benign counts, so the eye does not land on risk first." },
+      { "theme": "Consistency across multi-step flows", "detail": "Onboarding has a clear 3-step stepper; the 5-screen registration flow has no progress indicator, so users cannot gauge how far they are. Aligning the two raises perceived polish at low cost." },
+      { "theme": "A trustworthy, state-complete foundation", "detail": "Strengths to preserve: complete four-state coverage, restrained palette, axe-clean accessibility baseline in both themes, and standout trust/security messaging throughout onboarding and registration." }
+    ],
+    "quickWins": [
+      "Apply a restrained risk treatment (red accent on the value/icon) to the dashboard 'Critical risk' KPI so the top risk signal stands out.",
+      "Reconcile the onboarding scan target totals with the seeded dataset so onboarding and the dashboard show the same identity count.",
+      "On an invalid verification code, clear the field and refocus the first box (already done for expiry) instead of leaving the wrong digits in place.",
+      "Add a copy-to-clipboard button to the MFA setup key.",
+      "Add a small inline legend (Discovered / Alerts) to the Activity chart for sighted users.",
+      "Align the two onboarding entry points on the empty dashboard to one consistent label and path.",
+      "Persist the 'read-only / safe by design' reassurance through the Scan and Review steps, not just Connect.",
+      "Add a progress indicator to the multi-step registration flow to match onboarding's stepper."
+    ],
+    "scorecard": [
+      { "area": "Visual design", "score": 86, "note": "Polished, consistent components and a restrained palette; minor hierarchy and desktop-whitespace gaps." },
+      { "area": "Interaction & UX", "score": 82, "note": "Clear flows and excellent four-state coverage; friction in count reconciliation, risk emphasis, and scan/review redundancy." },
+      { "area": "Content & microcopy", "score": 86, "note": "Specific, reassuring copy; a few ambiguous labels ('Reconnect') and dev-facing error text to productionize." },
+      { "area": "Accessibility", "score": 88, "note": "Axe-clean in both themes with strong semantics and a chart data-table fallback; residual heuristic gaps (disabled contrast, focus rings)." },
+      { "area": "Responsive & mobile", "score": 62, "note": "Wizard and auth screens adapt well, but primary navigation is unreachable below the md breakpoint." },
+      { "area": "Trust & security UX", "score": 90, "note": "Standout: read-only / agentless messaging, mandatory MFA, synthetic-data transparency, and an AI-agent-first narrative." }
+    ]
+  },
+  "flows": [
+    {
+      "flow": "registration",
+      "grade": "B+",
+      "score": 85,
+      "summary": "A clean, focused, single-card registration flow with strong guardrails: work-email validation, an already-registered short-circuit, a verification timer with resend, mandatory MFA, and consistently reassuring synthetic-data microcopy. It earns trust quickly. The main opportunities are wayfinding (no progress indicator across the five screens), a couple of standard form niceties (clear-on-error for the code, copy the MFA key), and the large amount of empty desktop canvas around a small centered card.",
+      "strengths": [
+        "Single-purpose screens with one clear primary action each — low cognitive load.",
+        "Excellent validation coverage: personal-domain rejection and an 'already registered' path with a direct route to sign in.",
+        "Verification screen includes a live expiry countdown, resend, and a clearly-labelled synthetic helper for demos.",
+        "Mandatory MFA is enforced (never skippable) and framed positively as part of being 'all set'.",
+        "Trust microcopy ('Synthetic environment · no real credentials are processed') is present on every screen."
+      ],
+      "screenNotes": [
+        { "screen": "Request access", "note": "Clear value statement and a single field; primary button correctly disabled until a value is entered." },
+        { "screen": "Verify email", "note": "Strong: segmented code input, countdown, resend, and the demo code shown explicitly." },
+        { "screen": "Verify email · invalid code", "note": "Error is clearly signalled (red borders + message), but the invalid digits are left in the boxes instead of clearing." },
+        { "screen": "Legal terms", "note": "Dual-consent (ToS + DPA) with a clear 'both required' helper; document text is muted/low-emphasis." },
+        { "screen": "Provisioning / Welcome", "note": "Calm provisioning beat then a confirming 'You're all set' with role context (Tenant Admin)." },
+        { "screen": "MFA setup", "note": "QR + manual setup key + code entry; the setup key lacks a copy control." }
+      ],
+      "findings": [
+        {
+          "title": "Add a progress indicator to the multi-step registration flow",
+          "severity": "medium", "dimension": "UX", "screen": "Registration (all steps)",
+          "evidence": ["dark__reg-01-request-access.png", "dark__reg-04-verify-email.png", "dark__reg-06-terms.png", "dark__reg-09-mfa-setup.png"],
+          "observation": "Registration spans five screens (request access → verify → terms → provisioning → MFA) but, unlike Onboarding which has a clear 3-step stepper, it shows no 'step X of N' indicator. Users cannot gauge how long the flow is or where they are, which raises perceived effort and abandonment risk at sign-up — the worst place to lose someone.",
+          "recommendation": "Add a lightweight progress indicator to the AuthCard for the registration sequence (a stepper or 'Step 2 of 4' label). Reuse the existing Stepper component used in Onboarding for consistency.",
+          "effort": "M"
+        },
+        {
+          "title": "Clear the code field and refocus on an invalid verification code",
+          "severity": "low", "dimension": "UX", "screen": "Verify email · invalid code",
+          "evidence": ["dark__reg-05-verify-error.png"],
+          "observation": "When an invalid code is submitted, the incorrect digits remain in all six boxes (shown with red borders). The user must manually delete six characters before retrying. Standard one-time-code UX clears the field and refocuses the first box on error — the flow already does exactly this for the expiry case.",
+          "recommendation": "In VerifyEmailScreen's submit() catch, treat INVALID_CODE like CODE_EXPIRED: clear the code and focus the first box so the user can retype immediately.",
+          "effort": "S"
+        },
+        {
+          "title": "Add a copy-to-clipboard button for the MFA setup key",
+          "severity": "low", "dimension": "Trust", "screen": "MFA setup",
+          "evidence": ["dark__reg-09-mfa-setup.png"],
+          "observation": "The TOTP setup key (e.g. ZMQXRYUQD254PLAH) is shown for users who can't scan the QR, but there is no one-click copy. Manual transcription of a 16-character secret is error-prone and is a common cause of failed MFA enrollment.",
+          "recommendation": "Add a copy button (with a 'Copied' confirmation) next to the setup key.",
+          "effort": "S"
+        },
+        {
+          "title": "Reduce empty desktop canvas around the auth card",
+          "severity": "medium", "dimension": "UI", "screen": "Request access / Welcome",
+          "evidence": ["dark__reg-01-request-access.png", "dark__reg-08-complete-ready.png"],
+          "observation": "The auth card is vertically and horizontally centered in a full-height viewport, leaving large empty regions on a 1440×900 desktop. The screens read as sparse and under-leverage prime real estate that competitors use to reinforce positioning to a buyer who is evaluating the product.",
+          "recommendation": "Consider a two-pane auth layout (a brand / value-proposition / trust panel beside the form), or anchor the content block higher with supporting proof points. Keep the single-card simplicity on mobile.",
+          "effort": "L"
+        },
+        {
+          "title": "Verify disabled primary-button legibility",
+          "severity": "medium", "dimension": "A11y", "screen": "Request access / Terms / MFA",
+          "evidence": ["dark__reg-01-request-access.png", "dark__reg-06-terms.png"],
+          "observation": "Disabled primary buttons ('Request access', 'Create organization', 'Confirm and continue') render as a low-contrast mid/light green on the dark surface, conveyed by dimming alone. While disabled controls are exempt from WCAG contrast minimums, the label can be hard to read and the disabled state is easy to miss.",
+          "recommendation": "Increase the disabled label contrast slightly and keep pairing the disabled CTA with explicit helper text (as the Terms screen already does with 'Both agreements are required to continue').",
+          "effort": "S"
+        },
+        {
+          "title": "Legal consent: documents imply scroll but require no reading",
+          "severity": "low", "dimension": "UX", "screen": "Legal terms",
+          "evidence": ["dark__reg-06-terms.png"],
+          "observation": "The ToS and DPA appear in framed boxes that imply scrollable long-form content, yet the text is short and low-emphasis and nothing requires the user to open or scroll the documents before consenting. The framing sets an expectation the content doesn't meet.",
+          "recommendation": "Either size the document areas to their content (removing the false scroll affordance) or link out to the full documents and keep a concise summary inline. Consider a 'view full document' link for the real product.",
+          "effort": "S"
+        },
+        {
+          "title": "Keep the synthetic-code hint demo-only and visually marked",
+          "severity": "nit", "dimension": "Content", "screen": "Verify email / MFA setup",
+          "evidence": ["dark__reg-04-verify-email.png", "dark__reg-09-mfa-setup.png"],
+          "observation": "The 'Synthetic environment — the code is 123456' helper is excellent for reviewers, but it sits close to the input and reads almost like a real instruction. It must never appear in production.",
+          "recommendation": "Confirm it is gated to non-production builds and give it a distinct 'demo aid' visual treatment so it is unmistakably an environment note, not part of the real flow.",
+          "effort": "S"
+        }
+      ]
+    },
+    {
+      "flow": "onboarding",
+      "grade": "A-",
+      "score": 88,
+      "summary": "The strongest of the three flows. A clear 3-step Connect → Scan → Review wizard with a genuinely reassuring 'Safe by design' trust strip, a satisfying real-time discovery animation, and a confident narrative payoff ('AI agents lead — they are the reason Acrivault exists'). The biggest issue is cross-flow: the identity total reported here does not match the dashboard. Secondary opportunities are reducing the redundancy between Scan and Review, clarifying how to proceed, and a few label refinements.",
+      "strengths": [
+        "The 'Safe by design' trust strip (Read-only · Agentless · Nothing installed · Nothing changed) directly answers a security buyer's first objection.",
+        "Clear 3-step stepper with completed-step checkmarks gives strong wayfinding.",
+        "Live, per-type discovery animation makes the scan feel real and reassuring.",
+        "Review reframes the numbers with a product narrative and highlights the AI-agent category — good positioning.",
+        "Connection states (disconnected / connecting / connected / error) are all designed and labelled with text, not color alone."
+      ],
+      "screenNotes": [
+        { "screen": "Connect", "note": "Trust strip + three cloud cards with clear status and primary action; the standout screen of the flow." },
+        { "screen": "Connecting / Connected", "note": "Per-card status updates with a pulsing dot; connected cards switch the action to 'Reconnect' (ambiguous label)." },
+        { "screen": "Scanning", "note": "Animated per-type progress with a running total — engaging and informative." },
+        { "screen": "Scan complete", "note": "Totals shown (1,211); the stepper still marks 'Scan' as current until Review is clicked." },
+        { "screen": "Review results", "note": "Restates the same counts in cards plus one narrative sentence — largely duplicative of Scan." }
+      ],
+      "findings": [
+        {
+          "title": "Onboarding identity count does not reconcile with the dashboard",
+          "severity": "high", "dimension": "UX", "screen": "Scan complete / Review → Dashboard",
+          "evidence": ["dark__onb-05-scan-complete.png", "dark__onb-06-review.png", "dark__dash-01-populated.png"],
+          "observation": "Onboarding's scan and review both report 1,211 correlated identities, but the dashboard the user lands on immediately afterwards states 'Showing 1,500 correlated identities'. For a product whose core promise is deduplicated, reconciled identity counts across clouds, a mismatched number in the first session directly contradicts the value proposition and reads as a data-integrity bug.",
+          "recommendation": "Drive the onboarding scan's per-type targets from the same seeded dataset the dashboard reports, so the discovery total and the dashboard total are identical (1,500). Reconciliation should be the one number you never get wrong.",
+          "effort": "M"
+        },
+        {
+          "title": "Scan-complete and Review duplicate the same information",
+          "severity": "medium", "dimension": "UX", "screen": "Scan complete / Review",
+          "evidence": ["dark__onb-05-scan-complete.png", "dark__onb-06-review.png"],
+          "observation": "The Scan-complete step already shows per-type counts and the total; the Review step shows the same counts in a card grid plus one sentence. The two steps feel redundant, making the wizard one click longer than its information warrants.",
+          "recommendation": "Differentiate Review with information the scan didn't surface — a risk summary (how many critical / orphaned were found), what was deduplicated/correlated, and a clear next-best-action — or merge Scan-complete into Review and drop a step.",
+          "effort": "M"
+        },
+        {
+          "title": "Make the 'proceed' rule explicit and offer 'Connect all'",
+          "severity": "medium", "dimension": "UX", "screen": "Connect",
+          "evidence": ["dark__onb-01-connect.png", "dark__onb-03-connected.png"],
+          "observation": "'Continue to scan' enables as soon as a single cloud connects, but nothing tells the user that connecting one is enough, and there is no way to connect all three at once for the common case. The disabled→enabled transition is the only signal of the rule.",
+          "recommendation": "Add helper text near the footer ('Connect at least one cloud to continue') and optionally a 'Connect all' action above the cards.",
+          "effort": "S"
+        },
+        {
+          "title": "'Reconnect' is an ambiguous label for a connected cloud",
+          "severity": "low", "dimension": "Content", "screen": "Connected",
+          "evidence": ["dark__onb-03-connected.png"],
+          "observation": "Once a cloud connects, its button becomes 'Reconnect'. On a freshly-connected, healthy cloud this invites the question 'why would I reconnect?' and risks an accidental re-auth.",
+          "recommendation": "Show connected state as a non-action confirmation ('Connected') and move any re-auth into a secondary 'Manage' affordance, reserving an explicit retry only for the error state.",
+          "effort": "S"
+        },
+        {
+          "title": "Persist the safety reassurance beyond the Connect step",
+          "severity": "low", "dimension": "Trust", "screen": "Scan / Review",
+          "evidence": ["dark__onb-01-connect.png", "dark__onb-06-review.png"],
+          "observation": "The excellent 'Safe by design / read-only' trust strip appears only on Connect. During the Scan — the exact moment a cautious admin worries about what is being touched — the reassurance is gone.",
+          "recommendation": "Keep a compact 'read-only discovery' reassurance line visible through the Scan and Review steps.",
+          "effort": "S"
+        },
+        {
+          "title": "Completed scan bars are full and redundant",
+          "severity": "low", "dimension": "UI", "screen": "Scan complete",
+          "evidence": ["dark__onb-05-scan-complete.png"],
+          "observation": "After the scan finishes, every per-type progress bar sits at 100%, so the bars all look identical and no longer encode information — the count beside each carries all the meaning.",
+          "recommendation": "On completion, switch the bars to a share-of-total bar (each type as a proportion of the whole) or a simple count list, so the visualization stays meaningful at rest.",
+          "effort": "S"
+        },
+        {
+          "title": "Connection failure offers no diagnostic or help path",
+          "severity": "low", "dimension": "UX", "screen": "Connect · error",
+          "evidence": ["dark__onb-01-connect.png"],
+          "observation": "A failed connection shows only 'Handshake failed. Retry the connection.' with a Retry button. In the real product, a blind retry with no reason or support link is a dead end for an admin whose credentials or scopes are misconfigured.",
+          "recommendation": "Surface a brief failure reason and a link to connection/permission docs alongside Retry.",
+          "effort": "S"
+        },
+        {
+          "title": "Stepper marks 'Scan' as current after the scan completes",
+          "severity": "nit", "dimension": "UI", "screen": "Scan complete",
+          "evidence": ["dark__onb-05-scan-complete.png"],
+          "observation": "When the scan finishes, the stepper still highlights step 2 (Scan) as the current step until the user clicks 'Review results', so the indicator briefly lags the actual state.",
+          "recommendation": "Mark Scan as complete on finish and visually cue that Review is the next action.",
+          "effort": "S"
+        }
+      ]
+    },
+    {
+      "flow": "dashboard",
+      "grade": "B+",
+      "score": 86,
+      "summary": "A calm, well-structured overview with genuinely complete state handling — populated, empty, error, and loading are all designed, not afterthoughts. The KPI row, 14-day activity chart, and priority-alert list give a clear at-a-glance posture, and the empty/error states have proper recovery CTAs. Two opportunities matter most: the dashboard does not adapt for mobile navigation (an app-shell issue that surfaces here), and the single most important security number — Critical risk — is not visually distinguished from benign counts, which is at odds with the product's own 'color only where there is risk' principle.",
+      "strengths": [
+        "All four data states are designed: populated, empty (with 'Start onboarding' CTA), error (with retry), and a layout-matched loading skeleton.",
+        "Restraint: the resting view is monochrome-green and calm, exactly as intended.",
+        "The hero KPI is 'AI Agents', aligning the dashboard with the product's core narrative.",
+        "Accessible chart with an sr-only data-table fallback and a descriptive aria-label.",
+        "KPI tiles double as navigation into a filtered inventory, and counts are stated as reconciling with inventory."
+      ],
+      "screenNotes": [
+        { "screen": "Overview · populated", "note": "Clear KPI grid + activity chart + priority alerts; strong at-a-glance summary." },
+        { "screen": "Overview · empty", "note": "Well-handled with an explanatory message and a 'Start onboarding' CTA; duplicates the header's 'Connect a cloud'." },
+        { "screen": "Overview · error", "note": "Clean error state with retry and a (currently dev-facing) technical detail line." },
+        { "screen": "Overview · loading", "note": "Skeleton matches the real layout closely — no blank flash." },
+        { "screen": "Overview · mobile", "note": "KPIs reflow to two columns nicely, but the sidebar and any way to open it are gone." }
+      ],
+      "findings": [
+        {
+          "title": "No primary navigation on mobile (app shell)",
+          "severity": "high", "dimension": "Responsive", "screen": "Overview · mobile (app-wide)",
+          "evidence": ["mobile__dash-01-populated.png", "mobile__onb-01-connect.png"],
+          "observation": "Below the md breakpoint the sidebar is hidden and the sidebar-toggle button is also desktop-only (md:inline-flex), so there is no hamburger or drawer to reach Dashboard, Identity Inventory, Monitor, etc. The app is effectively un-navigable on a phone — once you are on a screen you cannot leave it. This affects every in-shell route, not just the dashboard.",
+          "recommendation": "Add a mobile navigation pattern for <md: a hamburger button in the top bar that opens the existing SideNav in a Drawer/Sheet. Ensure it traps focus and is keyboard-dismissible.",
+          "effort": "M"
+        },
+        {
+          "title": "Critical-risk KPI carries no risk emphasis",
+          "severity": "high", "dimension": "UX", "screen": "Overview · populated",
+          "evidence": ["dark__dash-01-populated.png"],
+          "observation": "The product's stated principle is that color appears only where there is risk, yet on the dashboard hero the 'Critical risk' tile (194) is styled identically to benign counts like 'OAuth Token' (205). The most important security signal does not stand out, so the eye does not land on risk first — the opposite of the intended calm-until-risk behaviour.",
+          "recommendation": "Give the Critical-risk (and arguably Orphaned) KPI a restrained risk treatment — a red accent on the value or icon, or a subtle risk band — so the one number a security admin cares about most is visually prioritized.",
+          "effort": "S"
+        },
+        {
+          "title": "Inconsistent KPI tile information density",
+          "severity": "medium", "dimension": "UI", "screen": "Overview · populated",
+          "evidence": ["dark__dash-01-populated.png"],
+          "observation": "Only the 'AI Agents' tile has a sparkline; 'AI Agents', 'Orphaned' and 'Critical risk' have week-over-week deltas while 'Total identities' and the four type tiles have neither. The eight tiles share one grid but carry visibly different amounts of information, which reads as uneven rather than as a deliberate hierarchy.",
+          "recommendation": "Either give the other security-relevant tiles comparable secondary metrics (sparkline / delta — especially Critical risk and Orphaned), or visually separate 'headline' tiles from a denser 'breakdown' row so the difference looks intentional.",
+          "effort": "M"
+        },
+        {
+          "title": "Redundant onboarding entry points on the empty dashboard",
+          "severity": "low", "dimension": "UX", "screen": "Overview · empty",
+          "evidence": ["dark__dash-02-empty.png"],
+          "observation": "The empty dashboard shows two differently-labelled routes to the same place: the header action 'Connect a cloud' and the empty-state CTA 'Start onboarding'. Two labels for one destination on a single screen is mild redundancy and a small consistency snag.",
+          "recommendation": "Use one consistent label and, in the empty state, suppress the header action so the primary CTA is unambiguous.",
+          "effort": "S"
+        },
+        {
+          "title": "Activity chart lacks a visible legend",
+          "severity": "low", "dimension": "UI", "screen": "Overview · populated",
+          "evidence": ["dark__dash-01-populated.png"],
+          "observation": "The activity chart plots two series (discovered identities as a green area, alerts as an orange line) but offers no visible legend for sighted users — only the card description and an sr-only table identify the series. The orange line in particular is unlabelled.",
+          "recommendation": "Add a small inline legend (Discovered / Alerts) to the chart card; this also reinforces that orange = the risk series.",
+          "effort": "S"
+        },
+        {
+          "title": "Productionize the error-state copy",
+          "severity": "low", "dimension": "Content", "screen": "Overview · error",
+          "evidence": ["dark__dash-03-error.png"],
+          "observation": "The forced error state shows developer-facing text — 'Synthetic failure forced by the scenario switcher.' and 'Technical detail: scenario.state = error'. The real query-error path has user-facing copy, but this confirms the forced-scenario strings exist in the UI.",
+          "recommendation": "Ensure the dev/forced-scenario copy is never shipped and that the production error message is user-facing and actionable ('We couldn't load your overview — retry'), with technical detail collapsed by default.",
+          "effort": "S"
+        },
+        {
+          "title": "Priority-alerts list reads monotone",
+          "severity": "low", "dimension": "UX", "screen": "Overview · populated",
+          "evidence": ["dark__dash-01-populated.png"],
+          "observation": "Every priority alert in the view carries the same 'Critical' badge and the only differentiator is relative time, so the list is hard to scan and the severity badge stops adding information.",
+          "recommendation": "Ensure real data spans severities, and show the affected identity / type inline so each row is scannable beyond its timestamp.",
+          "effort": "S"
+        },
+        {
+          "title": "Confirm focus ring and non-color cues on KPI link tiles",
+          "severity": "low", "dimension": "A11y", "screen": "Overview · populated",
+          "evidence": ["dark__dash-01-populated.png"],
+          "observation": "KPI tiles are clickable links into a filtered inventory and the deltas use directional arrows + labels (good, not color-only). Worth confirming each tile exposes a single, clearly visible keyboard focus ring and an accessible name that includes the metric and value.",
+          "recommendation": "Verify the KpiTile link has a visible :focus-visible ring against both themes and an aria-label combining label + value + trend.",
+          "effort": "S"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,272 @@
+[
+  {
+    "tag": "dark",
+    "name": "reg-01-request-access",
+    "file": "dark__reg-01-request-access.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-02-request-personal-error",
+    "file": "dark__reg-02-request-personal-error.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-03-request-already-registered",
+    "file": "dark__reg-03-request-already-registered.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-04-verify-email",
+    "file": "dark__reg-04-verify-email.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-05-verify-error",
+    "file": "dark__reg-05-verify-error.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-06-terms",
+    "file": "dark__reg-06-terms.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-07-complete-provisioning",
+    "file": "dark__reg-07-complete-provisioning.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-08-complete-ready",
+    "file": "dark__reg-08-complete-ready.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "reg-09-mfa-setup",
+    "file": "dark__reg-09-mfa-setup.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-01-connect",
+    "file": "dark__onb-01-connect.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-02-connecting",
+    "file": "dark__onb-02-connecting.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-03-connected",
+    "file": "dark__onb-03-connected.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-04-scanning",
+    "file": "dark__onb-04-scanning.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-05-scan-complete",
+    "file": "dark__onb-05-scan-complete.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "onb-06-review",
+    "file": "dark__onb-06-review.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "dash-01-populated",
+    "file": "dark__dash-01-populated.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "dash-02-empty",
+    "file": "dark__dash-02-empty.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "dash-03-error",
+    "file": "dark__dash-03-error.png",
+    "ok": true
+  },
+  {
+    "tag": "dark",
+    "name": "dash-04-loading",
+    "file": "dark__dash-04-loading.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-01-request-access",
+    "file": "light__reg-01-request-access.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-02-request-personal-error",
+    "file": "light__reg-02-request-personal-error.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-03-request-already-registered",
+    "file": "light__reg-03-request-already-registered.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-04-verify-email",
+    "file": "light__reg-04-verify-email.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-05-verify-error",
+    "file": "light__reg-05-verify-error.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-06-terms",
+    "file": "light__reg-06-terms.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-07-complete-provisioning",
+    "file": "light__reg-07-complete-provisioning.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-08-complete-ready",
+    "file": "light__reg-08-complete-ready.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "reg-09-mfa-setup",
+    "file": "light__reg-09-mfa-setup.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-01-connect",
+    "file": "light__onb-01-connect.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-02-connecting",
+    "file": "light__onb-02-connecting.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-03-connected",
+    "file": "light__onb-03-connected.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-04-scanning",
+    "file": "light__onb-04-scanning.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-05-scan-complete",
+    "file": "light__onb-05-scan-complete.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "onb-06-review",
+    "file": "light__onb-06-review.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "dash-01-populated",
+    "file": "light__dash-01-populated.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "dash-02-empty",
+    "file": "light__dash-02-empty.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "dash-03-error",
+    "file": "light__dash-03-error.png",
+    "ok": true
+  },
+  {
+    "tag": "light",
+    "name": "dash-04-loading",
+    "file": "light__dash-04-loading.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "reg-01-request-access",
+    "file": "mobile__reg-01-request-access.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "reg-04-verify-email",
+    "file": "mobile__reg-04-verify-email.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "reg-06-terms",
+    "file": "mobile__reg-06-terms.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "reg-09-mfa-setup",
+    "file": "mobile__reg-09-mfa-setup.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "onb-01-connect",
+    "file": "mobile__onb-01-connect.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "onb-06-review",
+    "file": "mobile__onb-06-review.png",
+    "ok": true
+  },
+  {
+    "tag": "mobile",
+    "name": "dash-01-populated",
+    "file": "mobile__dash-01-populated.png",
+    "ok": true
+  }
+]

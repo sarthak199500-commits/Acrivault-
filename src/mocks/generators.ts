@@ -1,0 +1,652 @@
+// Seeded fixture generation. A seeded RNG makes every run identical and keeps
+// counts stable. Each generator that fabricates an upstream-derived value carries
+// an // ASSUMPTION note; see the assumptions log in the README.
+
+import {
+  CLOUDS,
+  NHI_TYPES,
+  type AgentSession,
+  type Alert,
+  type AttributeConflict,
+  type AuditEntry,
+  type Cloud,
+  type CloudConnection,
+  type Group,
+  type Identity,
+  type Invitation,
+  type NhiType,
+  type NotificationItem,
+  type Policy,
+  type PolicyToken,
+  type RotationHistoryEntry,
+  type RotationJob,
+  type SessionStep,
+  type SourceInstance,
+  type Tenant,
+  type User,
+} from './types';
+import { riskBand } from '@/lib/risk';
+import { generatedCode, matchesPolicy, plainEnglish } from './policy';
+
+/* ----------------------------------------------------------------- seeded RNG */
+
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+class Rng {
+  private next: () => number;
+  constructor(seed: number) {
+    this.next = mulberry32(seed);
+  }
+  float(): number {
+    return this.next();
+  }
+  int(min: number, max: number): number {
+    return Math.floor(this.next() * (max - min + 1)) + min;
+  }
+  pick<T>(arr: readonly T[]): T {
+    return arr[Math.floor(this.next() * arr.length)];
+  }
+  bool(prob = 0.5): boolean {
+    return this.next() < prob;
+  }
+  /** Weighted pick: weights align by index with items. */
+  weighted<T>(items: readonly T[], weights: readonly number[]): T {
+    const total = weights.reduce((s, w) => s + w, 0);
+    let r = this.next() * total;
+    for (let i = 0; i < items.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return items[i];
+    }
+    return items[items.length - 1];
+  }
+}
+
+/* --------------------------------------------------------------------- pools */
+
+const AGENT_NAMES = [
+  'orchestrator', 'support-copilot', 'data-pipeline', 'code-reviewer', 'invoice-agent',
+  'fraud-sentinel', 'research-assistant', 'ops-autopilot', 'recommendation', 'triage-bot',
+  'summarizer', 'onboarding-agent', 'forecast-engine', 'sales-copilot', 'qa-runner',
+];
+const SERVICE_NAMES = [
+  'billing', 'auth', 'notifications', 'analytics', 'ingest', 'scheduler', 'gateway',
+  'reporting', 'sync', 'webhook', 'backup', 'metrics', 'search-index', 'media-encoder',
+];
+const KEY_NAMES = ['ci', 'deploy', 'partner', 'mobile', 'webhook', 'export', 'telemetry', 'admin-cli'];
+const OWNERS = [
+  'platform-team', 'data-eng', 'sre', 'security', 'growth', 'payments', 'unassigned', 'ml-infra',
+];
+const MODELS = ['claude-opus-4.6', 'claude-sonnet-4.5', 'gpt-4o', 'gemini-2.0', 'mistral-large'];
+const REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1', 'eu-central-1'];
+
+function typePrefix(type: NhiType): string {
+  switch (type) {
+    case 'ai-agent': return 'agent';
+    case 'service-account': return 'svc';
+    case 'api-key': return 'key';
+    case 'oauth-token': return 'oauth';
+    case 'workload-identity': return 'wl';
+  }
+}
+
+function namePool(type: NhiType): string[] {
+  switch (type) {
+    case 'ai-agent': return AGENT_NAMES;
+    case 'service-account': return SERVICE_NAMES;
+    case 'api-key': return KEY_NAMES;
+    case 'oauth-token': return SERVICE_NAMES;
+    case 'workload-identity': return SERVICE_NAMES;
+  }
+}
+
+/* ----------------------------------------------------- per-source attributes */
+
+function sourceAttributes(rng: Rng, cloud: Cloud, type: NhiType): Record<string, string> {
+  const region = rng.pick(REGIONS);
+  const base: Record<string, string> = {
+    region,
+    createdBy: rng.pick(['terraform', 'console', 'sdk', 'cli']),
+  };
+  if (cloud === 'aws') {
+    base.arn = `arn:aws:iam::${rng.int(100000000000, 999999999999)}:role/${typePrefix(type)}-${rng.int(1000, 9999)}`;
+    base.accountId = String(rng.int(100000000000, 999999999999));
+  } else if (cloud === 'gcp') {
+    base.serviceAccount = `${typePrefix(type)}-${rng.int(1000, 9999)}@proj-${rng.int(10, 99)}.iam.gserviceaccount.com`;
+    base.project = `proj-${rng.int(10, 99)}`;
+  } else {
+    base.objectId = `${rng.int(10000000, 99999999)}-${rng.int(1000, 9999)}`;
+    base.tenant = `tenant-${rng.int(10, 99)}`;
+  }
+  return base;
+}
+
+/* ---------------------------------------------------------- one identity */
+
+function makeRiskSeries(rng: Rng, finalScore: number, end: Date): { t: string; score: number }[] {
+  const points = 14;
+  const series: { t: string; score: number }[] = [];
+  let score = Math.max(0, Math.min(100, finalScore - rng.int(-10, 20)));
+  for (let i = points - 1; i >= 0; i--) {
+    const t = new Date(end.getTime() - i * 86400000).toISOString();
+    score = Math.max(0, Math.min(100, score + rng.int(-6, 6)));
+    if (i === 0) score = finalScore;
+    series.push({ t, score });
+  }
+  return series;
+}
+
+function makeIdentity(rng: Rng, index: number, now: Date): Identity {
+  // Distribution: AI agents prominent, then service accounts, API keys, OAuth, workload.
+  // ASSUMPTION: type classification for the per-type breakdown is upstream.
+  const type = rng.weighted<NhiType>(NHI_TYPES, [34, 26, 18, 14, 8]);
+  const pool = namePool(type);
+  const name = `${typePrefix(type)}-${rng.pick(pool)}-${String(index).padStart(5, '0')}`;
+
+  // Correlated across 1..3 clouds. AI agents and service accounts correlate more.
+  const sourceCount = rng.weighted([1, 2, 3], type === 'ai-agent' ? [3, 4, 3] : [6, 3, 1]);
+  const chosenClouds: Cloud[] = [];
+  const cloudPool = [...CLOUDS];
+  for (let i = 0; i < sourceCount; i++) {
+    const idx = rng.int(0, cloudPool.length - 1);
+    chosenClouds.push(cloudPool.splice(idx, 1)[0]);
+  }
+
+  const createdAt = new Date(now.getTime() - rng.int(5, 720) * 86400000);
+  const sources: SourceInstance[] = chosenClouds.map((cloud) => ({
+    cloud,
+    externalId: `${cloud}:${typePrefix(type)}:${rng.int(100000, 999999)}`,
+    attributes: sourceAttributes(rng, cloud, type),
+    lastSeen: new Date(now.getTime() - rng.int(0, 30) * 86400000).toISOString(),
+  }));
+  const lastSeen = sources
+    .map((s) => s.lastSeen)
+    .sort()
+    .reverse()[0];
+
+  // Risk: long tail into critical/high. // ASSUMPTION: risk-score derivation upstream.
+  const roll = rng.float();
+  let riskScore: number;
+  if (roll < 0.08) riskScore = rng.int(80, 100);
+  else if (roll < 0.22) riskScore = rng.int(60, 79);
+  else if (roll < 0.42) riskScore = rng.int(40, 59);
+  else if (roll < 0.72) riskScore = rng.int(20, 39);
+  else riskScore = rng.int(0, 19);
+
+  // Orphaned: a meaningful slice, skewed higher risk. // ASSUMPTION: orphan detection upstream.
+  const orphaned = rng.bool(0.12) || (riskScore > 75 && rng.bool(0.25));
+  const orphanReason = orphaned
+    ? rng.pick(['No owner assigned', 'No legitimate use in 90 days', 'Creator account deactivated'])
+    : undefined;
+  if (orphaned) riskScore = Math.max(riskScore, rng.int(55, 95));
+
+  // Cross-source attribute conflicts, surfaced never merged.
+  const conflicts: AttributeConflict[] = [];
+  if (sources.length > 1 && rng.bool(0.18)) {
+    const attr = rng.pick(['region', 'owner', 'environment']);
+    conflicts.push({
+      attribute: attr,
+      values: sources.map((s) => ({
+        cloud: s.cloud,
+        value: attr === 'region' ? rng.pick(REGIONS) : rng.pick(['prod', 'staging', 'dev']),
+      })),
+    });
+  }
+
+  const governanceStatus = orphaned
+    ? 'ungoverned'
+    : rng.weighted(['governed', 'drift', 'ungoverned'] as const, [6, 2, 2]);
+
+  const owner = orphaned && rng.bool(0.7) ? undefined : rng.pick(OWNERS);
+
+  return {
+    id: `idn_${index.toString(36).padStart(6, '0')}`,
+    name,
+    type,
+    sources,
+    correlated: sources.length > 1,
+    orphaned,
+    orphanReason,
+    conflicts,
+    riskScore,
+    riskBand: riskBand(riskScore).band,
+    governanceStatus,
+    owner,
+    relationships: [], // filled in a second pass once ids exist
+    riskSeries: makeRiskSeries(rng, riskScore, now),
+    createdAt: createdAt.toISOString(),
+    lastSeen,
+  };
+}
+
+/* ------------------------------------------------------ the identity set */
+
+export function generateIdentities(seed: number, size: number, now: Date): Identity[] {
+  const rng = new Rng(seed);
+  const identities: Identity[] = [];
+  for (let i = 0; i < size; i++) {
+    identities.push(makeIdentity(rng, i, now));
+  }
+  // Second pass: wire a few relationships so Blast Radius has something to walk.
+  const relRng = new Rng(seed ^ 0x9e3779b9);
+  for (const identity of identities) {
+    const links = relRng.weighted([0, 1, 2, 3, 5], [3, 4, 3, 2, 1]);
+    for (let i = 0; i < links; i++) {
+      const other = identities[relRng.int(0, identities.length - 1)];
+      if (other.id === identity.id) continue;
+      identity.relationships.push({
+        identityId: other.id,
+        kind: relRng.pick(['assumes', 'shares-credential', 'invokes', 'delegates-to']),
+      });
+    }
+  }
+  return identities;
+}
+
+/* ----------------------------------------------------------------- alerts */
+
+const ALERT_TEMPLATES: { title: string; description: string; next: string }[] = [
+  {
+    title: 'Anomalous tool-call burst',
+    description: 'Agent issued 40x its baseline volume of privileged tool calls in 5 minutes.',
+    next: 'Open the session replay and review the flagged steps.',
+  },
+  {
+    title: 'Credential used from new origin',
+    description: 'API key authenticated from an IP range never seen in the established baseline.',
+    next: 'Confirm with the owner, then request a standard rotation.',
+  },
+  {
+    title: 'Orphaned identity reactivated',
+    description: 'A credential with no owner resumed activity after 96 days dormant.',
+    next: 'Assign an owner or schedule emergency rotation.',
+  },
+  {
+    title: 'Privilege escalation attempt',
+    description: 'Workload identity requested a role outside its governed policy set.',
+    next: 'Review the policy and the blast radius before acting.',
+  },
+  {
+    title: 'Cross-cloud correlation drift',
+    description: 'Correlated sources now disagree on environment; possible takeover.',
+    next: 'Inspect the attribute conflict on the identity detail.',
+  },
+];
+
+export function generateAlerts(identities: Identity[], seed: number, now: Date): Alert[] {
+  const rng = new Rng(seed ^ 0x1234567);
+  const candidates = identities.filter((i) => i.riskScore >= 55 || i.orphaned);
+  const alerts: Alert[] = [];
+  const count = Math.min(candidates.length, Math.max(8, Math.floor(identities.length * 0.03)));
+  for (let i = 0; i < count; i++) {
+    const identity = rng.pick(candidates);
+    const tpl = rng.pick(ALERT_TEMPLATES);
+    const learning = rng.bool(0.25);
+    const severity = riskBand(identity.riskScore).band;
+    alerts.push({
+      id: `alr_${i.toString(36).padStart(5, '0')}`,
+      identityId: identity.id,
+      severity: severity === 'minimal' ? 'low' : severity,
+      title: tpl.title,
+      description: tpl.description,
+      recommendedNextStep: tpl.next,
+      baseline: learning ? 'learning' : 'established',
+      baselineProgress: learning ? { day: rng.int(2, 13), of: 14 } : undefined,
+      status: rng.weighted(['open', 'acknowledged', 'resolved'] as const, [6, 2, 2]),
+      createdAt: new Date(now.getTime() - rng.int(0, 14) * 86400000 - rng.int(0, 86400000)).toISOString(),
+    });
+  }
+  return alerts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/* -------------------------------------------------------------- sessions */
+
+const STEP_SUMMARIES: Record<SessionStep['kind'], string[]> = {
+  prompt: ['User asked to reconcile invoices', 'Scheduled trigger fired', 'Upstream agent delegated task'],
+  'tool-call': ['list_objects(bucket)', 'assume_role(target)', 'query_db(customers)', 'send_email(...)', 'delete_object(...)'],
+  'model-response': ['Planned 3-step workflow', 'Summarized findings', 'Requested confirmation', 'Returned final answer'],
+};
+
+export function generateSessions(identities: Identity[], seed: number, now: Date): AgentSession[] {
+  const rng = new Rng(seed ^ 0x55aa55);
+  const agents = identities.filter((i) => i.type === 'ai-agent');
+  const sessions: AgentSession[] = [];
+  const count = Math.min(agents.length, Math.max(10, Math.floor(agents.length * 0.2)));
+  for (let i = 0; i < count; i++) {
+    const agent = rng.pick(agents);
+    const stepCount = rng.int(5, 14);
+    const steps: SessionStep[] = [];
+    const start = new Date(now.getTime() - rng.int(0, 7) * 86400000 - rng.int(0, 86400000));
+    let anomalyCount = 0;
+    for (let s = 0; s < stepCount; s++) {
+      const kind = rng.weighted<SessionStep['kind']>(
+        ['prompt', 'tool-call', 'model-response'],
+        [2, 5, 4],
+      );
+      const anomaly = rng.bool(0.12);
+      if (anomaly) anomalyCount++;
+      steps.push({
+        id: `stp_${i}_${s}`,
+        kind,
+        at: new Date(start.getTime() + s * rng.int(2000, 45000)).toISOString(),
+        summary: rng.pick(STEP_SUMMARIES[kind]),
+        detail:
+          kind === 'tool-call'
+            ? `Invoked with scope ${rng.pick(['read', 'write', 'admin'])}; latency ${rng.int(20, 900)}ms.`
+            : 'Captured payload available in the full trace (synthetic).',
+        anomaly,
+      });
+    }
+    sessions.push({
+      id: `ses_${i.toString(36).padStart(5, '0')}`,
+      identityId: agent.id,
+      startedAt: start.toISOString(),
+      endedAt: new Date(start.getTime() + stepCount * 30000).toISOString(),
+      riskScore: agent.riskScore,
+      anomalyCount,
+      steps,
+      provenance: {
+        model: rng.pick(MODELS),
+        origin: rng.pick(REGIONS),
+        credentialRef: agent.sources[0]?.externalId ?? 'unknown',
+      },
+      status: rng.weighted(['open', 'reviewed', 'quarantined'] as const, [6, 3, 1]),
+    });
+  }
+  return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/* --------------------------------------------------------------- policies */
+
+export function generatePolicies(identities: Identity[], seed: number, now: Date): Policy[] {
+  const rng = new Rng(seed ^ 0xc0ffee);
+  const defs: { name: string; tokens: PolicyToken[]; status: Policy['status'] }[] = [
+    {
+      name: 'Quarantine orphaned AI agents',
+      status: 'active',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' },
+        { kind: 'and', subject: 'orphaned', operator: 'is', value: 'true' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'quarantine' },
+      ],
+    },
+    {
+      name: 'Rotate high-risk API keys weekly',
+      status: 'tested',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'api-key' },
+        { kind: 'and', subject: 'riskScore', operator: 'gte', value: '60' },
+        { kind: 'then', subject: 'rotate', operator: 'every', value: '7d' },
+      ],
+    },
+    {
+      name: 'Flag cross-cloud conflicts',
+      status: 'draft',
+      tokens: [
+        { kind: 'when', subject: 'conflicts', operator: 'gt', value: '0' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+      ],
+    },
+  ];
+  // affectedCount is computed against the dataset so it reconciles with the inventory.
+  return defs.map((d, i) => ({
+    id: `pol_${i.toString(36).padStart(4, '0')}`,
+    name: d.name,
+    tokens: d.tokens,
+    plainEnglish: plainEnglish(d.tokens),
+    generatedCode: generatedCode(d.name, d.tokens),
+    affectedCount: identities.filter((idn) => matchesPolicy(idn, d.tokens)).length,
+    status: d.status,
+    updatedAt: new Date(now.getTime() - rng.int(0, 30) * 86400000).toISOString(),
+  }));
+}
+
+/* ------------------------------------------------------ rotation jobs */
+
+export function generateRotations(
+  identities: Identity[],
+  seed: number,
+  now: Date,
+): { active: RotationJob[]; history: RotationHistoryEntry[] } {
+  const rng = new Rng(seed ^ 0x707a7e);
+  const highRisk = identities.filter((i) => i.riskScore >= 60);
+  const phases = ['prepare', 'issue', 'propagate', 'verify', 'revoke', 'confirm'] as const;
+
+  const active: RotationJob[] = [];
+  const activeCount = Math.min(highRisk.length, rng.int(2, 5));
+  for (let i = 0; i < activeCount; i++) {
+    const identity = rng.pick(highRisk);
+    const cascadeCount = rng.int(0, 4);
+    active.push({
+      id: `rot_${i.toString(36).padStart(4, '0')}`,
+      identityId: identity.id,
+      mode: rng.bool(0.25) ? 'emergency' : 'standard',
+      phase: rng.pick(phases),
+      phaseProgress: rng.float(),
+      startedAt: new Date(now.getTime() - rng.int(1, 90) * 60000).toISOString(),
+      cascade: Array.from({ length: cascadeCount }, () => {
+        const dep = rng.pick(identities);
+        return {
+          identityId: dep.id,
+          action: rng.bool() ? ('revoke' as const) : ('reissue' as const),
+          status: rng.pick(['pending', 'in-progress', 'done']),
+        };
+      }),
+    });
+  }
+
+  const history: RotationHistoryEntry[] = [];
+  for (let i = 0; i < 24; i++) {
+    const identity = rng.pick(identities);
+    history.push({
+      id: `rhx_${i.toString(36).padStart(4, '0')}`,
+      identityId: identity.id,
+      mode: rng.bool(0.2) ? 'emergency' : 'standard',
+      completedAt: new Date(now.getTime() - rng.int(1, 120) * 86400000).toISOString(),
+      outcome: rng.bool(0.92) ? 'success' : 'rolled-back',
+      actor: rng.pick(['alex.kim@acme.test', 'jordan.r@acme.test', 'system']),
+    });
+  }
+  history.sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+  return { active, history };
+}
+
+/* ------------------------------------------ audit, notifications, etc. */
+
+export function generateAudit(seed: number, now: Date): AuditEntry[] {
+  const rng = new Rng(seed ^ 0xa0d17);
+  const actions = [
+    'acknowledged alert', 'resolved alert', 'activated policy', 'requested rotation',
+    'executed emergency rotation', 'marked session reviewed', 'quarantined session',
+    'connected cloud', 'updated SSO config', 'changed user role',
+  ];
+  const actors = ['alex.kim@acme.test', 'jordan.r@acme.test', 'sam.lee@acme.test', 'system'];
+  return Array.from({ length: 60 }, (_, i) => ({
+    id: `aud_${i.toString(36).padStart(4, '0')}`,
+    at: new Date(now.getTime() - i * rng.int(1, 6) * 3600000).toISOString(),
+    actor: rng.pick(actors),
+    action: rng.pick(actions),
+    target: `idn_${rng.int(0, 999).toString(36).padStart(6, '0')}`,
+    detail: rng.bool(0.4) ? 'Synthetic event for demonstration.' : undefined,
+  }));
+}
+
+export function generateNotifications(seed: number, now: Date): NotificationItem[] {
+  const rng = new Rng(seed ^ 0x404140);
+  const titles = [
+    'New critical alert on an AI agent',
+    'Rotation completed successfully',
+    'Policy activated by an admin',
+    'Orphaned identity detected',
+    'Baseline established for monitoring',
+  ];
+  return Array.from({ length: 12 }, (_, i) => ({
+    id: `ntf_${i.toString(36).padStart(4, '0')}`,
+    at: new Date(now.getTime() - i * rng.int(1, 10) * 3600000).toISOString(),
+    severity: rng.weighted(['critical', 'high', 'medium', 'info'] as const, [2, 3, 3, 4]),
+    title: rng.pick(titles),
+    read: rng.bool(0.5),
+    href: rng.bool(0.6) ? '/monitor' : undefined,
+  }));
+}
+
+export function generateConnections(identities: Identity[]): CloudConnection[] {
+  const byCloud: Record<Cloud, Record<NhiType, number>> = {
+    aws: emptyCounts(),
+    gcp: emptyCounts(),
+    azure: emptyCounts(),
+  };
+  for (const identity of identities) {
+    for (const source of identity.sources) {
+      byCloud[source.cloud][identity.type] += 1;
+    }
+  }
+  return CLOUDS.map((cloud) => ({
+    cloud,
+    status: 'connected' as const,
+    counts: byCloud[cloud],
+  }));
+}
+
+function emptyCounts(): Record<NhiType, number> {
+  return {
+    'ai-agent': 0,
+    'service-account': 0,
+    'api-key': 0,
+    'oauth-token': 0,
+    'workload-identity': 0,
+  };
+}
+
+/* ------------------------------------------------ Wave 2 concept fixtures */
+
+export function generateRehearsals(seed: number, now: Date): import('./types').RecoveryRehearsal[] {
+  const rng = new Rng(seed ^ 0x5ee5);
+  const scopes = ['AWS prod service accounts', 'All AI agents', 'OAuth tokens (EU)', 'Payments workload identities', 'Critical-risk set'];
+  return Array.from({ length: 8 }, (_, i) => ({
+    id: `reh_${i.toString(36).padStart(4, '0')}`,
+    at: new Date(now.getTime() - rng.int(1, 90) * 86400000).toISOString(),
+    scope: rng.pick(scopes),
+    outcome: rng.weighted(['passed', 'partial', 'failed'] as const, [6, 3, 1]),
+    timeToUsableMin: rng.int(8, 72),
+  })).sort((a, b) => b.at.localeCompare(a.at));
+}
+
+export function generateCopilotSuggestions(
+  identities: Identity[],
+  _seed: number,
+): import('./types').CopilotSuggestion[] {
+  const templates = [
+    { title: 'Rotate this credential', rationale: 'Risk score climbed into the critical band over the last 3 days.' },
+    { title: 'Assign an owner', rationale: 'Orphaned identity with recent activity — assign accountability before it drifts further.' },
+    { title: 'Quarantine this agent', rationale: 'Anomalous tool-call pattern resembles a known exfiltration sequence.' },
+    { title: 'Resolve the attribute conflict', rationale: 'Sources disagree on environment; reconcile before enforcing policy.' },
+    { title: 'Tighten the governing policy', rationale: 'Identity sits just outside an active policy that would otherwise cover it.' },
+  ];
+  const candidates = identities.filter((i) => i.riskScore >= 70 || i.orphaned).slice(0, 5);
+  return candidates.map((idn, i) => {
+    const t = templates[i % templates.length];
+    return {
+      id: `cop_${i.toString(36).padStart(4, '0')}`,
+      title: t.title,
+      rationale: t.rationale,
+      severity: riskBand(idn.riskScore).band,
+      identityId: idn.id,
+    };
+  });
+}
+
+/* --------------------------------------- tenant, groups, users, invitations */
+// Add-on seed. Synthetic only. The current tenant is Acme Corp on acme.com with
+// Entra ID configured; globex.com is held as an already-registered domain so the
+// registration "domain already taken" error is demonstrable (see api.ts).
+
+export const TENANT_ID = 'tnt_acme';
+export const GROUP_SECURITY_ID = 'grp_sec';
+export const GROUP_AUDITORS_ID = 'grp_aud';
+
+function iso(now: Date, msAgo: number): string {
+  return new Date(now.getTime() - msAgo).toISOString();
+}
+const HOUR = 3600000;
+const DAY = 86400000;
+
+export function generateTenant(now: Date): Tenant {
+  return {
+    id: TENANT_ID,
+    name: 'Acme Corp',
+    allowedDomains: ['acme.com'],
+    status: 'active',
+    sso: { provider: 'entra', configured: true },
+    createdAt: iso(now, 420 * DAY),
+  };
+}
+
+// Seed users covering every role and every status, so the user list shows all
+// states out of the box. usr_1 (Alex Kim) is the signed-in actor / org owner.
+// A second Tenant Admin (Dana) exists so rank-gating is demonstrable distinctly
+// from the never-act-on-self rule.
+export function generateUsers(now: Date): User[] {
+  const base = { tenantId: TENANT_ID } as const;
+  return [
+    { ...base, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 2 * HOUR) },
+    { ...base, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', groups: [], authMethod: 'sso', lastLogin: iso(now, 1 * DAY) },
+    { ...base, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 5 * HOUR) },
+    { ...base, id: 'usr_4', name: 'Morgan Ellis', email: 'morgan.ellis@acme.com', role: 'security-admin', status: 'suspended', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 20 * DAY) },
+    { ...base, id: 'usr_5', name: 'Priya Nair', email: 'priya.nair@acme.com', role: 'analyst', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 3 * HOUR) },
+    { ...base, id: 'usr_6', name: 'Sam Lee', email: 'sam.lee@acme.com', role: 'analyst', status: 'active', groups: [], authMethod: 'password', lastLogin: iso(now, 2 * DAY) },
+    { ...base, id: 'usr_7', name: 'Chris Vaughn', email: 'chris.vaughn@acme.com', role: 'viewer', status: 'active', groups: [GROUP_AUDITORS_ID], authMethod: 'sso', lastLogin: iso(now, 8 * DAY) },
+    { ...base, id: 'usr_8', name: 'Robin Park', email: 'robin.park@acme.com', role: 'analyst', status: 'pending', groups: [GROUP_SECURITY_ID], authMethod: 'sso', invitedAt: iso(now, 1 * DAY), invitedBy: 'usr_1' },
+    { ...base, id: 'usr_9', name: 'Taylor Quinn', email: 'taylor.quinn@acme.com', role: 'viewer', status: 'suspended', groups: [GROUP_AUDITORS_ID], authMethod: 'sso', validity: { expiry: iso(now, 3 * DAY) }, lastLogin: iso(now, 30 * DAY) },
+    { ...base, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: 'security-admin', status: 'invited', groups: [], authMethod: 'sso', invitedAt: iso(now, 3 * HOUR), invitedBy: 'usr_1' },
+  ];
+}
+
+export function generateGroups(users: User[]): Group[] {
+  const count = (id: string) => users.filter((u) => u.status !== 'deleted' && u.groups.includes(id)).length;
+  return [
+    { id: GROUP_SECURITY_ID, tenantId: TENANT_ID, name: 'Security Team', description: 'Responders and policy authors.', memberCount: count(GROUP_SECURITY_ID) },
+    { id: GROUP_AUDITORS_ID, tenantId: TENANT_ID, name: 'Auditors', description: 'Read-only access to the audit trail.', memberCount: count(GROUP_AUDITORS_ID) },
+  ];
+}
+
+// Seeded invitations with KNOWN tokens so the Accept Invitation screen can resolve
+// each state directly: /accept-invite/<token>. See the README demo links.
+export function generateInvitations(now: Date): Invitation[] {
+  const mk = (
+    token: string,
+    email: string,
+    role: Invitation['role'],
+    status: Invitation['status'],
+    sentDaysAgo: number,
+    expiresDaysFromNow: number,
+    groups: string[] = [],
+  ): Invitation => ({
+    token,
+    tenantId: TENANT_ID,
+    email,
+    role,
+    groups,
+    authMethod: 'sso',
+    status,
+    sentAt: iso(now, sentDaysAgo * DAY),
+    expiresAt: new Date(now.getTime() + expiresDaysFromNow * DAY).toISOString(),
+  });
+  return [
+    mk('acme-demo-001', 'newhire@acme.com', 'analyst', 'pending', 1, 6, [GROUP_SECURITY_ID]),
+    mk('acme-expired-002', 'late.applicant@acme.com', 'viewer', 'expired', 10, -3),
+    mk('acme-accepted-003', 'priya.nair@acme.com', 'analyst', 'accepted', 40, -33, [GROUP_SECURITY_ID]),
+    mk('acme-revoked-004', 'former.contractor@acme.com', 'viewer', 'revoked', 5, 2),
+    // Match the seeded pending/invited users so Resend Invitation has a target.
+    mk('inv-robin', 'robin.park@acme.com', 'analyst', 'pending', 1, 6, [GROUP_SECURITY_ID]),
+    mk('inv-jamie', 'jamie.fox@acme.com', 'security-admin', 'pending', 0.125, 7),
+  ];
+}
