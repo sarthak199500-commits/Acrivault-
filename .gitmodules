@@ -1,0 +1,3 @@
+[submodule "figma-plugin"]
+	path = figma-plugin
+	url = https://github.com/sarthak199500-commits/acrivault-figma-plugin.git
