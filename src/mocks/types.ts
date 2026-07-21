@@ -31,6 +31,15 @@ export const CLOUD_LABELS: Record<Cloud, string> = {
   azure: 'Azure',
 };
 
+// Identity lifecycle status (derived, display-only). Distinct from governanceStatus.
+export type IdentityStatus = 'active' | 'inactive' | 'quarantined';
+export const IDENTITY_STATUSES: IdentityStatus[] = ['active', 'inactive', 'quarantined'];
+export const IDENTITY_STATUS_LABELS: Record<IdentityStatus, string> = {
+  active: 'Active',
+  inactive: 'Inactive',
+  quarantined: 'Quarantined',
+};
+
 export interface SourceInstance {
   // a source is authoritative for its own attributes
   cloud: Cloud;
@@ -59,6 +68,7 @@ export interface Identity {
   riskScore: number; // 0..100, precomputed upstream (display only)
   riskBand: RiskBand; // derived from score, display mapping
   governanceStatus: GovernanceStatus; // derived
+  status: IdentityStatus; // lifecycle state (derived) // ASSUMPTION: derived upstream
   owner?: string;
   relationships: { identityId: string; kind: string }[];
   riskSeries: { t: string; score: number }[]; // for the per-identity timeline

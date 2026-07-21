@@ -99,12 +99,17 @@ export function KpiTile({
           >
             {valueText}
           </div>
-          {delta !== undefined && (
+          {delta !== undefined ? (
             <div className={cn('mt-1 inline-flex items-center gap-1 whitespace-nowrap text-[length:var(--fs-micro)]', deltaTone)}>
               <DeltaIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
               <span className="tnum">{Math.abs(delta)}</span>
               {deltaLabel && <span className="text-text-tertiary">{deltaLabel}</span>}
             </div>
+          ) : (
+            // Reserve the delta line's height (matches the row above) so a tile
+            // without a delta keeps its value on the same baseline as tiles that
+            // have one, instead of dropping to the card's bottom edge.
+            <div className="mt-1 h-5" aria-hidden="true" />
           )}
         </div>
         {sparkline && sparkline.length > 1 && (

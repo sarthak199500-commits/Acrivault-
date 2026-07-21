@@ -19,27 +19,29 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   CLOUD_LABELS,
+  IDENTITY_STATUS_LABELS,
   NHI_TYPE_LABELS,
   type Identity,
 } from '@/mocks/types';
 import type { IdentitySort } from '@/mocks/api';
+import { NOW } from '@/mocks/dataset';
 import { cn } from '@/lib/cn';
-import { relativeTime } from '@/lib/format';
+import { relativeDays } from '@/lib/format';
 import { announce } from '@/lib/a11y';
 import { RiskPill } from '@/components/ui/RiskPill';
-import { Badge } from '@/components/ui/Badge';
-import { GOVERNANCE_TONE as GOV_TONE } from '@/lib/tones';
+import { StatusDot } from '@/components/ui/StatusDot';
+import { STATUS_TONE } from '@/lib/tones';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
 import { ProviderBadge } from '@/components/ui/ProviderBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
 
-const GRID = 'minmax(40px,40px) minmax(220px,2.2fr) minmax(150px,1.1fr) minmax(112px,0.9fr) minmax(120px,1fr) minmax(120px,1fr) minmax(130px,1fr) minmax(110px,0.9fr)';
+const GRID = 'minmax(40px,40px) minmax(220px,2.2fr) minmax(150px,1.1fr) minmax(112px,0.9fr) minmax(120px,1fr) minmax(130px,1fr) minmax(130px,1fr) minmax(110px,0.9fr)';
 
 type SortCol = IdentitySort['id'];
 
 interface HeaderCol {
-  id: SortCol | 'select' | 'sources';
+  id: SortCol | 'select' | 'sources' | 'status';
   label: string;
   sortable: boolean;
 }
@@ -49,7 +51,7 @@ const COLUMNS: HeaderCol[] = [
   { id: 'type', label: 'Type', sortable: true },
   { id: 'sources', label: 'Cloud', sortable: false },
   { id: 'risk', label: 'Risk', sortable: true },
-  { id: 'governance', label: 'Governance', sortable: true },
+  { id: 'status', label: 'Status', sortable: false },
   { id: 'owner', label: 'Owner', sortable: true },
   { id: 'lastSeen', label: 'Last seen', sortable: true },
 ];
@@ -64,7 +66,7 @@ function SourceDetail({ identity }: { identity: Identity }) {
             <div className="mb-1.5 flex items-center justify-between">
               <ProviderBadge cloud={source.cloud} />
               <span className="text-[length:var(--fs-micro)] text-text-tertiary">
-                seen {relativeTime(source.lastSeen)}
+                seen {relativeDays(source.lastSeen, NOW)}
               </span>
             </div>
             <dl className="space-y-0.5">
@@ -215,7 +217,7 @@ export function IdentityTable({
       {/* Below the grid's min track total the columns can't compress further, so
           pan the whole table (header + body together) instead of clipping cells. */}
       <div role="presentation" className="overflow-x-auto">
-        <div role="presentation" className="min-w-[1088px]">
+        <div role="presentation" className="min-w-[1092px]">
       {/* Header */}
       <div
         role="row"
@@ -357,13 +359,12 @@ export function IdentityTable({
                   </div>
                   {/* risk */}
                   <div role="gridcell">
-                    <RiskPill score={identity.riskScore} size="sm" />
+                    <RiskPill score={identity.riskScore} size="sm" showScore={false} />
                   </div>
-                  {/* governance */}
-                  <div role="gridcell">
-                    <Badge tone={GOV_TONE[identity.governanceStatus]} className="capitalize">
-                      {identity.governanceStatus}
-                    </Badge>
+                  {/* status */}
+                  <div role="gridcell" className="flex min-w-0 items-center gap-1.5 text-[length:var(--fs-small)] text-text-secondary">
+                    <StatusDot tone={STATUS_TONE[identity.status]} />
+                    <span className="truncate">{IDENTITY_STATUS_LABELS[identity.status]}</span>
                   </div>
                   {/* owner */}
                   <div role="gridcell" className="truncate text-[length:var(--fs-small)] text-text-secondary">
@@ -371,7 +372,7 @@ export function IdentityTable({
                   </div>
                   {/* last seen */}
                   <div role="gridcell" className="tnum truncate text-[length:var(--fs-small)] text-text-tertiary">
-                    {relativeTime(identity.lastSeen)}
+                    {relativeDays(identity.lastSeen, NOW)}
                   </div>
                 </div>
                 {isExpanded && (

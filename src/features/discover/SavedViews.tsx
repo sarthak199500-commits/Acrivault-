@@ -60,7 +60,7 @@ export function SavedViews({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-2 rounded-[var(--r-sm)] border border-border bg-surface px-2.5 text-[length:var(--fs-small)] text-text-secondary hover:bg-surface-hover hover:text-text"
+          className="inline-flex h-9 items-center gap-2 rounded-[var(--r-sm)] border border-border bg-surface px-2.5 text-[length:var(--fs-small)] text-text-secondary hover:bg-surface-hover hover:text-text"
         >
           <Bookmark className="h-3.5 w-3.5" aria-hidden="true" />
           Saved views

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useIdentity, useRequestRotations } from './queries';
 import { CLOUD_LABELS, NHI_TYPE_LABELS, type Identity } from '@/mocks/types';
+import { NOW } from '@/mocks/dataset';
 import { Drawer } from '@/components/ui/Drawer';
 import { RiskPill } from '@/components/ui/RiskPill';
 import { Badge } from '@/components/ui/Badge';
@@ -26,8 +27,9 @@ import { useCan } from '@/components/ui/Can';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { riskBand } from '@/lib/risk';
 import { errorInfo } from '@/lib/apiError';
-import { dateTime, pluralize, relativeTime } from '@/lib/format';
+import { dateTime, pluralize, relativeDays } from '@/lib/format';
 import { toast } from '@/stores/toast';
+import { useUiStore } from '@/stores/ui';
 
 function Section({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
@@ -74,11 +76,11 @@ function DetailBody({ identity }: { identity: Identity }) {
         <KeyValueList
           items={[
             { label: 'Owner', value: identity.owner ?? '—' },
+            { label: 'Risk score', value: <span className="tnum">{identity.riskScore}</span>, derived: true },
             { label: 'Risk band', value: band.label, derived: true },
-            { label: 'Governance', value: <span className="capitalize">{identity.governanceStatus}</span>, derived: true },
             { label: 'Correlated', value: identity.correlated ? `Yes · ${identity.sources.length} sources` : 'Single source', derived: true },
             { label: 'First seen', value: dateTime(identity.createdAt) },
-            { label: 'Last seen', value: relativeTime(identity.lastSeen) },
+            { label: 'Last seen', value: relativeDays(identity.lastSeen, NOW) },
           ]}
         />
       </Section>
@@ -246,34 +248,51 @@ export function IdentityDetailPanel() {
   const location = useLocation();
   const query = useIdentity(identityId);
 
+  // The dev Scenario Switcher can force loading / error / empty on this panel.
+  // Mirror QueryBoundary's precedence (forced loading → forced error → real
+  // pending → real error → forced-empty/no-data → populated) and its DEV gate so
+  // the synthetic states are tree-shaken from production and only a real query
+  // can drive them there.
+  const forcedState = useUiStore((s) => s.scenario.state);
+  const forced = import.meta.env.DEV ? forcedState : undefined;
+  const data = query.data;
+  const showLoading = forced === 'loading' || (forced !== 'error' && query.isPending);
+  const showError = !showLoading && (forced === 'error' || query.isError);
+  const showEmpty = !showLoading && !showError && (forced === 'empty' || !data);
+
   const close = () => navigate({ pathname: '/discover', search: location.search });
 
-  const title = query.data ? (
-    <span className="break-all font-mono text-[length:var(--fs-h2)]">{query.data.name}</span>
-  ) : (
-    'Identity'
-  );
+  const title =
+    !showLoading && !showError && !showEmpty && data ? (
+      <span className="break-all font-mono text-[length:var(--fs-h2)]">{data.name}</span>
+    ) : (
+      'Identity'
+    );
 
   return (
-    <Drawer open onOpenChange={(o) => !o && close()} title={title} description="Identity detail · derived fields are labeled">
-      {query.isPending ? (
+    <Drawer open onOpenChange={(o) => !o && close()} closeOnOutsideClick={false} title={title} description="Identity detail · derived fields are labeled">
+      {showLoading ? (
         <div className="space-y-4">
           <Skeleton className="h-6 w-40" />
           <SkeletonText lines={6} />
           <Skeleton className="h-20 w-full" />
         </div>
-      ) : query.isError ? (
-        <ErrorState message="We couldn't load this identity." onRetry={() => query.refetch()} />
-      ) : !query.data ? (
+      ) : showError ? (
+        <ErrorState
+          message="We couldn't load this identity."
+          detail={forced === 'error' ? "scenario.state = 'error'" : undefined}
+          onRetry={() => query.refetch()}
+        />
+      ) : showEmpty ? (
         <EmptyState headline="Identity not found" guidance="This id doesn't match a known identity." />
-      ) : (
+      ) : data ? (
         <>
-          <DetailBody identity={query.data} />
+          <DetailBody identity={data} />
           <div className="mt-4 border-t border-border pt-4">
-            <DetailFooter identity={query.data} />
+            <DetailFooter identity={data} />
           </div>
         </>
-      )}
+      ) : null}
     </Drawer>
   );
 }

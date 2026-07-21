@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { Cloud, GovernanceStatus, NhiType, RiskBand } from '@/mocks/types';
+import type { Cloud, GovernanceStatus, IdentityStatus, NhiType, RiskBand } from '@/mocks/types';
 import type { IdentityFilter, IdentitySort } from '@/mocks/api';
 
 type SortColumn = IdentitySort['id'];
@@ -25,6 +25,7 @@ export function useInventoryFilters() {
       bands: parseList<RiskBand>(params.get('band')),
       clouds: parseList<Cloud>(params.get('cloud')),
       governance: parseList<GovernanceStatus>(params.get('gov')),
+      statuses: parseList<IdentityStatus>(params.get('status')),
       orphanedOnly: params.get('orphaned') === '1',
       conflictsOnly: params.get('conflicts') === '1',
     };
@@ -103,12 +104,13 @@ export function useInventoryFilters() {
   const applyFilter = useCallback(
     (next: IdentityFilter) =>
       update((n) => {
-        ['q', 'type', 'band', 'cloud', 'gov', 'orphaned', 'conflicts'].forEach((k) => n.delete(k));
+        ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts'].forEach((k) => n.delete(k));
         if (next.search) n.set('q', next.search);
         if (next.types?.length) n.set('type', next.types.join(','));
         if (next.bands?.length) n.set('band', next.bands.join(','));
         if (next.clouds?.length) n.set('cloud', next.clouds.join(','));
         if (next.governance?.length) n.set('gov', next.governance.join(','));
+        if (next.statuses?.length) n.set('status', next.statuses.join(','));
         if (next.orphanedOnly) n.set('orphaned', '1');
         if (next.conflictsOnly) n.set('conflicts', '1');
       }),
@@ -116,7 +118,7 @@ export function useInventoryFilters() {
   );
 
   const clearAll = useCallback(
-    () => update((n) => ['q', 'type', 'band', 'cloud', 'gov', 'orphaned', 'conflicts'].forEach((k) => n.delete(k))),
+    () => update((n) => ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts'].forEach((k) => n.delete(k))),
     [update],
   );
 
@@ -126,6 +128,7 @@ export function useInventoryFilters() {
     (filter.bands?.length ?? 0) +
     (filter.clouds?.length ?? 0) +
     (filter.governance?.length ?? 0) +
+    (filter.statuses?.length ?? 0) +
     (filter.orphanedOnly ? 1 : 0) +
     (filter.conflictsOnly ? 1 : 0);
 
@@ -139,6 +142,7 @@ export function useInventoryFilters() {
     toggleBand: (b: RiskBand) => toggleInList('band', b),
     toggleCloud: (c: Cloud) => toggleInList('cloud', c),
     toggleGovernance: (g: GovernanceStatus) => toggleInList('gov', g),
+    toggleStatus: (s: IdentityStatus) => toggleInList('status', s),
     toggleOrphaned: () => toggleFlag('orphaned'),
     toggleConflicts: () => toggleFlag('conflicts'),
     setSort,

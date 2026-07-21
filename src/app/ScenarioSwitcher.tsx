@@ -79,7 +79,10 @@ export function ScenarioSwitcher() {
     <div
       role="complementary"
       aria-label="Developer scenario controls"
-      className="fixed bottom-4 right-4 z-[var(--z-toast)] print:hidden"
+      // pointer-events-auto: this dev tool must stay clickable even when a modal
+      // Drawer/Dialog is open — Radix sets `pointer-events: none` on <body> in
+      // modal mode, which this island overrides (it already sits above --z-modal).
+      className="pointer-events-auto fixed bottom-4 right-4 z-[var(--z-toast)] print:hidden"
     >
       {open ? (
         <div className="flex max-h-[calc(100dvh-2rem)] w-72 flex-col rounded-[var(--r-lg)] border border-border-strong bg-surface-2 shadow-[var(--shadow-xl)]">

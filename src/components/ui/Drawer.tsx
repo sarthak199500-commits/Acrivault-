@@ -5,9 +5,11 @@ import { cn } from '@/lib/cn';
 import { IconButton } from './IconButton';
 
 /**
- * A right-side panel built on Radix Dialog. Used for Identity Detail and the
- * Session Replay side rail. Focus is trapped and returned on close; Escape closes.
- * Below the tablet breakpoint it becomes a full-width drawer.
+ * A right-side panel built on Radix Dialog. Used for detail views (Identity
+ * Detail, Alert Detail). Focus is trapped and returned on close. By default it
+ * dismisses on outside-click and Escape; pass `closeOnOutsideClick={false}` to
+ * require an explicit close (the X, or Escape), or `closeOnEscape={false}` to
+ * also disable Escape. Below the tablet breakpoint it becomes a full-width drawer.
  */
 export function Drawer({
   open,
@@ -17,6 +19,8 @@ export function Drawer({
   children,
   footer,
   width = 'var(--panel-w)',
+  closeOnOutsideClick = true,
+  closeOnEscape = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,6 +29,8 @@ export function Drawer({
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  closeOnOutsideClick?: boolean;
+  closeOnEscape?: boolean;
 }) {
   // Routed usage mounts/unmounts the whole dialog on navigation, so Radix never
   // gets to run its own focus return (there is no Trigger and no open→closed
@@ -63,6 +69,8 @@ export function Drawer({
         />
         <Dialog.Content
           {...(description ? {} : { 'aria-describedby': undefined })}
+          onInteractOutside={closeOnOutsideClick ? undefined : (e) => e.preventDefault()}
+          onEscapeKeyDown={closeOnEscape ? undefined : (e) => e.preventDefault()}
           className={cn(
             'fixed inset-y-0 right-0 z-[var(--z-modal)] flex w-full flex-col border-l border-border bg-surface shadow-[var(--shadow-xl)]',
             'outline-none focus:outline-none',

@@ -13,6 +13,7 @@ import {
   type CloudConnection,
   type Group,
   type Identity,
+  type IdentityStatus,
   type Invitation,
   type NhiType,
   type NotificationItem,
@@ -207,6 +208,13 @@ function makeIdentity(rng: Rng, index: number, now: Date): Identity {
 
   const owner = orphaned && rng.bool(0.7) ? undefined : rng.pick(OWNERS);
 
+  // Lifecycle status (derived, display-only): quarantined tracks contained
+  // high-risk orphans; inactive tracks identities not seen in weeks; else active.
+  // ASSUMPTION: status derivation is upstream.
+  const daysSinceSeen = (now.getTime() - new Date(lastSeen).getTime()) / 86400000;
+  const status: IdentityStatus =
+    orphaned && riskScore >= 85 ? 'quarantined' : daysSinceSeen >= 24 ? 'inactive' : 'active';
+
   return {
     id: `idn_${index.toString(36).padStart(6, '0')}`,
     name,
@@ -219,6 +227,7 @@ function makeIdentity(rng: Rng, index: number, now: Date): Identity {
     riskScore,
     riskBand: riskBand(riskScore).band,
     governanceStatus,
+    status,
     owner,
     relationships: [], // filled in a second pass once ids exist
     riskSeries: makeRiskSeries(rng, riskScore, now),

@@ -20,7 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { count, pluralize } from '@/lib/format';
-import { NHI_TYPE_LABELS } from '@/mocks/types';
+import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS } from '@/mocks/types';
 import { bandMeta } from '@/lib/risk';
 import { PROVIDER_LABEL } from '@/components/ui/ProviderBadge';
 import { toast } from '@/stores/toast';
@@ -179,6 +179,7 @@ export function InventoryScreen() {
     ...(f.types ?? []).map((t) => NHI_TYPE_LABELS[t]),
     ...(f.bands ?? []).map((b) => bandMeta(b).label),
     ...(f.clouds ?? []).map((c) => PROVIDER_LABEL[c]),
+    ...(f.statuses ?? []).map((s) => IDENTITY_STATUS_LABELS[s]),
     ...(f.orphanedOnly ? ['Orphaned'] : []),
     ...(f.conflictsOnly ? ['Conflicts'] : []),
     ...(f.search ? [`“${f.search}”`] : []),

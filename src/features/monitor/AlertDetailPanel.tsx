@@ -16,6 +16,7 @@ import { useCan } from '@/components/ui/Can';
 import { riskBand } from '@/lib/risk';
 import { dateTime } from '@/lib/format';
 import { toast } from '@/stores/toast';
+import { useUiStore } from '@/stores/ui';
 import { SEVERITY_TONE } from '@/lib/tones';
 
 
@@ -118,24 +119,44 @@ export function AlertDetailPanel() {
   const navigate = useNavigate();
   const location = useLocation();
   const query = useAlert(alertId);
+
+  // Honor the dev Scenario Switcher's forced states here too — same precedence
+  // and DEV gate as QueryBoundary and the Identity detail panel.
+  const forcedState = useUiStore((s) => s.scenario.state);
+  const forced = import.meta.env.DEV ? forcedState : undefined;
+  const data = query.data;
+  const showLoading = forced === 'loading' || (forced !== 'error' && query.isPending);
+  const showError = !showLoading && (forced === 'error' || query.isError);
+  const showEmpty = !showLoading && !showError && (forced === 'empty' || !data);
+
   const close = () => navigate({ pathname: '/monitor', search: location.search });
 
   return (
-    <Drawer open onOpenChange={(o) => !o && close()} title={query.data?.title ?? 'Alert'} description="Behavioral alert detail">
-      {query.isPending ? (
+    <Drawer
+      open
+      onOpenChange={(o) => !o && close()}
+      closeOnOutsideClick={false}
+      title={!showLoading && !showError && !showEmpty && data ? data.title : 'Alert'}
+      description="Behavioral alert detail"
+    >
+      {showLoading ? (
         <div className="space-y-4"><Skeleton className="h-6 w-32" /><SkeletonText lines={6} /></div>
-      ) : query.isError ? (
-        <ErrorState message="We couldn't load this alert." onRetry={() => query.refetch()} />
-      ) : !query.data ? (
+      ) : showError ? (
+        <ErrorState
+          message="We couldn't load this alert."
+          detail={forced === 'error' ? "scenario.state = 'error'" : undefined}
+          onRetry={() => query.refetch()}
+        />
+      ) : showEmpty ? (
         <EmptyState headline="Alert not found" guidance="This alert id doesn't match an open alert." />
-      ) : (
+      ) : data ? (
         <>
-          <Body alert={query.data} />
+          <Body alert={data} />
           <div className="mt-4 border-t border-border pt-4">
-            <Footer alert={query.data} onResolved={close} />
+            <Footer alert={data} onResolved={close} />
           </div>
         </>
-      )}
+      ) : null}
     </Drawer>
   );
 }

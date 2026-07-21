@@ -71,6 +71,18 @@ export function relativeTime(iso: string | Date, now: Date = new Date()): string
   return dateFmt.format(then);
 }
 
+/**
+ * Whole-day relative time, e.g. "Today", "1 day ago", "32 days ago". Unlike
+ * relativeTime, which rolls up into weeks/months, this always reports in days.
+ */
+export function relativeDays(iso: string | Date, now: Date = new Date()): string {
+  const then = typeof iso === 'string' ? new Date(iso) : iso;
+  const days = Math.round((now.getTime() - then.getTime()) / 86400000);
+  if (days < 0) return `in ${Math.abs(days)} ${Math.abs(days) === 1 ? 'day' : 'days'}`;
+  if (days === 0) return 'Today';
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
 /** Compact duration from milliseconds, e.g. "12 min", "2h 5m", "45s". */
 export function duration(ms: number): string {
   const totalSeconds = Math.round(ms / 1000);

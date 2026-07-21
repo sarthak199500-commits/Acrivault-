@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Search, Unlink, GitCompareArrows, X, Table, Network } from 'lucide-react';
-import { NHI_TYPES, NHI_TYPE_LABELS, CLOUDS, type NhiType } from '@/mocks/types';
+import { NHI_TYPES, NHI_TYPE_LABELS, CLOUDS, IDENTITY_STATUSES, IDENTITY_STATUS_LABELS, type NhiType, type IdentityStatus } from '@/mocks/types';
 import type { IdentityFacetCounts } from '@/mocks/api';
 import { RISK_BAND_ORDER, bandMeta } from '@/lib/risk';
+import { STATUS_TONE } from '@/lib/tones';
 import { FilterMenu } from '@/components/ui/FilterMenu';
 import { FilterPill } from '@/components/ui/FilterPill';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Input } from '@/components/ui/Input';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
+import { StatusDot } from '@/components/ui/StatusDot';
 import { PROVIDER_COLOR, PROVIDER_LABEL } from '@/components/ui/ProviderBadge';
 import { SavedViews } from './SavedViews';
 import type { useInventoryFilters } from './useInventoryFilters';
@@ -80,6 +82,12 @@ export function InventoryFilters({
     count: counts?.byBand[band],
     swatch: <Dot color={bandMeta(band).cssVar} />,
   }));
+  const statusOptions = IDENTITY_STATUSES.map((s: IdentityStatus) => ({
+    value: s,
+    label: IDENTITY_STATUS_LABELS[s],
+    count: counts?.byStatus[s],
+    swatch: <StatusDot tone={STATUS_TONE[s]} />,
+  }));
 
   return (
     <div className="space-y-3">
@@ -109,6 +117,13 @@ export function InventoryFilters({
           onToggle={(v) => filters.toggleBand(v as (typeof RISK_BAND_ORDER)[number])}
           onClear={() => (filter.bands ?? []).forEach((b) => filters.toggleBand(b))}
         />
+        <FilterMenu
+          label="Status"
+          options={statusOptions}
+          selected={filter.statuses ?? []}
+          onToggle={(v) => filters.toggleStatus(v as IdentityStatus)}
+          onClear={() => (filter.statuses ?? []).forEach((s) => filters.toggleStatus(s))}
+        />
 
         <SavedViews
           currentFilter={filter}
@@ -131,7 +146,7 @@ export function InventoryFilters({
 
       {/* Status group + clear */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="eyebrow mr-1">Status</span>
+        <span className="eyebrow mr-1">Flags</span>
         <FilterPill
           label="Orphaned"
           count={counts?.orphaned}

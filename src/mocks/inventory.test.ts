@@ -24,6 +24,17 @@ describe('inventory filtering and sorting', () => {
     expect(conflicts.rows.every((r) => r.conflicts.length > 0)).toBe(true);
   });
 
+  it('filters by status', async () => {
+    const res = await listIdentities({ filter: { statuses: ['quarantined'] }, limit: 100_000 });
+    expect(res.rows.every((r) => r.status === 'quarantined')).toBe(true);
+  });
+
+  it('status facet count reconciles with the status filter', async () => {
+    const all = await listIdentities({ limit: 1 });
+    const quarantined = await listIdentities({ filter: { statuses: ['quarantined'] }, limit: 1 });
+    expect(quarantined.total).toBe(all.counts.byStatus.quarantined);
+  });
+
   it('search matches name, owner, or source id', async () => {
     const { identities } = getDataset();
     const sample = identities[0];

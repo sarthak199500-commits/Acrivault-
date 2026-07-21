@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compact, count, duration, percent, pluralize } from './format';
+import { compact, count, duration, percent, pluralize, relativeDays } from './format';
 
 describe('format', () => {
   it('groups counts with separators', () => {
@@ -20,6 +20,13 @@ describe('format', () => {
     expect(duration(45_000)).toBe('45s');
     expect(duration(12 * 60_000)).toBe('12 min');
     expect(duration(125 * 60_000)).toBe('2h 5m');
+  });
+
+  it('formats last-seen as whole days', () => {
+    const now = new Date('2026-06-25T12:00:00.000Z');
+    expect(relativeDays(now, now)).toBe('Today');
+    expect(relativeDays(new Date('2026-06-24T12:00:00.000Z'), now)).toBe('1 day ago');
+    expect(relativeDays(new Date('2026-05-24T12:00:00.000Z'), now)).toBe('32 days ago');
   });
 
   describe('pluralize', () => {

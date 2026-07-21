@@ -25,6 +25,7 @@ import type {
   GovernanceStatus,
   Group,
   Identity,
+  IdentityStatus,
   Invitation,
   NhiType,
   NotificationItem,
@@ -151,6 +152,7 @@ export interface IdentityFilter {
   bands?: RiskBand[];
   clouds?: Cloud[];
   governance?: GovernanceStatus[];
+  statuses?: IdentityStatus[];
   orphanedOnly?: boolean;
   conflictsOnly?: boolean;
 }
@@ -172,6 +174,7 @@ export interface IdentityFacetCounts {
   byType: Record<NhiType, number>;
   byBand: Record<RiskBand, number>;
   byCloud: Record<Cloud, number>;
+  byStatus: Record<IdentityStatus, number>;
   orphaned: number;
   conflicts: number;
 }
@@ -205,6 +208,8 @@ function matchesExcept(
     filter.governance?.length &&
     !filter.governance.includes(identity.governanceStatus)
   )
+    return false;
+  if (skip !== 'statuses' && filter.statuses?.length && !filter.statuses.includes(identity.status))
     return false;
   if (skip !== 'orphanedOnly' && filter.orphanedOnly && !identity.orphaned) return false;
   if (skip !== 'conflictsOnly' && filter.conflictsOnly && identity.conflicts.length === 0) return false;
@@ -241,10 +246,12 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
   const byType = emptyTypeCounts();
   const byBand: Record<RiskBand, number> = { critical: 0, high: 0, medium: 0, low: 0, minimal: 0 };
   const byCloud = emptyCloudCounts();
+  const byStatus = emptyStatusCounts();
   // Each facet is counted over the set filtered by every OTHER active facet.
   for (const identity of identities) {
     if (matchesExcept(identity, filter, 'types')) byType[identity.type] += 1;
     if (matchesExcept(identity, filter, 'bands')) byBand[identity.riskBand] += 1;
+    if (matchesExcept(identity, filter, 'statuses')) byStatus[identity.status] += 1;
     if (matchesExcept(identity, filter, 'clouds')) {
       // An identity can span clouds; count it under each of its source providers.
       for (const cloud of new Set(identity.sources.map((s) => s.cloud))) byCloud[cloud] += 1;
@@ -258,7 +265,7 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
     if (matchesExcept(identity, filter, 'conflictsOnly') && identity.conflicts.length > 0) conflicts += 1;
     if (matchesExcept(identity, filter, null)) total += 1;
   }
-  return { total, byType, byBand, byCloud, orphaned, conflicts };
+  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts };
 }
 
 function emptyTypeCounts(): Record<NhiType, number> {
@@ -275,6 +282,10 @@ function emptyCloudCounts(): Record<Cloud, number> {
   return { aws: 0, gcp: 0, azure: 0 };
 }
 
+function emptyStatusCounts(): Record<IdentityStatus, number> {
+  return { active: 0, inactive: 0, quarantined: 0 };
+}
+
 export function listIdentities(params: IdentityListParams = {}): Promise<IdentityListResult> {
   return respond(() => {
     if (isEmptyForced()) {
@@ -286,6 +297,7 @@ export function listIdentities(params: IdentityListParams = {}): Promise<Identit
           byType: emptyTypeCounts(),
           byBand: { critical: 0, high: 0, medium: 0, low: 0, minimal: 0 },
           byCloud: emptyCloudCounts(),
+          byStatus: emptyStatusCounts(),
           orphaned: 0,
           conflicts: 0,
         },

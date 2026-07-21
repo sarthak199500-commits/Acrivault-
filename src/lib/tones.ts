@@ -1,4 +1,4 @@
-import type { CloudConnection, Identity, RiskBand } from '@/mocks/types';
+import type { CloudConnection, Identity, IdentityStatus, RiskBand } from '@/mocks/types';
 import type { BadgeTone } from '@/components/ui/Badge';
 import type { DotTone } from '@/components/ui/StatusDot';
 
@@ -50,4 +50,14 @@ export const CONNECTION_TONE: Record<ConnectionState, DotTone> = {
   connecting: 'warn',
   connected: 'ok',
   error: 'crit',
+};
+
+/**
+ * Identity lifecycle status → StatusDot tone. Color rides on the states worth
+ * noticing (inactive = stale, quarantined = contained); active stays calm.
+ */
+export const STATUS_TONE: Record<IdentityStatus, DotTone> = {
+  active: 'neutral',
+  inactive: 'warn',
+  quarantined: 'crit',
 };
