@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getIdentity, listIdentities, requestRotation, type IdentityFilter, type IdentitySort } from '@/mocks/api';
+import { assignOwner, getIdentity, listIdentities, requestRotation, type IdentityFilter, type IdentitySort } from '@/mocks/api';
 
 // The mock dataset is in-memory, so we fetch the whole filtered/sorted result set
 // (references, not copies) and virtualize it client-side. Filtering and sorting
@@ -29,5 +29,21 @@ export function useRequestRotations() {
   return useMutation({
     mutationFn: (ids: string[]) => Promise.all(ids.map((id) => requestRotation(id, 'standard'))),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rotations'] }),
+  });
+}
+
+/**
+ * Assign or change an identity's owner. Writes the returned record into the detail
+ * cache immediately and invalidates the inventory so the owner/orphaned columns and
+ * the whole-population counts stay reconciled.
+ */
+export function useAssignOwner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, owner }: { id: string; owner: string }) => assignOwner(id, owner),
+    onSuccess: (updated) => {
+      qc.setQueryData(['identity', updated.id], updated);
+      qc.invalidateQueries({ queryKey: ['inventory'] });
+    },
   });
 }
