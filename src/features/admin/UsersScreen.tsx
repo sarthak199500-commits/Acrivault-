@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Ban,
   CheckCircle2,
+  FilterX,
   MoreHorizontal,
   Pencil,
   Send,
@@ -51,6 +52,8 @@ import {
 } from './queries';
 import { InviteUserDialog } from './InviteUserDialog';
 import { EditUserDialog } from './EditUserDialog';
+import { UsersToolbar } from './UsersToolbar';
+import { useUsersFilters } from './useUsersFilters';
 
 type ConfirmKind = 'suspend' | 'activate' | 'delete';
 
@@ -70,6 +73,7 @@ export function UsersScreen() {
   const forced = useUiStore((s) => s.scenario.state);
   const actorRole = useUiStore((s) => s.role);
   const actorId = useAuthStore((s) => s.userId);
+  const filters = useUsersFilters();
 
   const canInvite = useCan('users.invite');
   const canEdit = useCan('users.edit');
@@ -121,10 +125,24 @@ export function UsersScreen() {
 
   /* ----------------------------------------------------------- table body */
   const list = users.data ?? [];
+  // Last-active-Tenant-Admin guards must consider the whole org, so this stays
+  // on the full list — never the filtered view.
   const activeTaCount = activeTenantAdminCount(list);
   const loading = forced === 'loading' || users.isPending;
   const errored = forced !== 'loading' && (forced === 'error' || users.isError);
   const empty = !loading && !errored && (forced === 'empty' || list.length === 0);
+
+  // Client-side search + Role/Status filtering over the loaded list.
+  const { search, roles, statuses } = filters.filter;
+  const q = search.trim().toLowerCase();
+  const filteredList = list.filter((u) => {
+    if (roles.length && !roles.includes(u.role)) return false;
+    if (statuses.length && !statuses.includes(u.status)) return false;
+    if (q && !`${u.name} ${displayName(u)} ${u.email}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const showToolbar = !loading && !errored && !empty;
+  const noMatches = showToolbar && filteredList.length === 0;
 
   let body: ReactNode;
   if (loading) {
@@ -159,6 +177,19 @@ export function UsersScreen() {
         }
       />
     );
+  } else if (noMatches) {
+    body = (
+      <EmptyState
+        icon={<FilterX className="h-5 w-5" />}
+        headline="No users match these filters"
+        guidance="Try a different search, remove a filter, or clear them all."
+        action={
+          <Button variant="secondary" onClick={filters.clearAll}>
+            Clear filters
+          </Button>
+        }
+      />
+    );
   } else {
     body = (
       <div className="overflow-x-auto">
@@ -179,7 +210,7 @@ export function UsersScreen() {
             </tr>
           </thead>
           <tbody>
-            {list.map((u) => {
+            {filteredList.map((u) => {
               const isSelf = u.id === actorId;
               const canAct = canActOnUser(actorRole, actorId, u.role, u.id);
               // Cannot suspend/delete the last active Tenant Admin (incl. yourself).
@@ -337,6 +368,18 @@ export function UsersScreen() {
       {!showRowActions && !canInvite && (
         <div className="mb-4">
           <RoleRestricted note="You have read-only access to the user list." />
+        </div>
+      )}
+
+      {showToolbar && (
+        <div className="mb-3 space-y-2">
+          <UsersToolbar filters={filters} users={list} />
+          {filters.activeCount > 0 && (
+            <p className="text-[length:var(--fs-small)] text-text-secondary">
+              Showing <span className="tnum">{filteredList.length}</span> of{' '}
+              <span className="tnum">{list.length}</span> {list.length === 1 ? 'user' : 'users'}
+            </p>
+          )}
         </div>
       )}
 
