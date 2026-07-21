@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GitBranch, Timer } from 'lucide-react';
 import { useBlastOrigins, useBlastRadius } from './queries';
 import type { ReachKind } from '@/components/charts/RadialGraph';
@@ -29,9 +30,16 @@ function ReachStat({ kind, value }: { kind: ReachKind; value: number }) {
 }
 
 export function BlastRadiusScreen() {
+  const [searchParams] = useSearchParams();
+  const originParam = searchParams.get('origin');
   const origins = useBlastOrigins();
-  const [originId, setOriginId] = useState<string>('');
+  const [originId, setOriginId] = useState<string>(originParam ?? '');
   const [visible, setVisible] = useState<Set<ReachKind>>(new Set(['origin', 'direct', 'transitive', 'cascade']));
+
+  // A deep link (?origin=…) from an identity's detail wins over the auto-selected default.
+  useEffect(() => {
+    if (originParam) setOriginId(originParam);
+  }, [originParam]);
 
   // Auto-select the highest-risk origin once the list loads (nice populated default).
   useEffect(() => {
@@ -40,10 +48,16 @@ export function BlastRadiusScreen() {
 
   const radius = useBlastRadius(originId || undefined);
 
-  const originOptions = useMemo(
-    () => (origins.data ?? []).map((o) => ({ value: o.id, label: `${o.name}  ·  risk ${o.riskScore}` })),
-    [origins.data],
-  );
+  const originOptions = useMemo(() => {
+    const opts = (origins.data ?? []).map((o) => ({ value: o.id, label: `${o.name}  ·  risk ${o.riskScore}` }));
+    // A deep-linked origin may sit outside the top-N picker list; surface it (with its
+    // resolved name once the radius loads) so the Select shows a label, not a blank.
+    if (originId && !opts.some((o) => o.value === originId)) {
+      const label = radius.data?.nodes.find((n) => n.kind === 'origin')?.label ?? originId;
+      return [{ value: originId, label }, ...opts];
+    }
+    return opts;
+  }, [origins.data, originId, radius.data]);
 
   const toggleKind = (k: ReachKind) =>
     setVisible((prev) => {

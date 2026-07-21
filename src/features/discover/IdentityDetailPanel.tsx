@@ -1,14 +1,17 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import {
   ArrowRight,
+  GitBranch,
   GitCompareArrows,
   Link2,
+  ListChecks,
   RefreshCw,
   ShieldX,
   Unlink,
+  UserPlus,
 } from 'lucide-react';
-import { useIdentity, useRequestRotations } from './queries';
+import { useAssignOwner, useIdentity, useRequestRotations } from './queries';
 import { CLOUD_LABELS, NHI_TYPE_LABELS, type Identity } from '@/mocks/types';
 import { NOW } from '@/mocks/dataset';
 import { Drawer } from '@/components/ui/Drawer';
@@ -25,6 +28,8 @@ import { SkeletonText, Skeleton } from '@/components/ui/Skeleton';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { useCan } from '@/components/ui/Can';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Dialog } from '@/components/ui/Dialog';
+import { Input } from '@/components/ui/Input';
 import { riskBand } from '@/lib/risk';
 import { errorInfo } from '@/lib/apiError';
 import { dateTime, pluralize, relativeDays } from '@/lib/format';
@@ -43,7 +48,15 @@ function Section({ title, children, action }: { title: string; children: ReactNo
   );
 }
 
-function DetailBody({ identity }: { identity: Identity }) {
+function DetailBody({
+  identity,
+  canAssignOwner,
+  onAssignOwner,
+}: {
+  identity: Identity;
+  canAssignOwner: boolean;
+  onAssignOwner: () => void;
+}) {
   const band = riskBand(identity.riskScore);
   const series = identity.riskSeries.map((p) => p.score);
 
@@ -66,9 +79,20 @@ function DetailBody({ identity }: { identity: Identity }) {
         </span>
       </div>
 
-      {identity.orphaned && identity.orphanReason && (
-        <div className="mb-5 rounded-[var(--r-md)] border border-[color-mix(in_srgb,var(--critical)_40%,var(--border))] bg-crit-bg/40 px-3 py-2 text-[length:var(--fs-small)] text-crit-fg">
-          Orphaned: {identity.orphanReason}
+      {identity.orphaned && (
+        <div className="mb-5 flex items-center justify-between gap-3 rounded-[var(--r-md)] border border-[color-mix(in_srgb,var(--critical)_40%,var(--border))] bg-crit-bg/40 px-3 py-2 text-[length:var(--fs-small)] text-crit-fg">
+          <span>{identity.orphanReason ? `Orphaned: ${identity.orphanReason}` : 'Orphaned — no owner assigned.'}</span>
+          {canAssignOwner && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="shrink-0"
+              leadingIcon={<UserPlus className="h-3.5 w-3.5" />}
+              onClick={onAssignOwner}
+            >
+              Assign owner
+            </Button>
+          )}
         </div>
       )}
 
@@ -138,7 +162,20 @@ function DetailBody({ identity }: { identity: Identity }) {
         </Section>
       )}
 
-      <Section title={`Relationships · ${identity.relationships.length}`}>
+      <Section
+        title={`Relationships · ${identity.relationships.length}`}
+        action={
+          identity.relationships.length > 0 ? (
+            <Link
+              to={`/resilience/blast-radius?origin=${identity.id}`}
+              className="inline-flex items-center gap-1 text-[length:var(--fs-small)] text-text-tertiary hover:text-accent-text"
+            >
+              <GitBranch className="h-3.5 w-3.5" aria-hidden="true" />
+              View blast radius
+            </Link>
+          ) : undefined
+        }
+      >
         {identity.relationships.length === 0 ? (
           <p className="text-[length:var(--fs-small)] text-text-tertiary">No known relationships.</p>
         ) : (
@@ -166,11 +203,22 @@ function DetailBody({ identity }: { identity: Identity }) {
   );
 }
 
-function DetailFooter({ identity }: { identity: Identity }) {
+function DetailFooter({
+  identity,
+  canAssignOwner,
+  onAssignOwner,
+}: {
+  identity: Identity;
+  canAssignOwner: boolean;
+  onAssignOwner: () => void;
+}) {
   const canRotateStd = useCan('rotate.standard');
   const canRequest = useCan('rotate.request');
   const canQuarantine = useCan('session.quarantine');
-  const anyAction = canRotateStd || canRequest || canQuarantine;
+  const canGovern = useCan('policy.create');
+  const showSessions = identity.type === 'ai-agent';
+  const anyControl =
+    canRotateStd || canRequest || canQuarantine || canAssignOwner || canGovern || showSessions;
   const rotate = useRequestRotations();
   const [confirmQuarantine, setConfirmQuarantine] = useState(false);
 
@@ -184,7 +232,7 @@ function DetailFooter({ identity }: { identity: Identity }) {
       onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
     });
 
-  if (!anyAction) {
+  if (!anyControl) {
     return <RoleRestricted note="Your role can view this identity but not act on it." />;
   }
 
@@ -210,7 +258,23 @@ function DetailFooter({ identity }: { identity: Identity }) {
           Request rotation
         </Button>
       ) : null}
-      {identity.type === 'ai-agent' && (
+      {canAssignOwner && (
+        <Button
+          size="sm"
+          variant="secondary"
+          leadingIcon={<UserPlus className="h-3.5 w-3.5" />}
+          onClick={onAssignOwner}
+        >
+          {identity.owner ? 'Change owner' : 'Assign owner'}
+        </Button>
+      )}
+      {canGovern && (
+        <Link to="/govern" className={buttonClasses('ghost', 'sm')}>
+          <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />
+          Govern
+        </Link>
+      )}
+      {showSessions && (
         <Link to="/intelligence" className={buttonClasses('ghost', 'sm')}>
           View sessions
         </Link>
@@ -242,11 +306,77 @@ function DetailFooter({ identity }: { identity: Identity }) {
   );
 }
 
+function AssignOwnerDialog({
+  identity,
+  open,
+  onOpenChange,
+}: {
+  identity: Identity;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const assign = useAssignOwner();
+  const [value, setValue] = useState(identity.owner ?? '');
+
+  // Reseed the field each time the dialog opens (owner may have changed since).
+  useEffect(() => {
+    if (open) setValue(identity.owner ?? '');
+  }, [open, identity.owner]);
+
+  const save = () => {
+    const owner = value.trim();
+    if (!owner) return;
+    assign.mutate(
+      { id: identity.id, owner },
+      {
+        onSuccess: () => {
+          onOpenChange(false);
+          toast(`Owner assigned for ${identity.name}`, {
+            tone: 'success',
+            description: `Now owned by ${owner}.`,
+          });
+        },
+        onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
+      },
+    );
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="sm"
+      title={identity.owner ? 'Change owner' : 'Assign owner'}
+      description="Set the team or person accountable for this identity. Assigning an owner clears the orphaned state."
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={assign.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={assign.isPending} disabled={!value.trim()}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Input
+        label="Owner"
+        placeholder="team-or-person@acme.com"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        hint="Use a team alias where possible, not an individual."
+      />
+    </Dialog>
+  );
+}
+
 export function IdentityDetailPanel() {
   const { identityId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const query = useIdentity(identityId);
+  const canAssignOwner = useCan('identity.assignOwner');
+  const [assignOpen, setAssignOpen] = useState(false);
 
   // The dev Scenario Switcher can force loading / error / empty on this panel.
   // Mirror QueryBoundary's precedence (forced loading → forced error → real
@@ -287,10 +417,21 @@ export function IdentityDetailPanel() {
         <EmptyState headline="Identity not found" guidance="This id doesn't match a known identity." />
       ) : data ? (
         <>
-          <DetailBody identity={data} />
+          <DetailBody
+            identity={data}
+            canAssignOwner={canAssignOwner}
+            onAssignOwner={() => setAssignOpen(true)}
+          />
           <div className="mt-4 border-t border-border pt-4">
-            <DetailFooter identity={data} />
+            <DetailFooter
+              identity={data}
+              canAssignOwner={canAssignOwner}
+              onAssignOwner={() => setAssignOpen(true)}
+            />
           </div>
+          {canAssignOwner && (
+            <AssignOwnerDialog identity={data} open={assignOpen} onOpenChange={setAssignOpen} />
+          )}
         </>
       ) : null}
     </Drawer>

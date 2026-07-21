@@ -41,6 +41,7 @@ export type Capability =
   | 'rotate.emergency'
   | 'connector.manage'
   | 'export'
+  | 'identity.assignOwner'
   // user, group & tenant administration
   | 'users.manage'
   | 'users.invite'
@@ -73,6 +74,7 @@ const SECURITY_ADMIN_CAPS: Capability[] = [
   'rotate.emergency',
   'connector.manage',
   'export',
+  'identity.assignOwner',
 ];
 
 // Tenant Admin: everything, including users, roles, SSO, tenant settings (and billing,

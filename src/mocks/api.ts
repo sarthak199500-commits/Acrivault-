@@ -318,6 +318,29 @@ export function getIdentity(id: string): Promise<Identity | null> {
   return respond(() => getDataset().identityById.get(id) ?? null);
 }
 
+/**
+ * Assign or change an identity's owner (role-gated: `identity.assignOwner`).
+ * Assigning an owner to an orphaned identity resolves the orphaned state.
+ * // ASSUMPTION: the owner write and orphan resolution are modeled here for the
+ * mock; upstream is the real system of record for governance changes.
+ */
+export function assignOwner(identityId: string, owner: string): Promise<Identity> {
+  return respond(() => {
+    const identity = getDataset().identityById.get(identityId);
+    if (!identity) throw new MockApiError('Identity not found.', 'NOT_FOUND');
+    assertActorCan('identity.assignOwner');
+    const trimmed = owner.trim();
+    if (!trimmed) throw new MockApiError('An owner is required.', 'INVALID_OWNER');
+    identity.owner = trimmed;
+    if (identity.orphaned) {
+      identity.orphaned = false;
+      identity.orphanReason = undefined;
+    }
+    appendAudit('assigned owner', identity.name, `Owner set to ${trimmed}.`);
+    return { ...identity };
+  });
+}
+
 /* --------------------------------------------------------------------- alerts */
 
 export function listAlerts(severity?: RiskBand): Promise<Alert[]> {
