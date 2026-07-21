@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -19,7 +18,7 @@ import { PERSONAL_DOMAINS, domainOf } from '@/mocks/api';
 import { useUiStore } from '@/stores/ui';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
-import { useGroups, useInviteUser, useResendInvite, useTenant, useUsers } from './queries';
+import { useInviteUser, useResendInvite, useTenant, useUsers } from './queries';
 
 type Step = 'form' | 'review';
 
@@ -33,7 +32,6 @@ export function InviteUserDialog({
   const actorRole = useUiStore((s) => s.role);
   const assignable = assignableRoles(actorRole);
   const users = useUsers();
-  const groups = useGroups();
   const tenant = useTenant();
   const invite = useInviteUser();
   const resend = useResendInvite();
@@ -41,7 +39,6 @@ export function InviteUserDialog({
   const allowedDomains = useMemo(() => tenant.data?.allowedDomains ?? [], [tenant.data]);
   const provider = tenant.data?.sso.provider ?? 'entra';
   const ssoConfigured = tenant.data?.sso.configured ?? false;
-  const groupList = groups.data ?? [];
 
   const schema = useMemo(
     () =>
@@ -59,7 +56,6 @@ export function InviteUserDialog({
             `This email domain is not configured for your organization's SSO. Please use a domain like @${allowedDomains[0] ?? 'yourcompany.com'}.`,
           ),
         role: z.string().min(1, 'Select a role.'),
-        groupId: z.string().optional(),
       }),
     [allowedDomains],
   );
@@ -67,7 +63,7 @@ export function InviteUserDialog({
   type FormValues = z.infer<typeof schema>;
   const { register, handleSubmit, control, watch, reset, setError, formState } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { email: '', role: '', groupId: '' },
+    defaultValues: { email: '', role: '' },
     mode: 'onSubmit',
   });
 
@@ -78,7 +74,7 @@ export function InviteUserDialog({
 
   useEffect(() => {
     if (open) {
-      reset({ email: '', role: '', groupId: '' });
+      reset({ email: '', role: '' });
       setStep('form');
       setValidity(undefined);
       setDupPending(null);
@@ -106,7 +102,6 @@ export function InviteUserDialog({
   });
 
   const role = (values.role || 'viewer') as Role;
-  const groupName = groupList.find((g) => g.id === values.groupId)?.name;
   const authMethodLabel = ssoConfigured
     ? `SSO via ${SSO_PROVIDER_LABELS[provider]}`
     : 'Email + Password (fallback) — MFA enrollment required';
@@ -118,7 +113,7 @@ export function InviteUserDialog({
       const res = await invite.mutateAsync({
         email,
         role,
-        groups: values.groupId ? [values.groupId] : [],
+        groups: [],
         validity,
       });
       if (res.emailFailed) {
@@ -147,10 +142,6 @@ export function InviteUserDialog({
   };
 
   const roleOptions = assignable.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
-  const groupOptions = [
-    { value: '', label: 'No group' },
-    ...groupList.map((g) => ({ value: g.id, label: g.name })),
-  ];
 
   const footer =
     step === 'form' ? (
@@ -245,35 +236,6 @@ export function InviteUserDialog({
             )}
           </div>
 
-          <div>
-            <span className="mb-1 block text-[length:var(--fs-small)] font-medium text-text-secondary">
-              Group <span className="font-normal text-text-tertiary">(optional)</span>
-            </span>
-            {groupList.length === 0 ? (
-              <p className="text-[length:var(--fs-small)] text-text-tertiary">
-                No groups configured.{' '}
-                <Link to="/settings/groups" className="font-medium text-accent-text hover:underline">
-                  You can create a group.
-                </Link>
-              </p>
-            ) : (
-              <Controller
-                name="groupId"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    value={field.value ?? ''}
-                    onValueChange={field.onChange}
-                    options={groupOptions}
-                    placeholder="Select a group…"
-                    ariaLabel="Group"
-                    className="w-full"
-                  />
-                )}
-              />
-            )}
-          </div>
-
           <ValidityWindowField value={validity} onChange={setValidity} />
         </form>
       ) : (
@@ -285,7 +247,6 @@ export function InviteUserDialog({
             items={[
               { label: 'Email', value: values.email.trim().toLowerCase() },
               { label: 'Role', value: ROLE_LABELS[role] },
-              { label: 'Group', value: groupName ?? 'None' },
               {
                 label: 'Access window',
                 value:

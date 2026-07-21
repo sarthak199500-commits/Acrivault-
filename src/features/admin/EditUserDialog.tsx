@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { Checkbox } from '@/components/ui/Checkbox';
 import { Banner } from '@/components/ui/Banner';
 import { KeyValueList } from '@/components/ui/KeyValueList';
 import { InlineAlert } from '@/components/ui/InlineAlert';
@@ -16,7 +15,7 @@ import type { User, ValidityWindow } from '@/mocks/types';
 import { useUiStore } from '@/stores/ui';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
-import { useEditUser, useGroups } from './queries';
+import { useEditUser } from './queries';
 
 const schema = z.object({ role: z.string().min(1, 'Select a role.') });
 type FormValues = z.infer<typeof schema>;
@@ -32,23 +31,19 @@ export function EditUserDialog({
 }) {
   const actorRole = useUiStore((s) => s.role);
   const assignable = assignableRoles(actorRole);
-  const groups = useGroups();
   const edit = useEditUser();
-  const groupList = groups.data ?? [];
 
   const { control, handleSubmit, reset, formState } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { role: user?.role ?? '' },
   });
 
-  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [validity, setValidity] = useState<ValidityWindow | undefined>();
   const [banner, setBanner] = useState<string | undefined>();
 
   useEffect(() => {
     if (open && user) {
       reset({ role: user.role });
-      setGroupIds(user.groups);
       setValidity(user.validity);
       setBanner(undefined);
     }
@@ -74,7 +69,7 @@ export function EditUserDialog({
     try {
       await edit.mutateAsync({
         id: user.id,
-        patch: { role: vals.role as Role, groups: groupIds, validity },
+        patch: { role: vals.role as Role, validity },
       });
       toast(`${displayName(user)}’s access was updated.`, { tone: 'success' });
       onOpenChange(false);
@@ -83,16 +78,13 @@ export function EditUserDialog({
     }
   });
 
-  const toggleGroup = (id: string, on: boolean) =>
-    setGroupIds((prev) => (on ? [...new Set([...prev, id])] : prev.filter((g) => g !== id)));
-
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
       size="md"
       title={`Edit ${displayName(user)}`}
-      description="Change role, groups, and access window. Email and name come from the identity provider."
+      description="Change role and access window. Email and name come from the identity provider."
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
@@ -149,31 +141,9 @@ export function EditUserDialog({
 
         {user.status === 'suspended' && (
           <InlineAlert tone="info">
-            This user is suspended — role and group changes take effect when they’re reactivated.
+            This user is suspended — role changes take effect when they’re reactivated.
           </InlineAlert>
         )}
-
-        <fieldset>
-          <legend className="mb-1.5 text-[length:var(--fs-small)] font-medium text-text-secondary">
-            Groups <span className="font-normal text-text-tertiary">(optional)</span>
-          </legend>
-          {groupList.length === 0 ? (
-            <p className="text-[length:var(--fs-small)] text-text-tertiary">No groups configured.</p>
-          ) : (
-            <div className="space-y-2">
-              {groupList.map((g) => (
-                <label key={g.id} className="flex items-center gap-2.5 text-[length:var(--fs-small)] text-text-secondary">
-                  <Checkbox
-                    checked={groupIds.includes(g.id)}
-                    onCheckedChange={(on) => toggleGroup(g.id, on)}
-                    aria-label={`Member of ${g.name}`}
-                  />
-                  <span className="text-text">{g.name}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </fieldset>
 
         <ValidityWindowField value={validity} onChange={setValidity} />
       </div>

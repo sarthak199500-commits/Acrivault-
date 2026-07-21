@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import {
   Ban,
   CheckCircle2,
@@ -14,9 +13,8 @@ import {
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
-import { Badge } from '@/components/ui/Badge';
 import { Banner } from '@/components/ui/Banner';
-import { Button, buttonClasses } from '@/components/ui/Button';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -34,7 +32,7 @@ import {
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { canActOnUser, ROLE_LABELS } from '@/lib/permissions';
 import { activeTenantAdminCount } from '@/mocks/api';
-import type { Group, User } from '@/mocks/types';
+import type { User } from '@/mocks/types';
 import { relativeTime } from '@/lib/format';
 import { displayName, isProfilePending } from '@/lib/user';
 import { useUiStore } from '@/stores/ui';
@@ -45,7 +43,6 @@ import { NOW } from '@/mocks/dataset';
 import {
   useActivateUser,
   useDeleteUser,
-  useGroups,
   useResendInvite,
   useSuspendUser,
   useUsers,
@@ -57,10 +54,6 @@ import { useUsersFilters } from './useUsersFilters';
 
 type ConfirmKind = 'suspend' | 'activate' | 'delete';
 
-function groupNames(ids: string[], groups: Group[]): string[] {
-  return ids.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean) as string[];
-}
-
 function lastActivity(user: User): string {
   if (user.lastLogin) return relativeTime(user.lastLogin, NOW);
   if (user.invitedAt) return `Invited ${relativeTime(user.invitedAt, NOW)}`;
@@ -69,7 +62,6 @@ function lastActivity(user: User): string {
 
 export function UsersScreen() {
   const users = useUsers();
-  const groups = useGroups();
   const forced = useUiStore((s) => s.scenario.state);
   const actorRole = useUiStore((s) => s.role);
   const actorId = useAuthStore((s) => s.userId);
@@ -89,8 +81,6 @@ export function UsersScreen() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [confirm, setConfirm] = useState<{ kind: ConfirmKind; user: User } | null>(null);
-
-  const groupList = groups.data ?? [];
 
   const onResend = async (user: User) => {
     try {
@@ -200,7 +190,6 @@ export function UsersScreen() {
               <th scope="col" className="px-4 py-2.5 font-medium">Email</th>
               <th scope="col" className="px-4 py-2.5 font-medium">Role</th>
               <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">Groups</th>
               <th scope="col" className="px-4 py-2.5 font-medium">Last login</th>
               {showRowActions && (
                 <th scope="col" className="px-4 py-2.5 text-right font-medium">
@@ -215,7 +204,6 @@ export function UsersScreen() {
               const canAct = canActOnUser(actorRole, actorId, u.role, u.id);
               // Cannot suspend/delete the last active Tenant Admin (incl. yourself).
               const lastTa = u.role === 'tenant-admin' && u.status === 'active' && activeTaCount <= 1;
-              const names = groupNames(u.groups, groupList);
               const pending = u.status === 'pending' || u.status === 'invited';
               return (
                 // Row click is a redundant pointer shortcut to Edit (matches the
@@ -256,17 +244,6 @@ export function UsersScreen() {
                   <td className="px-4 py-2.5 font-mono text-text-secondary">{u.email}</td>
                   <td className="px-4 py-2.5 text-text-secondary">{ROLE_LABELS[u.role]}</td>
                   <td className="px-4 py-2.5"><StatusBadge status={u.status} /></td>
-                  <td className="px-4 py-2.5">
-                    {names.length ? (
-                      <span className="flex flex-wrap gap-1">
-                        {names.map((n) => (
-                          <Badge key={n} tone="neutral">{n}</Badge>
-                        ))}
-                      </span>
-                    ) : (
-                      <span className="text-text-tertiary">—</span>
-                    )}
-                  </td>
                   <td className="px-4 py-2.5 tnum text-text-secondary">{lastActivity(u)}</td>
                   {showRowActions && (
                     <td className="px-4 py-2.5 text-right">
@@ -352,16 +329,11 @@ export function UsersScreen() {
         title="Manage Users"
         description="Everyone in your organization. Invite teammates and manage their access."
         actions={
-          <>
-            <Link to="/settings/groups" className={buttonClasses('ghost', 'sm')}>
-              Groups
-            </Link>
-            {canInvite && (
-              <Button size="sm" leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setInviteOpen(true)}>
-                Invite User
-              </Button>
-            )}
-          </>
+          canInvite ? (
+            <Button size="sm" leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setInviteOpen(true)}>
+              Invite User
+            </Button>
+          ) : undefined
         }
       />
 
