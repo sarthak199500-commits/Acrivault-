@@ -53,11 +53,11 @@ export const CONNECTION_TONE: Record<ConnectionState, DotTone> = {
 };
 
 /**
- * Identity lifecycle status → StatusDot tone. Color rides on the states worth
- * noticing (inactive = stale, quarantined = contained); active stays calm.
+ * Identity lifecycle status → StatusDot tone. Active reads as a healthy/green
+ * positive; inactive = stale (amber), quarantined = contained (red).
  */
 export const STATUS_TONE: Record<IdentityStatus, DotTone> = {
-  active: 'neutral',
+  active: 'ok',
   inactive: 'warn',
   quarantined: 'crit',
 };
