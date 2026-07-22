@@ -8,7 +8,6 @@ import {
   generateAudit,
   generateConnections,
   generateCopilotSuggestions,
-  generateGroups,
   generateIdentities,
   generateInvitations,
   generateNotifications,
@@ -21,7 +20,6 @@ import {
 } from './generators';
 import {
   NHI_TYPES,
-  type Group,
   type Identity,
   type Invitation,
   type NhiType,
@@ -67,7 +65,6 @@ export interface Dataset {
   // Add-on: organization registration & administration (mutable in-memory store).
   tenant: Tenant;
   users: User[];
-  groups: Group[];
   invitations: Invitation[];
 }
 
@@ -91,7 +88,6 @@ function build(): Dataset {
     copilot: generateCopilotSuggestions(identities, SEED),
     tenant: generateTenant(NOW),
     users,
-    groups: generateGroups(users),
     invitations: generateInvitations(NOW),
   };
 }

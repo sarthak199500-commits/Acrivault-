@@ -10,7 +10,6 @@ function makeUser(overrides: Partial<User>): User {
     email: 'alex.kim@acme.com',
     role: 'analyst',
     status: 'active',
-    groups: [],
     authMethod: 'sso',
     ...overrides,
   };

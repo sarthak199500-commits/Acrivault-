@@ -43,10 +43,10 @@ describe('registration', () => {
 describe('invitations', () => {
   it('rejects out-of-domain and duplicate emails', async () => {
     await expect(
-      inviteUser({ email: 'x@globex.com', role: 'analyst', groups: [] }),
+      inviteUser({ email: 'x@globex.com', role: 'analyst' }),
     ).rejects.toMatchObject({ code: 'DOMAIN_MISMATCH' });
     await expect(
-      inviteUser({ email: 'jordan.rivera@acme.com', role: 'analyst', groups: [] }),
+      inviteUser({ email: 'jordan.rivera@acme.com', role: 'analyst' }),
     ).rejects.toMatchObject({ code: 'DUPLICATE_USER' });
   });
 
@@ -55,7 +55,6 @@ describe('invitations', () => {
     const { user, emailFailed } = await inviteUser({
       email: 'brand.new@acme.com',
       role: 'analyst',
-      groups: [],
     });
     expect(user.status).toBe('invited');
     expect(emailFailed).toBe(false);
@@ -67,7 +66,7 @@ describe('invitations', () => {
   it('only a tenant admin can invite: an analyst is forbidden even for a lower role', async () => {
     useUiStore.getState().setRole('analyst');
     await expect(
-      inviteUser({ email: 'someone@acme.com', role: 'viewer', groups: [] }),
+      inviteUser({ email: 'someone@acme.com', role: 'viewer' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 

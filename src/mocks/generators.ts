@@ -11,7 +11,6 @@ import {
   type AuditEntry,
   type Cloud,
   type CloudConnection,
-  type Group,
   type Identity,
   type IdentityStatus,
   type Invitation,
@@ -579,8 +578,6 @@ export function generateCopilotSuggestions(
 // registration "domain already taken" error is demonstrable (see api.ts).
 
 export const TENANT_ID = 'tnt_acme';
-export const GROUP_SECURITY_ID = 'grp_sec';
-export const GROUP_AUDITORS_ID = 'grp_aud';
 
 function iso(now: Date, msAgo: number): string {
   return new Date(now.getTime() - msAgo).toISOString();
@@ -606,24 +603,16 @@ export function generateTenant(now: Date): Tenant {
 export function generateUsers(now: Date): User[] {
   const base = { tenantId: TENANT_ID } as const;
   return [
-    { ...base, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 2 * HOUR) },
-    { ...base, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', groups: [], authMethod: 'sso', lastLogin: iso(now, 1 * DAY) },
-    { ...base, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 5 * HOUR) },
-    { ...base, id: 'usr_4', name: 'Morgan Ellis', email: 'morgan.ellis@acme.com', role: 'security-admin', status: 'suspended', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 20 * DAY) },
-    { ...base, id: 'usr_5', name: 'Priya Nair', email: 'priya.nair@acme.com', role: 'analyst', status: 'active', groups: [GROUP_SECURITY_ID], authMethod: 'sso', lastLogin: iso(now, 3 * HOUR) },
-    { ...base, id: 'usr_6', name: 'Sam Lee', email: 'sam.lee@acme.com', role: 'analyst', status: 'active', groups: [], authMethod: 'password', lastLogin: iso(now, 2 * DAY) },
-    { ...base, id: 'usr_7', name: 'Chris Vaughn', email: 'chris.vaughn@acme.com', role: 'viewer', status: 'active', groups: [GROUP_AUDITORS_ID], authMethod: 'sso', lastLogin: iso(now, 8 * DAY) },
-    { ...base, id: 'usr_8', name: 'Robin Park', email: 'robin.park@acme.com', role: 'analyst', status: 'pending', groups: [GROUP_SECURITY_ID], authMethod: 'sso', invitedAt: iso(now, 1 * DAY), invitedBy: 'usr_1' },
-    { ...base, id: 'usr_9', name: 'Taylor Quinn', email: 'taylor.quinn@acme.com', role: 'viewer', status: 'suspended', groups: [GROUP_AUDITORS_ID], authMethod: 'sso', validity: { expiry: iso(now, 3 * DAY) }, lastLogin: iso(now, 30 * DAY) },
-    { ...base, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: 'security-admin', status: 'invited', groups: [], authMethod: 'sso', invitedAt: iso(now, 3 * HOUR), invitedBy: 'usr_1' },
-  ];
-}
-
-export function generateGroups(users: User[]): Group[] {
-  const count = (id: string) => users.filter((u) => u.status !== 'deleted' && u.groups.includes(id)).length;
-  return [
-    { id: GROUP_SECURITY_ID, tenantId: TENANT_ID, name: 'Security Team', description: 'Responders and policy authors.', memberCount: count(GROUP_SECURITY_ID) },
-    { id: GROUP_AUDITORS_ID, tenantId: TENANT_ID, name: 'Auditors', description: 'Read-only access to the audit trail.', memberCount: count(GROUP_AUDITORS_ID) },
+    { ...base, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 2 * HOUR) },
+    { ...base, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 1 * DAY) },
+    { ...base, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 5 * HOUR) },
+    { ...base, id: 'usr_4', name: 'Morgan Ellis', email: 'morgan.ellis@acme.com', role: 'security-admin', status: 'suspended', authMethod: 'sso', lastLogin: iso(now, 20 * DAY) },
+    { ...base, id: 'usr_5', name: 'Priya Nair', email: 'priya.nair@acme.com', role: 'analyst', status: 'active', authMethod: 'sso', lastLogin: iso(now, 3 * HOUR) },
+    { ...base, id: 'usr_6', name: 'Sam Lee', email: 'sam.lee@acme.com', role: 'analyst', status: 'active', authMethod: 'password', lastLogin: iso(now, 2 * DAY) },
+    { ...base, id: 'usr_7', name: 'Chris Vaughn', email: 'chris.vaughn@acme.com', role: 'viewer', status: 'active', authMethod: 'sso', lastLogin: iso(now, 8 * DAY) },
+    { ...base, id: 'usr_8', name: 'Robin Park', email: 'robin.park@acme.com', role: 'analyst', status: 'pending', authMethod: 'sso', invitedAt: iso(now, 1 * DAY), invitedBy: 'usr_1' },
+    { ...base, id: 'usr_9', name: 'Taylor Quinn', email: 'taylor.quinn@acme.com', role: 'viewer', status: 'suspended', authMethod: 'sso', validity: { expiry: iso(now, 3 * DAY) }, lastLogin: iso(now, 30 * DAY) },
+    { ...base, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: 'security-admin', status: 'invited', authMethod: 'sso', invitedAt: iso(now, 3 * HOUR), invitedBy: 'usr_1' },
   ];
 }
 
@@ -637,25 +626,23 @@ export function generateInvitations(now: Date): Invitation[] {
     status: Invitation['status'],
     sentDaysAgo: number,
     expiresDaysFromNow: number,
-    groups: string[] = [],
   ): Invitation => ({
     token,
     tenantId: TENANT_ID,
     email,
     role,
-    groups,
     authMethod: 'sso',
     status,
     sentAt: iso(now, sentDaysAgo * DAY),
     expiresAt: new Date(now.getTime() + expiresDaysFromNow * DAY).toISOString(),
   });
   return [
-    mk('acme-demo-001', 'newhire@acme.com', 'analyst', 'pending', 1, 6, [GROUP_SECURITY_ID]),
+    mk('acme-demo-001', 'newhire@acme.com', 'analyst', 'pending', 1, 6),
     mk('acme-expired-002', 'late.applicant@acme.com', 'viewer', 'expired', 10, -3),
-    mk('acme-accepted-003', 'priya.nair@acme.com', 'analyst', 'accepted', 40, -33, [GROUP_SECURITY_ID]),
+    mk('acme-accepted-003', 'priya.nair@acme.com', 'analyst', 'accepted', 40, -33),
     mk('acme-revoked-004', 'former.contractor@acme.com', 'viewer', 'revoked', 5, 2),
     // Match the seeded pending/invited users so Resend Invitation has a target.
-    mk('inv-robin', 'robin.park@acme.com', 'analyst', 'pending', 1, 6, [GROUP_SECURITY_ID]),
+    mk('inv-robin', 'robin.park@acme.com', 'analyst', 'pending', 1, 6),
     mk('inv-jamie', 'jamie.fox@acme.com', 'security-admin', 'pending', 0.125, 7),
   ];
 }

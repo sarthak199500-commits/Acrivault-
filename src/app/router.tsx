@@ -118,10 +118,6 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import('@/features/admin/UsersScreen')).UsersScreen }),
       },
       {
-        path: 'settings/groups',
-        lazy: async () => ({ Component: (await import('@/features/admin/GroupsScreen')).GroupsScreen }),
-      },
-      {
         path: 'audit',
         lazy: async () => ({ Component: (await import('@/features/platform/AuditScreen')).AuditScreen }),
       },

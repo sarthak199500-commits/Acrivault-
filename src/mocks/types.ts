@@ -240,14 +240,6 @@ export interface Tenant {
   createdAt: string;
 }
 
-export interface Group {
-  id: string;
-  tenantId: string;
-  name: string;
-  description?: string;
-  memberCount: number;
-}
-
 export interface User {
   id: string;
   tenantId: string;
@@ -255,7 +247,6 @@ export interface User {
   email: string; // read-only, sourced from the IdP
   role: Role;
   status: UserStatus;
-  groups: string[]; // group ids
   authMethod: AuthMethod;
   validity?: ValidityWindow;
   lastLogin?: string;
@@ -268,7 +259,6 @@ export interface Invitation {
   tenantId: string;
   email: string;
   role: Role;
-  groups: string[];
   validity?: ValidityWindow;
   authMethod: AuthMethod;
   status: 'pending' | 'accepted' | 'expired' | 'revoked';

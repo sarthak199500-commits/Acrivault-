@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { KeyRound, Users as UsersIcon } from 'lucide-react';
 import { useConnections } from './queries';
-import { useGroups, useTenant, useUsers } from '@/features/admin/queries';
+import { useTenant, useUsers } from '@/features/admin/queries';
 import { CLOUD_LABELS, SSO_PROVIDER_LABELS } from '@/mocks/types';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
@@ -44,11 +44,10 @@ function AccountCard() {
 
 function UsersCard() {
   const users = useUsers();
-  const groups = useGroups();
   return (
     <Card>
       <CardHeader
-        title="Users & groups"
+        title="Users"
         description="Invite teammates, assign roles, and manage access."
         action={
           <Link to="/settings/users" className={buttonClasses('secondary', 'sm')}>
@@ -61,7 +60,6 @@ function UsersCard() {
           {(list) => {
             const active = list.filter((u) => u.status === 'active').length;
             const pending = list.filter((u) => u.status === 'pending' || u.status === 'invited').length;
-            const groupCount = groups.data?.length ?? 0;
             return (
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[length:var(--fs-small)] text-text-secondary">
                 <span className="inline-flex items-center gap-2">
@@ -70,9 +68,6 @@ function UsersCard() {
                 </span>
                 <span><span className="tnum text-text">{count(active)}</span> active</span>
                 <span><span className="tnum text-text">{count(pending)}</span> pending</span>
-                <Link to="/settings/groups" className="font-medium text-accent-text hover:underline">
-                  {pluralize(groupCount, 'group')}
-                </Link>
               </div>
             );
           }}

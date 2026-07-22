@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   activateUser,
-  createGroup,
   deleteUser,
   editUser,
   getTenant,
   inviteUser,
-  listGroups,
   listUsers,
   resendInvite,
   suspendUser,
@@ -18,10 +16,6 @@ export function useUsers() {
   return useQuery({ queryKey: ['users'], queryFn: listUsers });
 }
 
-export function useGroups() {
-  return useQuery({ queryKey: ['groups'], queryFn: listGroups });
-}
-
 export function useTenant() {
   return useQuery({ queryKey: ['tenant'], queryFn: getTenant });
 }
@@ -31,7 +25,6 @@ function useUserInvalidation() {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['users'] });
-    void qc.invalidateQueries({ queryKey: ['groups'] });
     void qc.invalidateQueries({ queryKey: ['audit'] });
   };
 }
@@ -69,13 +62,4 @@ export function useActivateUser() {
 export function useDeleteUser() {
   const invalidate = useUserInvalidation();
   return useMutation({ mutationFn: (id: string) => deleteUser(id), onSuccess: invalidate });
-}
-
-export function useCreateGroup() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ name, description }: { name: string; description?: string }) =>
-      createGroup(name, description),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['groups'] }),
-  });
 }

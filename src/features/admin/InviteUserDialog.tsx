@@ -113,7 +113,6 @@ export function InviteUserDialog({
       const res = await invite.mutateAsync({
         email,
         role,
-        groups: [],
         validity,
       });
       if (res.emailFailed) {

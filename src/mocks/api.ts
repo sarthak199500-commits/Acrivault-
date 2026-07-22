@@ -23,7 +23,6 @@ import type {
   Cloud,
   CloudConnection,
   GovernanceStatus,
-  Group,
   Identity,
   IdentityStatus,
   Invitation,
@@ -887,7 +886,6 @@ export async function acceptLegal(
     email,
     role: 'tenant-admin',
     status: 'pending',
-    groups: [],
     authMethod: 'sso',
     invitedAt: new Date().toISOString(),
   };
@@ -1051,34 +1049,9 @@ export function getUser(id: string): Promise<User | null> {
   });
 }
 
-export function listGroups(): Promise<Group[]> {
-  return respond(() => (isEmptyForced() ? [] : getDataset().groups.map((g) => ({ ...g }))));
-}
-
-export async function createGroup(name: string, description?: string): Promise<Group> {
-  await settle();
-  if (authScenario() === 'api-failure') {
-    throw new MockApiError('Could not create the group. Please try again later.', 'API_FAILURE');
-  }
-  const trimmed = name.trim();
-  if (!trimmed) throw new MockApiError('A group name is required.', 'INVALID_NAME');
-  const ds = getDataset();
-  const group: Group = {
-    id: `grp_${Math.random().toString(36).slice(2, 8)}`,
-    tenantId: ds.tenant.id,
-    name: trimmed,
-    description: description?.trim() || undefined,
-    memberCount: 0,
-  };
-  ds.groups.push(group);
-  appendAudit('created group', trimmed);
-  return { ...group };
-}
-
 export interface InvitePayload {
   email: string;
   role: Role;
-  groups: string[];
   validity?: ValidityWindow;
 }
 
@@ -1139,20 +1112,17 @@ export async function inviteUser(payload: InvitePayload): Promise<InviteResult> 
     email,
     role: payload.role,
     status: 'invited',
-    groups: payload.groups,
     authMethod: ds.tenant.sso.configured ? 'sso' : 'password',
     validity: payload.validity,
     invitedAt: now,
     invitedBy: currentActor().id,
   };
   ds.users.push(user);
-  recountGroups();
   ds.invitations.push({
     token: `inv-${Math.random().toString(36).slice(2, 8)}`,
     tenantId: ds.tenant.id,
     email,
     role: payload.role,
-    groups: payload.groups,
     validity: payload.validity,
     authMethod: user.authMethod,
     status: 'pending',
@@ -1181,7 +1151,6 @@ export async function resendInvite(id: string): Promise<{ ok: true }> {
 
 export interface UserPatch {
   role?: Role;
-  groups?: string[];
   validity?: ValidityWindow;
 }
 
@@ -1235,9 +1204,7 @@ export async function editUser(id: string, patch: UserPatch): Promise<User> {
     }
     user.role = patch.role;
   }
-  if (patch.groups) user.groups = patch.groups;
   if (patch.validity !== undefined) user.validity = patch.validity;
-  recountGroups();
   appendAudit('edited user', user.email);
   return { ...user };
 }
@@ -1278,17 +1245,8 @@ export async function deleteUser(id: string): Promise<{ ok: true }> {
   assertActorCanActOn(user);
   assertNotLastActiveTenantAdmin(user, 'remove');
   user.status = 'deleted';
-  user.groups = [];
-  recountGroups();
   appendAudit('deleted user', user.email, 'Activity logs retained in the audit trail.');
   return { ok: true };
-}
-
-function recountGroups(): void {
-  const ds = getDataset();
-  for (const g of ds.groups) {
-    g.memberCount = ds.users.filter((u) => u.status !== 'deleted' && u.groups.includes(g.id)).length;
-  }
 }
 
 /** Re-export for screens that need to map a fresh score to a band consistently. */

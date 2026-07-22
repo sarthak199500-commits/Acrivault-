@@ -76,7 +76,6 @@ export const EXTRA_TITLES: Record<string, string> = {
   '/onboarding': 'Onboarding & Connect',
   '/settings/sso': 'Sign-in & SSO',
   '/settings/users': 'Manage Users',
-  '/settings/groups': 'Groups',
   '/resilience/rehearsals': 'Recovery Rehearsals',
   '/resilience/copilot': 'Defender Copilot',
   // Registration & authentication (AuthLayout, outside the app shell).

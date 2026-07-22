@@ -42,13 +42,12 @@ export type Capability =
   | 'connector.manage'
   | 'export'
   | 'identity.assignOwner'
-  // user, group & tenant administration
+  // user & tenant administration
   | 'users.manage'
   | 'users.invite'
   | 'users.edit'
   | 'users.suspend'
   | 'users.delete'
-  | 'groups.manage'
   | 'tenant.manage'
   | 'sso.manage'
   | 'settings.manage';
@@ -86,7 +85,6 @@ const TENANT_ADMIN_CAPS: Capability[] = [
   'users.edit',
   'users.suspend',
   'users.delete',
-  'groups.manage',
   'sso.manage',
   'settings.manage',
   'tenant.manage',
