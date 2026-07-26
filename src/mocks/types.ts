@@ -98,7 +98,16 @@ export interface PolicyToken {
   value: string;
 }
 
-export type PolicyStatus = 'draft' | 'tested' | 'active';
+// Full lifecycle per the Govern module spec (FR-010/FR-011): Archived is reachable
+// only from Suspended, and only Active policies affect live behaviour.
+export type PolicyStatus = 'draft' | 'tested' | 'active' | 'suspended' | 'archived';
+export const POLICY_STATUSES: PolicyStatus[] = [
+  'draft',
+  'tested',
+  'active',
+  'suspended',
+  'archived',
+];
 
 export interface Policy {
   id: string;
@@ -109,6 +118,15 @@ export interface Policy {
   affectedCount: number; // precomputed
   status: PolicyStatus;
   updatedAt: string;
+  /** Set on every successful dry-run. Null until first tested. */
+  lastTestedAt?: string;
+  /** Set on first activation; retained across suspend/reactivate. */
+  activatedAt?: string;
+  /**
+   * The exact token set proven by the last dry-run. Activation requires this to
+   * still match `tokens` (FR-005) — editing a rule invalidates its test.
+   */
+  testedTokens?: PolicyToken[];
 }
 
 export type SessionStepKind = 'prompt' | 'tool-call' | 'model-response';

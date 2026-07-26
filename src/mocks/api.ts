@@ -375,8 +375,16 @@ export function resolveAlert(id: string): Promise<Alert> {
 
 /* ------------------------------------------------------------------- policies */
 
-export function listPolicies(): Promise<Policy[]> {
-  return respond(() => (isEmptyForced() ? [] : [...getDataset().policies]));
+/**
+ * Archived policies are retained for audit but excluded from the default view
+ * (Govern spec SCR-01 / FR-011).
+ */
+export function listPolicies(opts?: { includeArchived?: boolean }): Promise<Policy[]> {
+  return respond(() => {
+    if (isEmptyForced()) return [];
+    const rows = getDataset().policies;
+    return opts?.includeArchived ? [...rows] : rows.filter((p) => p.status !== 'archived');
+  });
 }
 
 export function getPolicy(id: string): Promise<Policy | null> {
@@ -411,23 +419,60 @@ export interface PolicySaveInput {
   tokens: PolicyToken[];
   plainEnglish: string;
   generatedCode: string;
-  status: Policy['status'];
+  /** Authoring only. Reaching Active goes through `activatePolicy`, never a save. */
+  status: 'draft' | 'tested';
 }
 
-/** Create or update a policy in the in-memory store; affected count is recomputed. */
+function findPolicy(id: string): Policy {
+  const policy = getDataset().policies.find((p) => p.id === id);
+  if (!policy) throw new MockApiError('Policy not found.', 'NOT_FOUND');
+  return policy;
+}
+
+function affectedFor(tokens: PolicyToken[]): number {
+  return getDataset().identities.filter((i) => matchesPolicy(i, tokens)).length;
+}
+
+function countPhrase(n: number): string {
+  return `${n} matching ${n === 1 ? 'identity' : 'identities'}`;
+}
+
+/** Same rule, token for token — a test only proves the set it ran against (FR-005). */
+function sameTokens(a: PolicyToken[] | undefined, b: PolicyToken[]): boolean {
+  if (!a || a.length !== b.length) return false;
+  return a.every((t, i) =>
+    t.kind === b[i].kind &&
+    t.subject === b[i].subject &&
+    t.operator === b[i].operator &&
+    t.value === b[i].value);
+}
+
+/**
+ * Create or update a policy as Draft/Tested (role-gated: `policy.create`).
+ * Editing clears nothing — but because the tested-token snapshot no longer matches,
+ * an edited policy can't be activated until it is re-tested (FR-005, FR-008).
+ */
 export function savePolicy(input: PolicySaveInput): Promise<Policy> {
   return respond(() => {
-    const { policies, identities } = getDataset();
-    const affectedCount = identities.filter((i) => matchesPolicy(i, input.tokens)).length;
+    assertActorCan('policy.create');
+    const { policies } = getDataset();
+    const affectedCount = affectedFor(input.tokens);
     const existing = input.id ? policies.find((p) => p.id === input.id) : undefined;
     if (existing) {
+      if (existing.status === 'archived') {
+        throw new MockApiError('An archived policy cannot be edited.', 'INVALID_TRANSITION');
+      }
       existing.name = input.name;
       existing.tokens = input.tokens;
       existing.plainEnglish = input.plainEnglish;
       existing.generatedCode = input.generatedCode;
-      existing.status = input.status;
       existing.affectedCount = affectedCount;
       existing.updatedAt = new Date().toISOString();
+      // An Active policy keeps enforcing its activated version until the edit is
+      // re-tested and re-activated (FR-008); only authoring statuses move here.
+      if (existing.status !== 'active' && existing.status !== 'suspended') {
+        existing.status = input.status;
+      }
       return { ...existing };
     }
     const created: Policy = {
@@ -445,12 +490,132 @@ export function savePolicy(input: PolicySaveInput): Promise<Policy> {
   });
 }
 
+export interface PolicyTestResult {
+  policy: Policy;
+  evaluation: PolicyEvalResult;
+}
+
+/**
+ * Dry-run a rule and record that it passed (role-gated: `policy.test`).
+ * Persists the policy so the test is attributable and can gate activation — a
+ * dry-run reports the affected set and enforces nothing (FR-004).
+ */
+export function testPolicy(input: PolicySaveInput): Promise<PolicyTestResult> {
+  return respond(() => {
+    assertActorCan('policy.test');
+    const { policies, identities } = getDataset();
+    const matched = identities.filter((i) => matchesPolicy(i, input.tokens));
+    const now = new Date().toISOString();
+
+    let policy = input.id ? policies.find((p) => p.id === input.id) : undefined;
+    if (policy && policy.status === 'archived') {
+      throw new MockApiError('An archived policy cannot be tested.', 'INVALID_TRANSITION');
+    }
+    if (policy) {
+      policy.name = input.name;
+      policy.tokens = input.tokens;
+      policy.plainEnglish = input.plainEnglish;
+      policy.generatedCode = input.generatedCode;
+      policy.affectedCount = matched.length;
+      policy.updatedAt = now;
+      // Testing never revives an Active/Suspended policy's enforcement state.
+      if (policy.status === 'draft' || policy.status === 'tested') policy.status = 'tested';
+    } else {
+      policy = {
+        id: `pol_${Math.random().toString(36).slice(2, 8)}`,
+        name: input.name,
+        tokens: input.tokens,
+        plainEnglish: input.plainEnglish,
+        generatedCode: input.generatedCode,
+        affectedCount: matched.length,
+        status: 'tested',
+        updatedAt: now,
+      };
+      policies.unshift(policy);
+    }
+    policy.lastTestedAt = now;
+    policy.testedTokens = input.tokens.map((t) => ({ ...t }));
+
+    appendAudit('tested policy', policy.name, `Dry run — would affect ${countPhrase(matched.length)}. Nothing enforced.`);
+
+    return {
+      policy: { ...policy },
+      evaluation: {
+        affected: matched.length,
+        total: identities.length,
+        sample: matched.slice(0, 6).map((i) => ({ id: i.id, name: i.name, riskScore: i.riskScore })),
+      },
+    };
+  });
+}
+
+/**
+ * Commit a tested policy to enforcement, or reactivate a suspended one
+ * (role-gated: `policy.activate`). Requires the exact rule being activated to
+ * have passed a dry-run since its last edit (FR-005, FR-006, FR-007).
+ */
 export function activatePolicy(id: string): Promise<Policy> {
   return respond(() => {
-    const policy = getDataset().policies.find((p) => p.id === id);
-    if (!policy) throw new MockApiError('Policy not found.');
+    const policy = findPolicy(id);
+    assertActorCan('policy.activate');
+    if (policy.status === 'active') {
+      throw new MockApiError('This policy is already active.', 'INVALID_TRANSITION');
+    }
+    if (policy.status === 'archived') {
+      throw new MockApiError('An archived policy cannot be activated.', 'INVALID_TRANSITION');
+    }
+    if (!sameTokens(policy.testedTokens, policy.tokens)) {
+      throw new MockApiError(
+        'This policy has changed since it was last tested — test again before activating.',
+        'STALE_TEST',
+      );
+    }
+    const reactivating = policy.status === 'suspended';
+    const now = new Date().toISOString();
     policy.status = 'active';
+    policy.updatedAt = now;
+    policy.activatedAt ??= now;
+    appendAudit(
+      reactivating ? 'reactivated policy' : 'activated policy',
+      policy.name,
+      `Enforced against ${countPhrase(policy.affectedCount)}.`,
+    );
+    return { ...policy };
+  });
+}
+
+/**
+ * Stop enforcement without discarding the policy or its history
+ * (role-gated: `policy.lifecycle`, FR-010).
+ */
+export function suspendPolicy(id: string): Promise<Policy> {
+  return respond(() => {
+    const policy = findPolicy(id);
+    assertActorCan('policy.lifecycle');
+    if (policy.status !== 'active') {
+      throw new MockApiError('Only an active policy can be suspended.', 'INVALID_TRANSITION');
+    }
+    policy.status = 'suspended';
     policy.updatedAt = new Date().toISOString();
+    appendAudit('suspended policy', policy.name, 'Enforcement stopped immediately. The policy was not deleted.');
+    return { ...policy };
+  });
+}
+
+/**
+ * Retire a suspended policy (role-gated: `policy.lifecycle`). Archiving is
+ * reachable only from Suspended — never straight from Active (FR-011).
+ */
+export function archivePolicy(id: string): Promise<Policy> {
+  return respond(() => {
+    const policy = findPolicy(id);
+    assertActorCan('policy.lifecycle');
+    if (policy.status !== 'suspended') {
+      throw new MockApiError('Suspend this policy before archiving it.', 'INVALID_TRANSITION');
+    }
+    policy.status = 'archived';
+    policy.updatedAt = new Date().toISOString();
+    appendAudit('archived policy', policy.name, 'Retained for audit; hidden from the default policy list.');
     return { ...policy };
   });
 }

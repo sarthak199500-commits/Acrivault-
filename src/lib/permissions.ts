@@ -36,6 +36,9 @@ export type Capability =
   | 'policy.create'
   | 'policy.test'
   | 'policy.activate'
+  // Suspend / reactivate / archive. Grouped with activation in the Govern spec's
+  // RBAC matrix (§15.2) but named separately — archiving is not activating.
+  | 'policy.lifecycle'
   | 'rotate.request'
   | 'rotate.standard'
   | 'rotate.emergency'
@@ -68,6 +71,7 @@ const SECURITY_ADMIN_CAPS: Capability[] = [
   'policy.create',
   'policy.test',
   'policy.activate',
+  'policy.lifecycle',
   'rotate.request',
   'rotate.standard',
   'rotate.emergency',

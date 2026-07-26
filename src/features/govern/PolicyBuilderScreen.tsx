@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FlaskConical, Save, ShieldCheck, Sparkles } from 'lucide-react';
-import { usePolicy, useEvaluate, useSavePolicy } from './queries';
+import { usePolicy, useEvaluate, useSavePolicy, useTestPolicy, useActivatePolicy } from './queries';
 import { TokenCanvas } from './TokenCanvas';
 import type { PolicyToken } from '@/mocks/types';
 import { defaultTokens, generatedCode, plainEnglish } from '@/mocks/policy';
@@ -17,7 +17,9 @@ import { Banner } from '@/components/ui/Banner';
 import { useCan } from '@/components/ui/Can';
 import { count, pluralize } from '@/lib/format';
 import { toast } from '@/stores/toast';
+import { errorInfo } from '@/lib/apiError';
 import { announce } from '@/lib/a11y';
+import type { PolicyEvalResult } from '@/mocks/api';
 
 export function PolicyBuilderScreen() {
   const { policyId } = useParams();
@@ -32,8 +34,11 @@ export function PolicyBuilderScreen() {
 
   const [name, setName] = useState('');
   const [tokens, setTokens] = useState<PolicyToken[]>(defaultTokens);
-  const [tested, setTested] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** Id of the persisted policy this screen is editing — set once a draft is saved or tested. */
+  const [savedId, setSavedId] = useState<string | undefined>(policyId);
+  /** Result of the last dry-run of the *current* rule. Cleared by any edit (FR-005). */
+  const [testResult, setTestResult] = useState<PolicyEvalResult | null>(null);
   const seeded = useRef(false);
 
   // Seed from the loaded policy once (don't clobber subsequent edits).
@@ -50,20 +55,61 @@ export function PolicyBuilderScreen() {
   const evaluation = useEvaluate(tokens);
 
   const save = useSavePolicy();
+  const test = useTestPolicy();
+  const activate = useActivatePolicy();
 
-  const persist = (status: 'draft' | 'tested' | 'active') => {
+  const input = () => ({
+    id: savedId,
+    name: name.trim() || 'Untitled policy',
+    tokens,
+    plainEnglish: english,
+    generatedCode: code,
+  });
+
+  const onError = (err: unknown) => toast(errorInfo(err).message, { tone: 'critical' });
+
+  const saveDraft = () => {
     save.mutate(
-      { id: policyId, name: name.trim() || 'Untitled policy', tokens, plainEnglish: english, generatedCode: code, status },
+      { ...input(), status: testResult ? 'tested' : 'draft' },
       {
-        onSuccess: () => {
-          toast(
-            status === 'active' ? 'Policy saved & activated' : 'Policy saved',
-            { description: name || 'Untitled policy', tone: status === 'active' ? 'success' : 'default' },
-          );
+        onSuccess: (policy) => {
+          toast('Policy saved', { description: policy.name });
           navigate('/govern');
         },
+        onError,
       },
     );
+  };
+
+  const runTest = () => {
+    test.mutate(
+      { ...input(), status: 'tested' },
+      {
+        onSuccess: ({ policy, evaluation: result }) => {
+          setSavedId(policy.id);
+          setTestResult(result);
+          const phrase = `${pluralize(result.affected, 'identity', 'identities')} ${result.affected === 1 ? 'matches' : 'match'}`;
+          announce(`Tested — ${phrase}`);
+          toast(`Test complete — ${phrase} this rule`, { description: 'Dry run. Nothing was enforced.' });
+        },
+        onError,
+      },
+    );
+  };
+
+  const confirmActivate = () => {
+    if (!savedId) return;
+    activate.mutate(savedId, {
+      onSuccess: (policy) => {
+        setConfirmOpen(false);
+        toast('Policy activated — now enforcing', { description: policy.name, tone: 'success' });
+        navigate('/govern');
+      },
+      onError: (err) => {
+        setConfirmOpen(false);
+        onError(err);
+      },
+    });
   };
 
   if (isEditing && existing.isPending) {
@@ -78,7 +124,25 @@ export function PolicyBuilderScreen() {
     );
   }
 
+  if (isEditing && existing.isError) {
+    return (
+      <div>
+        <ScreenHeader eyebrow="Know · Govern" title="Policy Builder" />
+        <Banner tone="critical">
+          {errorInfo(existing.error).message} This policy couldn&apos;t be loaded — go back to the list and try again.
+        </Banner>
+        <div className="mt-4">
+          <Button variant="secondary" size="sm" onClick={() => navigate('/govern')}>
+            Back to policies
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   const affected = evaluation.data?.affected;
+  // Activation depends on a dry-run of the rule as it stands right now (FR-005).
+  const activationBlocked = !testResult;
 
   return (
     <div>
@@ -95,7 +159,7 @@ export function PolicyBuilderScreen() {
 
       {readOnly && (
         <div className="mb-4">
-          <Banner tone="info">You're viewing this policy read-only. Authoring requires an Analyst or Admin role.</Banner>
+          <Banner tone="info">You&apos;re viewing this policy read-only. Authoring requires an Analyst or Admin role.</Banner>
         </div>
       )}
 
@@ -115,48 +179,71 @@ export function PolicyBuilderScreen() {
           <Card>
             <CardHeader title="Rule" description="Add, edit, reorder, or remove conditions; pick a then-action." />
             <CardBody>
-              <TokenCanvas tokens={tokens} onChange={(t) => { setTokens(t); setTested(false); }} disabled={readOnly} />
+              <TokenCanvas
+                tokens={tokens}
+                onChange={(t) => {
+                  setTokens(t);
+                  // Editing the rule invalidates the test that would have gated activation.
+                  setTestResult(null);
+                }}
+                disabled={readOnly}
+              />
             </CardBody>
           </Card>
 
           {!readOnly && (
-            <div className="flex flex-wrap items-center gap-2">
-              {canTest && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {canTest && (
+                  <Button
+                    variant="secondary"
+                    leadingIcon={<FlaskConical className="h-4 w-4" />}
+                    loading={test.isPending}
+                    onClick={runTest}
+                  >
+                    Test
+                  </Button>
+                )}
                 <Button
-                  variant="secondary"
-                  leadingIcon={<FlaskConical className="h-4 w-4" />}
-                  loading={evaluation.isFetching}
-                  onClick={() => {
-                    setTested(true);
-                    announce(`Tested — ${pluralize(affected ?? 0, 'identity', 'identities')} ${(affected ?? 0) === 1 ? 'matches' : 'match'}`);
-                    toast(`${pluralize(affected ?? 0, 'identity', 'identities')} ${(affected ?? 0) === 1 ? 'matches' : 'match'} this rule`, { description: 'Simulated evaluation.' });
-                  }}
+                  variant="ghost"
+                  leadingIcon={<Save className="h-4 w-4" />}
+                  onClick={saveDraft}
+                  loading={save.isPending}
                 >
-                  Test
+                  Save draft
                 </Button>
-              )}
-              <Button variant="ghost" leadingIcon={<Save className="h-4 w-4" />} onClick={() => persist(tested ? 'tested' : 'draft')} loading={save.isPending}>
-                Save draft
-              </Button>
-              {canActivate ? (
-                <Button leadingIcon={<ShieldCheck className="h-4 w-4" />} onClick={() => setConfirmOpen(true)}>
-                  Save &amp; activate
-                </Button>
-              ) : (
-                <RoleRestricted inline note="Only a Security Admin can activate a policy." />
-              )}
-            </div>
+                {canActivate ? (
+                  <Button
+                    leadingIcon={<ShieldCheck className="h-4 w-4" />}
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={activationBlocked}
+                  >
+                    Save &amp; activate
+                  </Button>
+                ) : (
+                  <RoleRestricted inline note="Only a Security Admin can activate a policy." />
+                )}
+              </div>
+              <p className="text-[length:var(--fs-small)] text-text-tertiary">
+                {activationBlocked
+                  ? 'Test is a dry-run — nothing is enforced. A policy must pass a test before it can be activated.'
+                  : 'Test is a dry-run — nothing is enforced until you Save & activate.'}
+              </p>
+            </>
           )}
 
-          {tested && evaluation.data && (
+          {testResult && (
             <Card>
-              <CardHeader title="Test result" description={`${count(evaluation.data.affected)} of ${count(evaluation.data.total)} identities match.`} />
+              <CardHeader
+                title="Test result"
+                description={`${count(testResult.affected)} of ${count(testResult.total)} identities match.`}
+              />
               <CardBody>
-                {evaluation.data.sample.length === 0 ? (
+                {testResult.sample.length === 0 ? (
                   <p className="text-[length:var(--fs-small)] text-text-tertiary">No identities match this rule.</p>
                 ) : (
                   <ul className="space-y-1">
-                    {evaluation.data.sample.map((s) => (
+                    {testResult.sample.map((s) => (
                       <li key={s.id} className="flex items-center justify-between rounded-[var(--r-sm)] border border-border bg-surface-2 px-2.5 py-1.5">
                         <span className="truncate font-mono text-[length:var(--fs-small)] text-text">{s.name}</span>
                         <span className="tnum text-[length:var(--fs-small)] text-text-tertiary">risk {s.riskScore}</span>
@@ -198,11 +285,11 @@ export function PolicyBuilderScreen() {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="Activate this policy?"
-        description={`This will enforce the rule against ${count(affected ?? 0)} matching identities. Enforcement is illustrative in Wave 1.`}
+        description={`This will enforce the rule against ${count(testResult?.affected ?? 0)} matching identities. Enforcement is illustrative in Wave 1.`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            <Button onClick={() => { setConfirmOpen(false); persist('active'); }} loading={save.isPending}>
+            <Button onClick={confirmActivate} loading={activate.isPending}>
               Activate
             </Button>
           </>
