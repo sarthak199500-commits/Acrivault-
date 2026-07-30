@@ -10,6 +10,7 @@ import {
   getDataset,
   orphanedCount,
   riskBreakdown,
+  sourceInstanceCount,
   typeBreakdown,
 } from './dataset';
 import { riskBand } from '@/lib/risk';
@@ -81,14 +82,27 @@ export interface OverviewAlert extends Alert {
   identityType?: NhiType;
 }
 
+/**
+ * How long ago the last successful cloud sync completed, in minutes. Raise above
+ * STALE_SYNC_MINUTES (see DashboardScreen) to demonstrate the stale-data banner.
+ * // ASSUMPTION: real sync scheduling is upstream.
+ */
+export const SYNC_AGE_MINUTES = 6;
+
 export interface OverviewData {
   total: number;
+  /** Raw per-cloud instances before correlation; always >= `total`. */
+  sourceInstances: number;
+  /** ISO timestamp of the last successful sync, for the "as of" stamp. */
+  lastSyncAt: string;
   typeBreakdown: { type: NhiType; count: number }[];
   riskBreakdown: Record<RiskBand, number>;
   orphaned: number;
   conflicts: number;
   /** Count of identities whose governance has drifted (for the drift KPI). */
   governanceDrift: number;
+  /** Total open alerts, so the alerts card can say how many it is showing of how many. */
+  openAlerts: number;
   activity: { t: string; discovered: number; alerts: number }[];
   topAlerts: OverviewAlert[];
 }
@@ -98,11 +112,14 @@ export function getOverview(): Promise<OverviewData> {
     if (isEmptyForced()) {
       return {
         total: 0,
+        sourceInstances: 0,
+        lastSyncAt: new Date(Date.now() - SYNC_AGE_MINUTES * 60000).toISOString(),
         typeBreakdown: typeBreakdown([]),
         riskBreakdown: riskBreakdown([]),
         orphaned: 0,
         conflicts: 0,
         governanceDrift: 0,
+        openAlerts: 0,
         activity: [],
         topAlerts: [],
       };
@@ -121,11 +138,17 @@ export function getOverview(): Promise<OverviewData> {
     });
     return {
       total: identities.length,
+      sourceInstances: sourceInstanceCount(identities),
+      // Synthetic sync recency, shared by the dashboard's "as of" stamp and the
+      // inventory's "Last scan" tile so the two cannot disagree.
+      // ASSUMPTION: real sync scheduling and its timestamp are upstream.
+      lastSyncAt: new Date(Date.now() - SYNC_AGE_MINUTES * 60000).toISOString(),
       typeBreakdown: typeBreakdown(identities),
       riskBreakdown: riskBreakdown(identities),
       orphaned: orphanedCount(identities),
       conflicts: conflictsCount(identities),
       governanceDrift: identities.filter((i) => i.governanceStatus === 'drift').length,
+      openAlerts: alerts.filter((a) => a.status === 'open').length,
       activity,
       topAlerts: alerts
         .filter((a) => a.status === 'open')

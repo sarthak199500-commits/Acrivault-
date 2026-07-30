@@ -19,7 +19,7 @@ import { Button, buttonClasses } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
-import { count, pluralize } from '@/lib/format';
+import { count, pluralize, relativeTime } from '@/lib/format';
 import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS } from '@/mocks/types';
 import { bandMeta } from '@/lib/risk';
 import { PROVIDER_LABEL } from '@/components/ui/ProviderBadge';
@@ -46,18 +46,23 @@ function InventoryKpis() {
   }
   if (overview.isError || !overview.data) return null;
   const d = overview.data;
-  const highRisk = d.riskBreakdown.critical + d.riskBreakdown.high;
   const driftPct = d.total > 0 ? (d.governanceDrift / d.total) * 100 : 0;
 
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiTile label="Total identities" value={d.total} to="/discover" icon={<Boxes className="h-4 w-4" />} />
+      {/* Was "High-risk" = critical + high (score >= 60), linking to ?band=critical,high.
+          The dashboard's tile counted critical only (>= 80), so the two screens showed
+          different numbers under different labels for what a reader takes to be the
+          same idea. Both now report the same metric, from the same field, behind the
+          same filter: one taxonomy, one count, one definition. */}
       <KpiTile
-        label="High-risk"
-        value={highRisk}
-        to="/discover?band=critical,high"
+        label="Critical risk"
+        value={d.riskBreakdown.critical}
+        to="/discover?band=critical"
         icon={<AlertTriangle className="h-4 w-4" />}
-        delta={18}
+        risk="critical"
+        delta={6}
         deltaLabel="this week"
         deltaInverted
       />
@@ -70,7 +75,9 @@ function InventoryKpis() {
         deltaLabel="pts"
         deltaInverted
       />
-      <KpiTile label="Last scan" value="6 min ago" icon={<RefreshCw className="h-4 w-4" />} />
+      {/* Reads from the shared sync timestamp rather than a hardcoded string, so it
+          cannot disagree with the dashboard's "as of" stamp. */}
+      <KpiTile label="Last scan" value={relativeTime(d.lastSyncAt)} icon={<RefreshCw className="h-4 w-4" />} />
     </div>
   );
 }
@@ -207,16 +214,14 @@ export function InventoryScreen() {
         title="Identity Inventory"
         description="Every correlated non-human identity. Filter, sort, and expand a row to inspect its source instances."
         actions={
-          data ? (
+          // The unfiltered "N identities" count is removed — it duplicated the
+          // "Total identities" KPI tile directly below. The filtered "X of Y ·
+          // filtered by …" summary is kept: it is the only place the filtered result
+          // count and the active filters are stated.
+          data && filters.activeCount > 0 ? (
             <span className="hidden text-[length:var(--fs-small)] text-text-secondary sm:inline">
-              {filters.activeCount > 0 ? (
-                <>
-                  <span className="tnum">{count(data.total)}</span> of <span className="tnum">{count(grandTotal)}</span>
-                  {filterSummary && <span className="text-text-tertiary"> · filtered by {filterSummary}</span>}
-                </>
-              ) : (
-                <span className="tnum">{pluralize(data.total, 'identity', 'identities')}</span>
-              )}
+              <span className="tnum">{count(data.total)}</span> of <span className="tnum">{count(grandTotal)}</span>
+              {filterSummary && <span className="text-text-tertiary"> · filtered by {filterSummary}</span>}
             </span>
           ) : undefined
         }

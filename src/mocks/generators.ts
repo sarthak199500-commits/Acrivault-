@@ -145,9 +145,13 @@ function makeRiskSeries(rng: Rng, finalScore: number, end: Date): { t: string; s
 }
 
 function makeIdentity(rng: Rng, index: number, now: Date): Identity {
-  // Distribution: AI agents prominent, then service accounts, API keys, OAuth, workload.
+  // Distribution calibrated to a mid-market 2026 estimate: service accounts and
+  // API keys dominate, AI agents are a small but fast-growing slice (~3%, i.e.
+  // 40-60 at the default 1,500). Was [34, 26, 18, 14, 8], which put AI agents at
+  // 31% of the estimate — an AI-native vendor's aspiration, not a customer's
+  // current reality, and the first thing a buyer would call unrealistic.
   // ASSUMPTION: type classification for the per-type breakdown is upstream.
-  const type = rng.weighted<NhiType>(NHI_TYPES, [34, 26, 18, 14, 8]);
+  const type = rng.weighted<NhiType>(NHI_TYPES, [3, 40, 27, 18, 12]);
   const pool = namePool(type);
   const name = `${typePrefix(type)}-${rng.pick(pool)}-${String(index).padStart(5, '0')}`;
 
@@ -172,13 +176,17 @@ function makeIdentity(rng: Rng, index: number, now: Date): Identity {
     .sort()
     .reverse()[0];
 
-  // Risk: long tail into critical/high. // ASSUMPTION: risk-score derivation upstream.
+  // Risk: long tail, with critical kept genuinely rare (~1.6%, i.e. 18-25 at the
+  // default 1,500). Was 8% critical, which combined with the orphan bump below
+  // produced ~13% criticals — a population no mid-market tenant would recognise,
+  // and one that makes "critical" meaningless as a triage signal.
+  // ASSUMPTION: risk-score derivation upstream.
   const roll = rng.float();
   let riskScore: number;
-  if (roll < 0.08) riskScore = rng.int(80, 100);
-  else if (roll < 0.22) riskScore = rng.int(60, 79);
-  else if (roll < 0.42) riskScore = rng.int(40, 59);
-  else if (roll < 0.72) riskScore = rng.int(20, 39);
+  if (roll < 0.016) riskScore = rng.int(80, 100);
+  else if (roll < 0.1) riskScore = rng.int(60, 79);
+  else if (roll < 0.32) riskScore = rng.int(40, 59);
+  else if (roll < 0.68) riskScore = rng.int(20, 39);
   else riskScore = rng.int(0, 19);
 
   // Orphaned: a meaningful slice, skewed higher risk. // ASSUMPTION: orphan detection upstream.
@@ -186,7 +194,10 @@ function makeIdentity(rng: Rng, index: number, now: Date): Identity {
   const orphanReason = orphaned
     ? rng.pick(['No owner assigned', 'No legitimate use in 90 days', 'Creator account deactivated'])
     : undefined;
-  if (orphaned) riskScore = Math.max(riskScore, rng.int(55, 95));
+  // Orphans are elevated but capped below the critical threshold (was 55..95, which
+  // manufactured most of the critical population as a side effect). An orphan is a
+  // hygiene problem; it becomes critical only on its own score.
+  if (orphaned) riskScore = Math.max(riskScore, rng.int(55, 79));
 
   // Cross-source attribute conflicts, surfaced never merged.
   const conflicts: AttributeConflict[] = [];
@@ -209,10 +220,20 @@ function makeIdentity(rng: Rng, index: number, now: Date): Identity {
 
   // Lifecycle status (derived, display-only): quarantined tracks contained
   // high-risk orphans; inactive tracks identities not seen in weeks; else active.
-  // ASSUMPTION: status derivation is upstream.
+  //
+  // Containment is a decision, not a threshold: a high-risk orphan is a *candidate*
+  // and something — a policy or an analyst — has to act on it, so only a minority
+  // are actually contained. (Was `orphaned && riskScore >= 85`, which relied on the
+  // old orphan bump reaching 95; with orphans now capped at 79 that rule quarantined
+  // almost nothing.)
+  // ASSUMPTION: status derivation, and the containment action behind it, are upstream.
   const daysSinceSeen = (now.getTime() - new Date(lastSeen).getTime()) / 86400000;
-  const status: IdentityStatus =
-    orphaned && riskScore >= 85 ? 'quarantined' : daysSinceSeen >= 24 ? 'inactive' : 'active';
+  const contained = orphaned && riskScore >= 70 && rng.bool(0.25);
+  const status: IdentityStatus = contained
+    ? 'quarantined'
+    : daysSinceSeen >= 24
+      ? 'inactive'
+      : 'active';
 
   return {
     id: `idn_${index.toString(36).padStart(6, '0')}`,
@@ -327,7 +348,13 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
   const rng = new Rng(seed ^ 0x55aa55);
   const agents = identities.filter((i) => i.type === 'ai-agent');
   const sessions: AgentSession[] = [];
-  const count = Math.min(agents.length, Math.max(10, Math.floor(agents.length * 0.2)));
+  // Sessions per agent, not a fraction of the agent population: an agent is
+  // long-running and accumulates many sessions over a week, so the session count
+  // scales with agents rather than being bounded by them. (Was
+  // `min(agents, max(10, agents * 0.2))`, which capped the feed at one session per
+  // agent — after the type recalibration cut AI agents to ~4% of the population
+  // that left the feed at 11 rows.)
+  const count = agents.length === 0 ? 0 : Math.max(10, Math.round(agents.length * 1.5));
   for (let i = 0; i < count; i++) {
     const agent = rng.pick(agents);
     const stepCount = rng.int(5, 14);

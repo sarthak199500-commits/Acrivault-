@@ -2,16 +2,21 @@ import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDownRight, ArrowRight, ArrowUpRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { compact } from '@/lib/format';
+import { count } from '@/lib/format';
 import { Sparkline } from './Sparkline';
 
 export interface KpiTileProps {
   label: string;
-  /** Number (compact-formatted) or a pre-formatted string (e.g. "6.3%", "6 min ago"). */
+  /** Number (exact, grouped) or a pre-formatted string (e.g. "6.3%", "6 min ago"). */
   value: number | string;
   /** Optional signed delta vs a prior period. */
   delta?: number;
   deltaLabel?: string;
+  /**
+   * Static qualifier shown under the value when there is no `delta` — e.g. a share
+   * of a whole. Not a trend: no arrow, no favourable/unfavourable colour.
+   */
+  caption?: ReactNode;
   /** When true, an upward delta is unfavorable (warn) and down is good — for "lower is better" metrics. */
   deltaInverted?: boolean;
   sparkline?: number[];
@@ -33,6 +38,7 @@ export function KpiTile({
   value,
   delta,
   deltaLabel,
+  caption,
   deltaInverted = false,
   sparkline,
   icon,
@@ -48,7 +54,11 @@ export function KpiTile({
   const deltaTone =
     favorable === 'up' ? 'text-ok-fg' : favorable === 'down' ? 'text-warn-fg' : 'text-text-tertiary';
 
-  const valueText = typeof value === 'number' ? compact(value) : value;
+  // Exact grouped integers, not compact ("1,500" not "1.5K"). These figures are
+  // read in a compliance context, where a rounded headline that disagrees with the
+  // per-type breakdown below it reads as a reconciliation bug. The `.tnum` utility
+  // on the value element keeps digits tabular.
+  const valueText = typeof value === 'number' ? count(value) : value;
   const valueAria = typeof value === 'number' ? value.toLocaleString() : value;
   // Fold the trend into the accessible name so a screen-reader user hears the
   // direction without relying on the arrow glyph.
@@ -104,6 +114,14 @@ export function KpiTile({
               <DeltaIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
               <span className="tnum">{Math.abs(delta)}</span>
               {deltaLabel && <span className="text-text-tertiary">{deltaLabel}</span>}
+            </div>
+          ) : caption ? (
+            // Neutral secondary text in the slot the delta would occupy, for a static
+            // qualifier like "41% of total". Distinct from `delta`, which carries a
+            // direction arrow and a favourable/unfavourable tone — a share is neither
+            // good nor bad, so it stays tertiary and plain.
+            <div className="mt-1 flex h-5 items-center whitespace-nowrap text-[length:var(--fs-micro)] text-text-tertiary">
+              {caption}
             </div>
           ) : (
             // Reserve the delta line's height (matches the row above) so a tile

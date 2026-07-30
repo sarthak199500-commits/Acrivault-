@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, buttonClasses } from '@/components/ui/Button';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { KeyValueList } from '@/components/ui/KeyValueList';
-import { CloudGlyph } from '@/components/ui/CloudGlyph';
+import { ProviderMark } from '@/components/ui/ProviderMark';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -123,9 +123,13 @@ function DetailBody({
         <div className="space-y-2">
           {identity.sources.map((source) => (
             <div key={source.externalId} className="rounded-[var(--r-md)] border border-border bg-surface-2 p-3">
+              {/* The real brand mark, as on onboarding's connector cards — naming the
+                  provider is the primary job here and there's room for the logo. The
+                  name stays in text beside it, so the mark is never the only carrier
+                  of meaning. */}
               <div className="mb-2 flex items-center justify-between">
                 <span className="inline-flex items-center gap-2 text-[length:var(--fs-small)] font-medium text-text">
-                  <CloudGlyph cloud={source.cloud} /> {CLOUD_LABELS[source.cloud]}
+                  <ProviderMark cloud={source.cloud} /> {CLOUD_LABELS[source.cloud]}
                 </span>
                 <span className="font-mono text-[length:var(--fs-micro)] text-text-tertiary">{source.externalId}</span>
               </div>
@@ -147,7 +151,7 @@ function DetailBody({
                   {c.values.map((v) => (
                     <div key={v.cloud} className="flex items-center justify-between text-[length:var(--fs-small)]">
                       <span className="inline-flex items-center gap-1.5 text-text-secondary">
-                        <CloudGlyph cloud={v.cloud} /> {CLOUD_LABELS[v.cloud]}
+                        <ProviderMark cloud={v.cloud} /> {CLOUD_LABELS[v.cloud]}
                       </span>
                       <span className="font-mono text-text">{v.value}</span>
                     </div>
@@ -227,7 +231,7 @@ function DetailFooter({
       onSuccess: () =>
         toast(`Rotation ${verb} for ${identity.name}`, {
           tone: 'success',
-          description: 'Queued — track it on the Rotate screen.',
+          description: 'Queued — track it on the Rotate screen. Synthetic — no upstream state changes.',
         }),
       onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
     });

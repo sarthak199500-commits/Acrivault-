@@ -140,6 +140,15 @@ export function riskBreakdown(identities: Identity[]): Record<RiskBand, number> 
   return out;
 }
 
+/**
+ * Total raw source instances across every cloud, before correlation. The
+ * deduplication ratio a customer buys the product for is
+ * `1 - identities.length / sourceInstanceCount(identities)`.
+ */
+export function sourceInstanceCount(identities: Identity[]): number {
+  return identities.reduce((n, i) => n + i.sources.length, 0);
+}
+
 export function orphanedCount(identities: Identity[]): number {
   return identities.reduce((n, i) => n + (i.orphaned ? 1 : 0), 0);
 }

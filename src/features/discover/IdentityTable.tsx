@@ -22,6 +22,7 @@ import {
   IDENTITY_STATUS_LABELS,
   NHI_TYPE_LABELS,
   type Identity,
+  type SourceInstance,
 } from '@/mocks/types';
 import type { IdentitySort } from '@/mocks/api';
 import { NOW } from '@/mocks/dataset';
@@ -94,6 +95,45 @@ function SourceDetail({ identity }: { identity: Identity }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The cloud cell on a single line, whatever the source count.
+ *
+ * This cell previously rendered one ProviderBadge per source in a `flex-wrap`
+ * container, so a 2- or 3-cloud identity grew the row to 2-3x the height of a
+ * single-cloud one. Since correlated multi-cloud identities are the interesting
+ * ones, the ragged rows clustered exactly where the eye needs to scan, and broke
+ * the virtualiser's uniform row-height assumption.
+ *
+ * Now: the first cloud as a badge, plus a "+N" affordance carrying the rest. The
+ * full list is in the tooltip AND in the badge's accessible name, so the extra
+ * clouds are never hover-only — and expanding the row still lists every source in
+ * full, which remains the primary way to read them.
+ */
+function CloudCell({ sources }: { sources: SourceInstance[] }) {
+  const [first, ...rest] = sources;
+  if (!first) return null;
+  const restLabels = rest.map((s) => CLOUD_LABELS[s.cloud]);
+  const allLabels = [CLOUD_LABELS[first.cloud], ...restLabels].join(', ');
+
+  return (
+    <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+      <ProviderBadge cloud={first.cloud} />
+      {rest.length > 0 && (
+        <Tooltip content={`Correlated across ${allLabels}`}>
+          <span
+            // Focusable so keyboard and touch users can reach the same detail.
+            tabIndex={0}
+            aria-label={`and ${rest.length} more: ${restLabels.join(', ')}`}
+            className="tnum shrink-0 cursor-default rounded-[var(--r-xs)] border border-border bg-surface-2 px-1 text-[length:var(--fs-micro)] text-text-tertiary hover:text-text-secondary"
+          >
+            +{rest.length}
+          </span>
+        </Tooltip>
+      )}
+    </span>
   );
 }
 
@@ -352,10 +392,8 @@ export function IdentityTable({
                     <span className="truncate">{NHI_TYPE_LABELS[identity.type]}</span>
                   </div>
                   {/* provider */}
-                  <div role="gridcell" className="flex flex-wrap items-center gap-1">
-                    {identity.sources.map((s) => (
-                      <ProviderBadge key={s.externalId} cloud={s.cloud} />
-                    ))}
+                  <div role="gridcell" className="flex min-w-0 items-center gap-1">
+                    <CloudCell sources={identity.sources} />
                   </div>
                   {/* risk */}
                   <div role="gridcell">
