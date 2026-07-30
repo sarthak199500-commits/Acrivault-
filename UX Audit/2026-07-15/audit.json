@@ -1,0 +1,202 @@
+{
+  "meta": {
+    "title": "Acrivault Console — UX/UI Re-Audit",
+    "date": "July 2026",
+    "dateExact": "2026-07-15",
+    "scope": "All 32 routes (22 in-shell + 10 auth), dark + light themes, 1440×900 desktop. 56 screenshots captured from the live app. Fresh-load axe sweep on 21 routes × 2 themes.",
+    "grade": "A−",
+    "score": 88,
+    "context": "Third audit pass. Batch 1 & 2 findings (2026-06-29 / 2026-07-02) and the responsive sweep fixes (2026-07-06) are all shipped and verified still in place. This pass focuses on what remains and what regressed."
+  },
+  "scorecard": [
+    { "flow": "Dashboard", "grade": "A", "note": "Counts reconcile (1,500 everywhere), critical-risk KPI colored, chart legend present. Only tile-anatomy inconsistency remains." },
+    { "flow": "Onboarding", "grade": "A", "note": "Trust strip, Connect all, stepper, single CTA — all prior fixes hold." },
+    { "flow": "Identity Inventory", "grade": "A−", "note": "KPI row, filters, saved views, graph toggle all strong. Multi-cloud badge stacking breaks row rhythm." },
+    { "flow": "Govern / Policy Builder", "grade": "A−", "note": "Plain-English preview and affected-count are excellent. List is sparse but honest for Wave 1." },
+    { "flow": "Monitor", "grade": "B+", "note": "Baseline-honesty banner is a standout. Alert rows still lead with raw idn_* ids; severity data has realism gaps." },
+    { "flow": "Blast Radius", "grade": "A", "note": "Read-only chip, reach cards, containment estimate, cascade warning — clear and calm." },
+    { "flow": "Agent Sessions / Replay", "grade": "A−", "note": "Names now resolve (prior fix). Replay timeline + provenance panel strong." },
+    { "flow": "Rotate", "grade": "A−", "note": "Phase tracks scan well. Cascade table still shows raw ids (known, accepted); header copy wraps an orphan." },
+    { "flow": "Settings / SSO / Users / Groups", "grade": "B", "note": "Users table is exemplary. SSO screen contradicts Settings, fails AA contrast when disabled, and leaks internal copy." },
+    { "flow": "Audit Log", "grade": "B−", "note": "Append-only story is right; the log itself is not time-sorted and actor domain doesn't match user emails." },
+    { "flow": "Notifications", "grade": "B+", "note": "Preferences panel clean; several severity chips contradict their message." },
+    { "flow": "Auth & Registration", "grade": "A", "note": "Stepper, demo aids, SSO-first login, invite preview — polished. Minor demo-aid chip inconsistency." }
+  ],
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "High",
+      "title": "Audit Log entries are not chronologically sorted",
+      "screens": "Audit Log",
+      "shot": "audit--dark.png",
+      "evidence": "Rows run Jun 25 → Jun 24 → Jun 23 11:30 PM → Jun 24 5:30 PM → Jun 24 2:30 PM → Jun 23… — the order jumps back and forth by hours and days.",
+      "why": "An append-only audit trail is the one surface where ordering IS the product. 'Everyone can read it; no one can edit it' loses credibility when the record reads shuffled — an auditor reconstructing an incident cannot follow cause → effect.",
+      "fix": "Sort descending by timestamp in listAudit (src/mocks/api.ts:611 returns seed order as-is; live appendAudit unshifts, so seeded and live entries interleave incorrectly). One-line selector sort, plus a reconcile test asserting monotonic order.",
+      "effort": "XS"
+    },
+    {
+      "id": "F-2",
+      "severity": "High",
+      "title": "Sign-in & SSO screen fails WCAG AA contrast in both themes",
+      "screens": "Settings → Sign-in & SSO",
+      "shot": "settings-sso--dark.png",
+      "evidence": "axe (fresh loads): dark — labels 4.22:1, helper micro-text 2.63:1; light — 3.09:1, 4.27:1, and 2.29:1. Root cause: CardBody gets a blanket opacity-60 when the SSO toggle is off (SsoScreen.tsx:61), dimming plain-text labels that axe does not exempt.",
+      "why": "This is the only axe-serious violation left in the app (39/42 route-theme combos are clean). Disabled *controls* are exempt from WCAG contrast; the section's plain <span> labels and helper text are not.",
+      "fix": "Remove the blanket opacity-60. Let Input/Switch carry their own (already-legible) disabled treatment shipped in Batch 1, and keep labels at text-secondary. If a dimmed look is wanted, dim only decorative chrome, never text.",
+      "effort": "S"
+    },
+    {
+      "id": "F-3",
+      "severity": "High",
+      "title": "Settings and SSO screen contradict each other about SSO state",
+      "screens": "Settings, Sign-in & SSO",
+      "shot": "settings--dark.png",
+      "shot2": "settings-sso--dark.png",
+      "evidence": "Settings card: 'Single sign-on is configured via Microsoft Entra ID.' One click deeper, the SSO screen shows the master toggle OFF with empty Entity ID / ACS URL fields.",
+      "why": "SsoScreen seeds local state with useState(false) (SsoScreen.tsx:20) and never hydrates from the tenant record that Settings reads (tenant.sso.configured = true, provider Entra). An admin verifying their IdP config would reasonably conclude SSO was silently disabled — an alarming false signal in a security product.",
+      "fix": "Hydrate enabled/protocol/fallback from getTenant() on load (the same source SettingsScreen uses), and pre-fill known values as read-only-style defaults.",
+      "effort": "S"
+    },
+    {
+      "id": "F-4",
+      "severity": "Medium",
+      "title": "Monitor rows and Copilot recommendations lead with raw idn_* ids",
+      "screens": "Monitor, Defender Copilot",
+      "shot": "monitor--dark.png",
+      "shot2": "copilot--dark.png",
+      "evidence": "Every alert row's identity line is the mono id (MonitorScreen.tsx:98 renders alert.identityId). Copilot cards do the same. Yet the alert DETAIL panel already resolves the name (oauth-billing-00797) via useAlertIdentity.",
+      "why": "Sessions and Rotate got API-level identity-name joins in the Batch-2 remediation; Monitor and Copilot were left out. Triage speed depends on recognizing WHICH identity is alerting without opening each alert.",
+      "fix": "Extend the same join pattern (AlertWithIdentity / recommendation enrichment) and render name primary, id as secondary mono metadata.",
+      "effort": "M"
+    },
+    {
+      "id": "F-5",
+      "severity": "Medium",
+      "title": "Audit actors use @acme.test while every user is @acme.com",
+      "screens": "Audit Log ↔ Manage Users",
+      "shot": "audit--dark.png",
+      "shot2": "settings-users--dark.png",
+      "evidence": "Audit rows: alex.kim@acme.test, jordan.r@acme.test, sam.lee@acme.test (generators.ts:455,471). Users screen: alex.kim@acme.com, jordan.rivera@acme.com…",
+      "why": "Cross-screen correlation breaks: searching the audit log for a user's actual email returns nothing, and 'jordan.r' vs 'jordan.rivera' can't be joined either. The counts-reconcile principle should extend to identity of ACTORS.",
+      "fix": "Seed audit actors from the seeded users array (email field) instead of a hardcoded list.",
+      "effort": "XS"
+    },
+    {
+      "id": "F-6",
+      "severity": "Medium",
+      "title": "Notification severity chips contradict their own message",
+      "screens": "Notifications",
+      "shot": "notifications--dark.png",
+      "evidence": "'New critical alert on an AI agent' is tagged Info; 'Baseline established for monitoring' (good news) is tagged Critical — twice; 'Rotation completed successfully' appears as both Info and Medium.",
+      "why": "Severity is the primary scanning cue in this list. When the chip and the words disagree, users learn to distrust the chip — the exact opposite of 'color only where there's risk'.",
+      "fix": "Derive notification severity from event type in the generator (critical alert → Critical, baseline established → Info, rotation outcome → Info/Success) rather than random assignment.",
+      "effort": "S"
+    },
+    {
+      "id": "F-7",
+      "severity": "Medium",
+      "title": "Multi-cloud rows stack badges vertically, breaking table rhythm",
+      "screens": "Identity Inventory",
+      "shot": "inventory--dark.png",
+      "evidence": "agent-code-reviewer-00509 (GCP + Azure + AWS) renders ~2.5× the height of a single-cloud row; two-cloud rows ~1.7×. Scanning down the Risk column becomes a zig-zag.",
+      "why": "Row-height uniformity is what makes dense tables scannable. Multi-cloud is also the most interesting signal (correlation!) — it deserves a compact, deliberate treatment rather than an accidental tall row.",
+      "fix": "Render cloud badges inline-wrapped (flex-row flex-wrap) or show the first badge + a '+2' count chip with a tooltip listing the rest.",
+      "effort": "S"
+    },
+    {
+      "id": "F-8",
+      "severity": "Medium",
+      "title": "Internal decision context leaks into product UI copy",
+      "screens": "Sign-in & SSO",
+      "shot": "settings-sso--dark.png",
+      "evidence": "Persistent info banner: 'Timing is still open — whether SSO ships for design partners now or later is a Founder/Architect decision. This screen is built ahead of that call.'",
+      "why": "Internal governance context (who decides, that it's undecided) doesn't belong on a customer-facing surface — org policy keeps founder-level decision material out of team-facing deliverables, and a design partner reading this loses confidence. Compare the register/MFA demo aids, which are correctly DEV-gated.",
+      "fix": "Gate the banner to import.meta.env.DEV (pattern already exists for demo aids), or reword to a neutral 'Preview — configuration is illustrative in Wave 1.'",
+      "effort": "XS"
+    },
+    {
+      "id": "F-9",
+      "severity": "Medium",
+      "title": "Long tokens (ARNs) wrap mid-character in the identity detail panel",
+      "screens": "Identity detail panel",
+      "shot": "identity-detail--dark.png",
+      "evidence": "arn:aws:iam::108831719891:role/oa uth-6817 — the ARN breaks inside 'oauth', splitting the very string an engineer would copy into the AWS console.",
+      "why": "ARNs/resource ids are copy-critical. An invisible line-break inside a token invites a mis-paste; there is also no copy affordance on the row.",
+      "fix": "Style token values with overflow-wrap:anywhere + font-mono AND add a copy button (the MFA setup-key copy pattern already exists), or middle-truncate with full value on the copy action.",
+      "effort": "S"
+    },
+    {
+      "id": "F-10",
+      "severity": "Low",
+      "title": "Dashboard KPI tile anatomy is inconsistent",
+      "screens": "Dashboard",
+      "shot": "dashboard--dark.png",
+      "evidence": "AI Agents has delta + sparkline; Orphaned/Critical risk have deltas; Total identities and all four type tiles (Service Account, API Key, OAuth Token, Workload Identity) have bare values.",
+      "why": "Mixed tile anatomy makes the missing deltas read as broken rather than intentional. Minor, but it's the first screen everyone sees.",
+      "fix": "Either add 'this week' deltas to the remaining tiles from the same seeded trend, or visually mark the type row as a distinct 'breakdown' band (smaller tiles, no delta slot).",
+      "effort": "S"
+    },
+    {
+      "id": "F-11",
+      "severity": "Low",
+      "title": "Header description orphans one word onto a second line",
+      "screens": "Rotate",
+      "shot": "rotate--dark.png",
+      "evidence": "'…Mechanics are illustrative in Wave' / '1.' — the '1.' sits alone on line two at 1440px.",
+      "why": "A single-word orphan in the hero position reads sloppy; the same description pattern was already tightened on the Dashboard for exactly this reason.",
+      "fix": "Shorten to 'Zero-downtime credential rotation across the six-phase lifecycle. Illustrative in Wave 1.' or add a non-breaking space in 'Wave&nbsp;1'.",
+      "effort": "XS"
+    },
+    {
+      "id": "F-12",
+      "severity": "Low",
+      "title": "Demo-aid presentation is inconsistent across auth screens",
+      "screens": "MFA challenge vs MFA setup / Verify email",
+      "shot": "mfa-challenge--dark.png",
+      "shot2": "mfa-setup--dark.png",
+      "evidence": "Setup + verify screens use the bordered 'DEMO AID' chip treatment; the challenge screen prints a bare 'Synthetic — the code is 123456.' line.",
+      "why": "The chip exists precisely to firewall synthetic helpers from real UI; the bare line on one screen weakens that separation.",
+      "fix": "Reuse the DemoAid chip component on MfaChallengeScreen.",
+      "effort": "XS"
+    },
+    {
+      "id": "F-13",
+      "severity": "Low",
+      "title": "Monitor's learning banner and alert ages tell conflicting time stories",
+      "screens": "Monitor",
+      "shot": "monitor--dark.png",
+      "evidence": "Banner: 'Baseline still learning — day 12 of 14.' Every alert below: 3 weeks – last month old, several tagged 'learning'. All 36 alerts fall in one 'OLDER' bucket, so the sticky time-bucket design never gets to work.",
+      "why": "Synthetic-data realism: a 12-day-old baseline can't have produced month-old learning-window alerts, and the bucketing feature (Today / This week) is invisible with this seed.",
+      "fix": "Spread seeded alert timestamps across today/this-week/older (weighted recent) so buckets render, and clamp 'learning' tags to alerts younger than the baseline window.",
+      "effort": "S"
+    },
+    {
+      "id": "F-14",
+      "severity": "Low",
+      "title": "Registration progress bar disappears on the completion step",
+      "screens": "Register → complete",
+      "shot": "register-complete--dark.png",
+      "evidence": "Steps show 1/2/3 of 4, the completion screen drops the stepper entirely, then MFA setup shows 4 of 4.",
+      "why": "The 'You're all set' headline plus a vanished stepper implies the flow is DONE — but a required MFA step still remains. Momentary, but it's the one place the wizard breaks its own narration.",
+      "fix": "Show the stepper on RegisterComplete (step 3 complete, step 4 'Secure' pending) so 'Set up authentication' reads as the final step, not an extra ask.",
+      "effort": "XS"
+    }
+  ],
+  "positives": [
+    "39 of 42 route-theme axe combos are fully clean; the app-wide token discipline shows.",
+    "Counts reconcile end-to-end: dashboard 1,500 = inventory 1,500 = per-type sum; the reconcile footer states it explicitly.",
+    "Monitor's 'Baseline still learning' honesty banner is a differentiator — it tells the user when NOT to trust the product.",
+    "Blast Radius: read-only chip, reach cards, containment estimate and cascade warning make a complex graph instantly consumable.",
+    "Alert detail panel resolves the identity, shows risk trend, and offers a concrete recommended next step.",
+    "Light 'botanical shell' theme holds up across every screen — nav contrast 11.8:1, KPI chips read as brand, hover tint calm.",
+    "Registration flow: stepper, DEV-gated demo aids, domain-aware errors, SSO-vs-password forks, invite preview card — all coherent.",
+    "All prior audit remediations verified still in place (mobile nav, critical-risk KPI, disabled-button legibility, Drawer focus restore, identity-name joins on Sessions/Rotate, 768–1440 responsive fixes)."
+  ],
+  "known_open": [
+    "Export bulk action is still a synthetic toast (flagged 2026-07-02, unchanged).",
+    "RotationJobDetail cascade links show mono ids (accepted-by-design: they are links).",
+    "No lightweight 'add another cloud' path — both entries route into the full onboarding wizard (flagged 2026-06-30, needs a Connectors surface).",
+    "Quarantine confirm is still toast-only after confirm — no identity-quarantine domain exists yet.",
+    "/discover threw one transient axe color-contrast hit during the batch sweep that did not reproduce on a focused re-run; watch it."
+  ]
+}
