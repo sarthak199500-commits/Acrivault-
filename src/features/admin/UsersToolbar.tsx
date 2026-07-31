@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { ROLES, ROLE_LABELS, type Role } from '@/lib/permissions';
 import type { User, UserStatus } from '@/mocks/types';
+import { DebouncedSearch } from '@/components/ui/DebouncedSearch';
 import { FilterMenu } from '@/components/ui/FilterMenu';
-import { Input } from '@/components/ui/Input';
 import { StatusDot, type DotTone } from '@/components/ui/StatusDot';
 import type { useUsersFilters } from './useUsersFilters';
 
@@ -26,43 +25,6 @@ const STATUS_TONE: Record<UserStatus, DotTone> = {
   invited: 'neutral',
   deleted: 'neutral',
 };
-
-/**
- * Debounced search field. Local state keeps typing smooth and only pushes to the
- * URL after a short pause; it re-syncs when the URL changes externally (Clear).
- */
-function DebouncedSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [local, setLocal] = useState(value);
-
-  useEffect(() => setLocal(value), [value]);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (local !== value) onChange(local);
-    }, 200);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [local]);
-
-  return (
-    <Input
-      label="Search users"
-      hideLabel
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      placeholder="Search by name or email…"
-      prefix={<Search className="h-4 w-4" />}
-      suffix={
-        local ? (
-          <button type="button" aria-label="Clear search" onClick={() => setLocal('')} className="hover:text-text">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        ) : undefined
-      }
-      className="max-w-none"
-    />
-  );
-}
 
 export function UsersToolbar({ filters, users }: { filters: Filters; users: User[] }) {
   const { filter } = filters;
@@ -92,7 +54,12 @@ export function UsersToolbar({ filters, users }: { filters: Filters; users: User
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="min-w-64 flex-1">
-        <DebouncedSearch value={filter.search} onChange={filters.setSearch} />
+        <DebouncedSearch
+          label="Search users"
+          placeholder="Search by name or email…"
+          value={filter.search}
+          onChange={filters.setSearch}
+        />
       </div>
 
       <FilterMenu

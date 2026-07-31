@@ -1,52 +1,165 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ListChecks, Plus } from 'lucide-react';
-import { usePolicies } from './queries';
-import type { Policy, PolicyStatus } from '@/mocks/types';
+import { ListChecks, Plus, X } from 'lucide-react';
+import { usePolicies, useActivatePolicy, useArchivePolicy, useSuspendPolicy } from './queries';
+import { POLICY_SORT_OPTIONS, selectPolicies, statusCounts, type PolicySort } from './policyList';
+import { usePolicyFilters } from './usePolicyFilters';
+import { POLICY_STATUSES, type Policy, type PolicyStatus } from '@/mocks/types';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import { buttonClasses } from '@/components/ui/Button';
+import { Button, buttonClasses } from '@/components/ui/Button';
+import { Dialog } from '@/components/ui/Dialog';
+import { DebouncedSearch } from '@/components/ui/DebouncedSearch';
+import { FilterMenu } from '@/components/ui/FilterMenu';
+import { Select } from '@/components/ui/Select';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { useCan } from '@/components/ui/Can';
 import { count, relativeTime } from '@/lib/format';
+import { toast } from '@/stores/toast';
+import { errorInfo } from '@/lib/apiError';
 
 const STATUS_TONE: Record<PolicyStatus, BadgeTone> = {
   active: 'success',
   tested: 'info',
   draft: 'neutral',
+  suspended: 'warning',
+  archived: 'neutral',
 };
 
-function PolicyRow({ policy }: { policy: Policy }) {
+/** Hover copy for each status, so the lifecycle is legible without leaving the list. */
+const STATUS_HINT: Record<PolicyStatus, string> = {
+  draft: 'Not tested or enforcing',
+  tested: 'Dry-run passed; not yet enforcing',
+  active: 'Enforcing now',
+  suspended: 'Not enforcing; can be reactivated',
+  archived: 'Retired; retained for audit',
+};
+
+type LifecycleAction = 'suspend' | 'reactivate' | 'archive';
+
+const ACTION_COPY: Record<LifecycleAction, { verb: string; title: string; effect: string }> = {
+  suspend: {
+    verb: 'Suspend',
+    title: 'Suspend this policy?',
+    effect: 'Enforcement will stop immediately. The policy is not deleted and can be reactivated later.',
+  },
+  reactivate: {
+    verb: 'Reactivate',
+    title: 'Reactivate this policy?',
+    effect: 'The policy will begin enforcing again against matching identities.',
+  },
+  archive: {
+    verb: 'Archive',
+    title: 'Archive this policy?',
+    effect: 'It will be hidden from the default list but retained in the audit history. This cannot be undone.',
+  },
+};
+
+function PolicyRow({
+  policy,
+  onAction,
+  canManage,
+}: {
+  policy: Policy;
+  onAction: (action: LifecycleAction, policy: Policy) => void;
+  canManage: boolean;
+}) {
   const navigate = useNavigate();
+  // Archive is offered only from Suspended (FR-011) — not rendered at all on an
+  // Active row rather than shown disabled.
+  const actions: LifecycleAction[] = !canManage
+    ? []
+    : policy.status === 'active'
+      ? ['suspend']
+      : policy.status === 'suspended'
+        ? ['reactivate', 'archive']
+        : [];
+
   return (
-    <button
-      type="button"
-      onClick={() => navigate(`/govern/builder/${policy.id}`)}
-      className="flex w-full items-center gap-4 border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-hover"
-    >
-      <div className="min-w-0 flex-1">
+    <div className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0 hover:bg-surface-hover">
+      <button
+        type="button"
+        onClick={() => navigate(`/govern/builder/${policy.id}`)}
+        className="min-w-0 flex-1 text-left"
+      >
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-text">{policy.name}</span>
-          <Badge tone={STATUS_TONE[policy.status]} className="capitalize">{policy.status}</Badge>
+          <span className="inline-flex" title={STATUS_HINT[policy.status]}>
+            <Badge tone={STATUS_TONE[policy.status]} className="capitalize">
+              {policy.status}
+            </Badge>
+          </span>
         </div>
         <p className="mt-0.5 truncate text-[length:var(--fs-small)] text-text-secondary">{policy.plainEnglish}</p>
-      </div>
+      </button>
+
       <div className="hidden shrink-0 text-right sm:block">
         <div className="tnum text-[length:var(--fs-body)] text-text">{count(policy.affectedCount)}</div>
         <div className="text-[length:var(--fs-micro)] text-text-tertiary">affected</div>
       </div>
-      <div className="hidden w-28 shrink-0 text-right text-[length:var(--fs-small)] text-text-tertiary md:block">
-        {relativeTime(policy.updatedAt)}
+      <div className="hidden w-28 shrink-0 text-right md:block">
+        <div className="text-[length:var(--fs-small)] text-text-tertiary">{relativeTime(policy.updatedAt)}</div>
+        <div className="text-[length:var(--fs-micro)] text-text-tertiary">
+          {policy.activatedAt ? `activated ${relativeTime(policy.activatedAt)}` : 'never activated'}
+        </div>
       </div>
-    </button>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {actions.map((action) => (
+          <Button
+            key={action}
+            size="sm"
+            variant={action === 'archive' ? 'ghost' : 'secondary'}
+            onClick={() => onAction(action, policy)}
+          >
+            {ACTION_COPY[action].verb}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }
 
 export function PolicyListScreen() {
-  const query = usePolicies();
+  // Archived rows are fetched so their facet count is live; the default view still
+  // hides them until the Archived status is explicitly selected (see selectPolicies).
+  const query = usePolicies(true);
+  const filters = usePolicyFilters();
   const canCreate = useCan('policy.create');
+  const canManage = useCan('policy.lifecycle');
+
+  const [pending, setPending] = useState<{ action: LifecycleAction; policy: Policy } | null>(null);
+
+  const suspend = useSuspendPolicy();
+  const archive = useArchivePolicy();
+  const activate = useActivatePolicy();
+  const busy = suspend.isPending || archive.isPending || activate.isPending;
+
+  const run = () => {
+    if (!pending) return;
+    const { action, policy } = pending;
+    const mutation = action === 'suspend' ? suspend : action === 'archive' ? archive : activate;
+    mutation.mutate(policy.id, {
+      onSuccess: () => {
+        setPending(null);
+        toast(
+          action === 'suspend'
+            ? 'Policy suspended — enforcement stopped immediately'
+            : action === 'archive'
+              ? 'Policy archived'
+              : 'Policy reactivated — now enforcing',
+          { description: policy.name, tone: action === 'suspend' ? 'warning' : 'success' },
+        );
+      },
+      onError: (err) => {
+        setPending(null);
+        toast(errorInfo(err).message, { tone: 'critical' });
+      },
+    });
+  };
 
   return (
     <div>
@@ -76,7 +189,7 @@ export function PolicyListScreen() {
             <EmptyState
               icon={<ListChecks className="h-5 w-5" />}
               headline="No policies yet"
-              guidance="Create your first policy to govern how identities are handled."
+              guidance="Start with a common pattern or build your own."
               action={
                 canCreate ? (
                   <Link to="/govern/builder" className={buttonClasses('primary', 'md')}>
@@ -88,16 +201,106 @@ export function PolicyListScreen() {
           </Card>
         }
       >
-        {(policies) => (
-          <Card>
-            <div>
-              {policies.map((p) => (
-                <PolicyRow key={p.id} policy={p} />
-              ))}
-            </div>
-          </Card>
-        )}
+        {(policies) => {
+          const counts = statusCounts(policies);
+          const rows = selectPolicies(policies, filters.filter);
+          return (
+            <>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <div className="min-w-64 flex-1">
+                  <DebouncedSearch
+                    label="Search policies"
+                    placeholder="Search by name or rule…"
+                    value={filters.filter.search}
+                    onChange={filters.setSearch}
+                  />
+                </div>
+
+                <FilterMenu
+                  label="Status"
+                  options={POLICY_STATUSES.map((s) => ({
+                    value: s,
+                    label: s[0].toUpperCase() + s.slice(1),
+                    count: counts[s],
+                  }))}
+                  selected={filters.filter.statuses}
+                  onToggle={(v) => filters.toggleStatus(v as PolicyStatus)}
+                  onClear={() => filters.filter.statuses.forEach((s) => filters.toggleStatus(s))}
+                />
+
+                <Select
+                  value={filters.filter.sort}
+                  onValueChange={(v) => filters.setSort(v as PolicySort)}
+                  options={POLICY_SORT_OPTIONS}
+                  ariaLabel="Sort policies by"
+                  size="sm"
+                  className="min-w-40"
+                />
+
+                {filters.activeCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={filters.clearAll}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-sm)] px-2.5 text-[length:var(--fs-small)] text-text-secondary hover:bg-surface-hover hover:text-text"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    Clear ({filters.activeCount})
+                  </button>
+                )}
+              </div>
+
+              <p className="mb-2 text-[length:var(--fs-small)] text-text-tertiary" aria-live="polite">
+                {rows.length === policies.length
+                  ? `${count(rows.length)} ${rows.length === 1 ? 'policy' : 'policies'}`
+                  : `${count(rows.length)} of ${count(policies.length)} policies`}
+              </p>
+
+              <Card>
+                {rows.length === 0 ? (
+                  <EmptyState
+                    icon={<ListChecks className="h-5 w-5" />}
+                    headline="No policies match these filters"
+                    guidance="Try a different search term or clear the status filter."
+                    action={
+                      <Button variant="secondary" size="sm" onClick={filters.clearAll}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <div>
+                    {rows.map((p) => (
+                      <PolicyRow
+                        key={p.id}
+                        policy={p}
+                        canManage={canManage}
+                        onAction={(action, policy) => setPending({ action, policy })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </>
+          );
+        }}
       </QueryBoundary>
+
+      <Dialog
+        open={!!pending}
+        onOpenChange={(open) => !open && setPending(null)}
+        title={pending ? ACTION_COPY[pending.action].title : ''}
+        description={pending ? ACTION_COPY[pending.action].effect : ''}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPending(null)}>Cancel</Button>
+            <Button onClick={run} loading={busy}>
+              {pending ? ACTION_COPY[pending.action].verb : ''}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[length:var(--fs-small)] text-text-secondary">{pending?.policy.name}</p>
+      </Dialog>
     </div>
   );
 }

@@ -430,18 +430,43 @@ export function generatePolicies(identities: Identity[], seed: number, now: Date
         { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
       ],
     },
+    {
+      name: 'Block dormant OAuth tokens',
+      status: 'suspended',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'oauth-token' },
+        { kind: 'and', subject: 'governanceStatus', operator: 'is', value: 'ungoverned' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'block' },
+      ],
+    },
+    {
+      name: 'Legacy workload sweep',
+      status: 'archived',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'workload-identity' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+      ],
+    },
   ];
   // affectedCount is computed against the dataset so it reconciles with the inventory.
-  return defs.map((d, i) => ({
-    id: `pol_${i.toString(36).padStart(4, '0')}`,
-    name: d.name,
-    tokens: d.tokens,
-    plainEnglish: plainEnglish(d.tokens),
-    generatedCode: generatedCode(d.name, d.tokens),
-    affectedCount: identities.filter((idn) => matchesPolicy(idn, d.tokens)).length,
-    status: d.status,
-    updatedAt: new Date(now.getTime() - rng.int(0, 30) * 86400000).toISOString(),
-  }));
+  return defs.map((d, i) => {
+    const updatedAt = new Date(now.getTime() - rng.int(0, 30) * 86400000).toISOString();
+    // Anything past Draft has, by definition, passed a dry-run of its current rule —
+    // so a seeded Active/Suspended policy can be reactivated without a re-test (FR-005).
+    const tested = d.status !== 'draft';
+    return {
+      id: `pol_${i.toString(36).padStart(4, '0')}`,
+      name: d.name,
+      tokens: d.tokens,
+      plainEnglish: plainEnglish(d.tokens),
+      generatedCode: generatedCode(d.name, d.tokens),
+      affectedCount: identities.filter((idn) => matchesPolicy(idn, d.tokens)).length,
+      status: d.status,
+      updatedAt,
+      ...(tested ? { lastTestedAt: updatedAt, testedTokens: d.tokens.map((t) => ({ ...t })) } : {}),
+      ...(d.status === 'active' || d.status === 'suspended' ? { activatedAt: updatedAt } : {}),
+    };
+  });
 }
 
 /* ------------------------------------------------------ rotation jobs */
