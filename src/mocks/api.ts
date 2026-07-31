@@ -417,7 +417,39 @@ export function getPolicy(id: string): Promise<Policy | null> {
 export interface PolicyEvalResult {
   affected: number;
   total: number;
-  sample: { id: string; name: string; riskScore: number }[];
+  /**
+   * How many matches sit in the critical band. The count that decides whether a
+   * reviewer needs to look closer before activating, and not derivable from a
+   * risk-ranked sample of six.
+   */
+  criticalCount: number;
+  /** Matches ranked by risk, highest first. See `evaluationOf`. */
+  sample: { id: string; name: string; type: NhiType; riskScore: number }[];
+}
+
+/** How many matches the dry-run shows inline. */
+const EVAL_SAMPLE_SIZE = 6;
+
+/**
+ * Build the dry-run payload for a matched set, shared by `evaluatePolicy` and
+ * `testPolicy` so the two cannot disagree about what a test reports.
+ *
+ * The sample is ranked by risk DESCENDING. It was `matched.slice(0, 6)` — the first
+ * six in dataset order — which on a screen whose next action can quarantine or block
+ * is actively misleading: a rule matching hundreds of identities including criticals
+ * could present six minimal-risk ones and read as harmless. A reviewer checks the
+ * worst cases a rule would hit, so those are what the sample shows.
+ */
+function evaluationOf(matched: Identity[], total: number): PolicyEvalResult {
+  return {
+    affected: matched.length,
+    total,
+    criticalCount: matched.filter((i) => i.riskBand === 'critical').length,
+    sample: [...matched]
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, EVAL_SAMPLE_SIZE)
+      .map((i) => ({ id: i.id, name: i.name, type: i.type, riskScore: i.riskScore })),
+  };
 }
 
 /**
@@ -427,12 +459,7 @@ export interface PolicyEvalResult {
 export function evaluatePolicy(tokens: PolicyToken[]): Promise<PolicyEvalResult> {
   return respond(() => {
     const { identities } = getDataset();
-    const matched = identities.filter((i) => matchesPolicy(i, tokens));
-    return {
-      affected: matched.length,
-      total: identities.length,
-      sample: matched.slice(0, 6).map((i) => ({ id: i.id, name: i.name, riskScore: i.riskScore })),
-    };
+    return evaluationOf(identities.filter((i) => matchesPolicy(i, tokens)), identities.length);
   });
 }
 
@@ -563,11 +590,7 @@ export function testPolicy(input: PolicySaveInput): Promise<PolicyTestResult> {
 
     return {
       policy: { ...policy },
-      evaluation: {
-        affected: matched.length,
-        total: identities.length,
-        sample: matched.slice(0, 6).map((i) => ({ id: i.id, name: i.name, riskScore: i.riskScore })),
-      },
+      evaluation: evaluationOf(matched, identities.length),
     };
   });
 }

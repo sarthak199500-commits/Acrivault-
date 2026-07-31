@@ -352,9 +352,29 @@ export interface Diagnostic {
   severity: DiagnosticSeverity;
   /** Index into the rule's CONDITION list (WHEN/AND only), as the builder renders it. */
   index: number;
+  /**
+   * Other conditions implicated in the same problem. A contradiction is ONE finding
+   * about a set of conditions, not one per condition — emitting it per row repeated
+   * the same sentence and offered two identical "remove" links with no way to tell
+   * which to click. Those rows still render as broken; only `index` carries the text.
+   */
+  relatedIndices?: number[];
   message: string;
   /** A mechanical repair — the full token list with this condition removed. */
   fix?: { label: string; tokens: PolicyToken[] };
+}
+
+/** Every condition a diagnostic implicates — the one it is attached to, plus its related rows. */
+export function diagnosticCovers(diagnostic: Diagnostic, conditionIndex: number): boolean {
+  return diagnostic.index === conditionIndex || (diagnostic.relatedIndices?.includes(conditionIndex) ?? false);
+}
+
+/** Human-readable reference to other conditions, 1-based as the builder numbers them. */
+function conditionList(indices: number[]): string {
+  const nums = indices.map((i) => i + 1);
+  if (nums.length === 1) return `condition ${nums[0]}`;
+  if (nums.length === 2) return `conditions ${nums[0]} and ${nums[1]}`;
+  return `conditions ${nums.slice(0, -1).join(', ')} and ${nums[nums.length - 1]}`;
 }
 
 /** Positions of the WHEN/AND tokens within the full token list. */
@@ -416,15 +436,6 @@ function domainInterval(def: SubjectDef): Interval {
     lo: def.domain?.min ?? OPEN.lo,
     hi: def.domain?.max ?? OPEN.hi,
   };
-}
-
-/** Human-readable restatement of a single condition, for diagnostic copy. */
-function shortPhrase(token: PolicyToken): string {
-  const def = subjectDef(token.subject);
-  const opLabel = def?.operators.find((o) => o.value === token.operator)?.label ?? token.operator;
-  const valLabel = def?.valueType === 'enum' ? optionLabel(def.options, token.value) : token.value;
-  if (token.operator === 'empty') return `${def?.label ?? token.subject} ${opLabel}`;
-  return `${def?.label ?? token.subject} ${opLabel} ${valLabel}`.trim();
 }
 
 /** Values an enum subject may still take, given every condition on it. */
@@ -526,16 +537,18 @@ export function lintRule(tokens: PolicyToken[]): Diagnostic[] {
       const combined = live.reduce((acc, i) => meet(acc, iv(i)), OPEN);
 
       if (empty(combined)) {
-        // The conditions fight each other — name the pair on every row involved.
-        const phrases = live.map((i) => shortPhrase(at(i))).join(' and ');
-        for (const i of live) {
-          out.push({
-            severity: 'unsatisfiable',
-            index: i,
-            message: `No ${def.label.toLowerCase()} can be both — ${phrases} is impossible, so this rule can never match.`,
-            fix: live.length > 1 ? removeFix(i) : undefined,
-          });
-        }
+        // One finding for the whole group, attached to the condition that closed the
+        // interval. The rows themselves already show the values, so restating them
+        // here would only repeat what is on screen.
+        const last = live[live.length - 1];
+        const others = live.filter((i) => i !== last);
+        out.push({
+          severity: 'unsatisfiable',
+          index: last,
+          relatedIndices: others,
+          message: `No ${def.label.toLowerCase()} can satisfy this and ${conditionList(others)} at once.`,
+          fix: removeFix(last),
+        });
         continue;
       }
 
@@ -577,17 +590,22 @@ export function lintRule(tokens: PolicyToken[]): Diagnostic[] {
     if (def.valueType === 'enum') {
       const allowed = allowedEnumValues(live.map(at), def);
       if (allowed.size === 0) {
-        const phrases = live.map((i) => shortPhrase(at(i))).join(' and ');
-        for (const i of live) {
-          out.push({
-            severity: 'unsatisfiable',
-            index: i,
-            // The plain-language reason, not just the fact — an identity holding
-            // exactly one value is why these cannot co-exist.
-            message: `An identity has exactly one ${def.label.toLowerCase()}, so ${phrases} can never both be true.`,
-            fix: live.length > 1 ? removeFix(i) : undefined,
-          });
-        }
+        const last = live[live.length - 1];
+        const others = live.filter((i) => i !== last);
+        // Excluding every possible value is a different mistake from asserting two
+        // of them, and deserves its own sentence rather than a generic one.
+        const allNegated = live.every((i) => at(i).operator === 'is-not');
+        out.push({
+          severity: 'unsatisfiable',
+          index: last,
+          relatedIndices: others,
+          // The plain-language reason, not just the fact — an identity holding
+          // exactly one value is why these cannot co-exist.
+          message: allNegated
+            ? `Together these rule out every ${def.label.toLowerCase()}, so nothing can match.`
+            : `An identity has exactly one ${def.label.toLowerCase()} — this contradicts ${conditionList(others)}.`,
+          fix: removeFix(last),
+        });
         continue;
       }
       if (live.length > 1) {
@@ -613,35 +631,42 @@ export function lintRule(tokens: PolicyToken[]): Diagnostic[] {
     const isNotIdx = live.filter((i) => at(i).operator === 'is-not');
 
     if (emptyIdx.length > 0 && isIdx.length > 0) {
-      for (const i of [...emptyIdx, ...isIdx]) {
-        out.push({
-          severity: 'unsatisfiable',
-          index: i,
-          message: `An identity cannot be unassigned and owned by ${at(isIdx[0]).value || 'someone'} at once.`,
-          fix: removeFix(i),
-        });
-      }
+      const group = [...emptyIdx, ...isIdx].sort((a, b) => a - b);
+      const last = group[group.length - 1];
+      const others = group.filter((i) => i !== last);
+      out.push({
+        severity: 'unsatisfiable',
+        index: last,
+        relatedIndices: others,
+        message: `An identity cannot be unassigned and owned at once — this contradicts ${conditionList(others)}.`,
+        fix: removeFix(last),
+      });
       continue;
     }
     const distinct = new Set(isIdx.map((i) => at(i).value));
     if (distinct.size > 1) {
-      for (const i of isIdx) {
-        out.push({
-          severity: 'unsatisfiable',
-          index: i,
-          message: `An identity has one owner, so it cannot be ${[...distinct].join(' and ')}.`,
-          fix: removeFix(i),
-        });
-      }
+      const last = isIdx[isIdx.length - 1];
+      const others = isIdx.filter((i) => i !== last);
+      out.push({
+        severity: 'unsatisfiable',
+        index: last,
+        relatedIndices: others,
+        message: `An identity has one owner — this contradicts ${conditionList(others)}.`,
+        fix: removeFix(last),
+      });
       continue;
     }
     for (const i of isIdx) {
-      if (isNotIdx.some((j) => at(j).value === at(i).value)) {
+      const excluded = isNotIdx.filter((j) => at(j).value === at(i).value);
+      if (excluded.length > 0) {
+        const last = Math.max(i, ...excluded);
+        const others = [i, ...excluded].filter((j) => j !== last);
         out.push({
           severity: 'unsatisfiable',
-          index: i,
-          message: `This owner is both required and excluded, so the rule can never match.`,
-          fix: removeFix(i),
+          index: last,
+          relatedIndices: others,
+          message: `This owner is both required and excluded — this contradicts ${conditionList(others)}.`,
+          fix: removeFix(last),
         });
       }
     }

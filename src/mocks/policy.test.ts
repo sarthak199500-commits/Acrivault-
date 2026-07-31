@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   defaultTokens,
+  diagnosticCovers,
   generatedCode,
   isUnsatisfiable,
   lintRule,
@@ -119,9 +120,48 @@ describe('rule linting: contradictions', () => {
     expect(diags[0].message).toContain('exactly one type');
   });
 
-  it('marks every condition involved, so the conflicting pair is both visible', () => {
+  it('reports a contradiction ONCE, implicating the other rows rather than repeating', () => {
+    // Emitting per row duplicated the same sentence and offered two identical
+    // "remove" links with no way to tell which one to click.
     const diags = lintRule(rule(['riskScore', 'lt', '60'], ['riskScore', 'gt', '80']));
-    expect(diags.filter((d) => d.severity === 'unsatisfiable').map((d) => d.index)).toEqual([0, 1]);
+    const unsat = diags.filter((d) => d.severity === 'unsatisfiable');
+    expect(unsat).toHaveLength(1);
+    expect(unsat[0].index).toBe(1);
+    expect(unsat[0].relatedIndices).toEqual([0]);
+    // Both rows still render as broken, even though only one carries the text.
+    expect(diagnosticCovers(unsat[0], 0)).toBe(true);
+    expect(diagnosticCovers(unsat[0], 1)).toBe(true);
+    expect(diagnosticCovers(unsat[0], 2)).toBe(false);
+  });
+
+  it('offers exactly one fix for a contradiction, on the condition that caused it', () => {
+    const tokens = rule(['type', 'is', 'ai-agent'], ['type', 'is', 'api-key']);
+    const fixes = lintRule(tokens).filter((d) => d.fix);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].index).toBe(1);
+    // Applying it leaves a sound, lint-clean rule.
+    const repaired = fixes[0].fix?.tokens ?? [];
+    expect(lintRule(repaired)).toEqual([]);
+    expect(matchCount(repaired)).toBeGreaterThan(0);
+  });
+
+  it('does not restate values already visible on the rows', () => {
+    const diags = lintRule(rule(['type', 'is', 'ai-agent'], ['type', 'is', 'api-key']));
+    // The rows show "AI Agent" and "API Key"; the message should not echo them.
+    expect(diags[0].message).not.toContain('AI Agent');
+    expect(diags[0].message).not.toContain('API Key');
+    expect(diags[0].message).toContain('exactly one type');
+  });
+
+  it('names exhaustive exclusion as its own mistake, not a generic contradiction', () => {
+    const diags = lintRule(rule(
+      ['governanceStatus', 'is-not', 'governed'],
+      ['governanceStatus', 'is-not', 'ungoverned'],
+      ['governanceStatus', 'is-not', 'drift'],
+    ));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('rule out every');
+    expect(diags[0].relatedIndices).toEqual([0, 1]);
   });
 });
 
@@ -283,6 +323,54 @@ describe('rule linting: sound rules stay quiet', () => {
     for (const policy of getDataset().policies) {
       expect(lintRule(policy.tokens), `seeded policy "${policy.name}" should lint clean`).toEqual([]);
     }
+  });
+});
+
+describe('dry-run sample surfaces the worst matches, not arbitrary ones', () => {
+  // Was `matched.slice(0, 6)` — the first six in dataset order. On a screen whose
+  // next action can quarantine or block, that could show six minimal-risk matches
+  // for a rule that also hits criticals, and read as harmless.
+  it('ranks the sample by risk, descending', async () => {
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '0' }]);
+    const scores = res.sample.map((s) => s.riskScore);
+    expect(scores.length).toBeGreaterThan(1);
+    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+  });
+
+  it('shows the true worst matches, not merely a sorted arbitrary slice', async () => {
+    const { identities } = getDataset();
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '0' }]);
+    const worst = Math.max(...identities.map((i) => i.riskScore));
+    expect(res.sample[0].riskScore).toBe(worst);
+  });
+
+  it('reports the critical count, which a six-row sample cannot convey', async () => {
+    const { identities } = getDataset();
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '0' }]);
+    expect(res.affected).toBe(identities.length);
+    expect(res.criticalCount).toBe(identities.filter((i) => i.riskBand === 'critical').length);
+  });
+
+  it('carries the type, so a match renders like an identity everywhere else', async () => {
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' }]);
+    expect(res.sample.length).toBeGreaterThan(0);
+    expect(res.sample.every((s) => s.type === 'ai-agent')).toBe(true);
+  });
+
+  it('test and evaluate agree — one shared evaluator, so they cannot drift', async () => {
+    const tokens: PolicyToken[] = [{ kind: 'when', subject: 'type', operator: 'is', value: 'api-key' }];
+    const evaluated = await evaluatePolicy(tokens);
+    const { evaluation } = await testPolicy(draft('Sample parity check', tokens));
+    expect(evaluation.affected).toBe(evaluated.affected);
+    expect(evaluation.criticalCount).toBe(evaluated.criticalCount);
+    expect(evaluation.sample.map((s) => s.id)).toEqual(evaluated.sample.map((s) => s.id));
+  });
+
+  it('a rule matching nothing yields an empty sample and no criticals', async () => {
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '101' }]);
+    expect(res.affected).toBe(0);
+    expect(res.sample).toEqual([]);
+    expect(res.criticalCount).toBe(0);
   });
 });
 
