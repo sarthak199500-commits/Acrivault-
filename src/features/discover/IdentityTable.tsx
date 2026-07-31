@@ -50,7 +50,10 @@ const COLUMNS: HeaderCol[] = [
   { id: 'select', label: '', sortable: false },
   { id: 'name', label: 'Identity', sortable: true },
   { id: 'type', label: 'Type', sortable: true },
-  { id: 'sources', label: 'Cloud', sortable: false },
+  // "Source", not "Cloud": the cell answers which source instance(s) an identity
+  // was correlated from, matching this column's own `sources` id, the detail
+  // panel's "Correlated sources" section, and the dashboard's "source instances".
+  { id: 'sources', label: 'Source', sortable: false },
   { id: 'risk', label: 'Risk', sortable: true },
   { id: 'status', label: 'Status', sortable: false },
   { id: 'owner', label: 'Owner', sortable: true },

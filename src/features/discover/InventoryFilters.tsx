@@ -104,7 +104,7 @@ export function InventoryFilters({
           onClear={() => (filter.types ?? []).forEach((t) => filters.toggleType(t))}
         />
         <FilterMenu
-          label="Cloud"
+          label="Source"
           options={providerOptions}
           selected={filter.clouds ?? []}
           onToggle={(v) => filters.toggleCloud(v as (typeof CLOUDS)[number])}

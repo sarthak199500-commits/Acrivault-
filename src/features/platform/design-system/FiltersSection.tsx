@@ -44,7 +44,7 @@ export function FiltersSection() {
                   onClear={() => setDemoFilter([])}
                 />
                 <FilterMenu
-                  label="Cloud"
+                  label="Source"
                   options={CLOUDS.map((c) => ({
                     value: c,
                     label: CLOUD_LABELS[c],

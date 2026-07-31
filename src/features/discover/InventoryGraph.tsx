@@ -23,7 +23,7 @@ export function InventoryGraph({ counts }: { counts: IdentityFacetCounts }) {
         </CardBody>
       </Card>
       <Card>
-        <CardHeader title="By cloud" description="Source instances per cloud." />
+        <CardHeader title="By source" description="Source instances per provider." />
         <CardBody>
           <BarChart data={byProvider} xKey="label" series={[{ key: 'count', label: 'Identities', color: 'var(--cat-2)' }]} height={200} />
         </CardBody>
