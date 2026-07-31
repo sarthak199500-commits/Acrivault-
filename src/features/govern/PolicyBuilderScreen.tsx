@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, FlaskConical, Save, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertTriangle, ChevronRight, FlaskConical, Save, ShieldCheck, Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { usePolicy, useEvaluate, useSavePolicy, useTestPolicy, useActivatePolicy } from './queries';
 import { TokenCanvas } from './TokenCanvas';
 import type { PolicyToken } from '@/mocks/types';
@@ -21,6 +22,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { Banner } from '@/components/ui/Banner';
+import { RiskPill } from '@/components/ui/RiskPill';
+import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
 import { useCan } from '@/components/ui/Can';
 import { cn } from '@/lib/cn';
 import { count, pluralize } from '@/lib/format';
@@ -28,6 +31,87 @@ import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
 import { announce } from '@/lib/a11y';
 import type { PolicyEvalResult } from '@/mocks/api';
+
+/**
+ * The dry-run result: what the rule would hit, and the worst of it.
+ *
+ * Previously a flat list of six name+score rows in identical bordered pills, with the
+ * score as plain tertiary text. Three problems, all about a reviewer's actual question
+ * — "is this rule safe to activate?":
+ *
+ *  - Risk carried no encoding. This product colours exactly one thing, risk, and this
+ *    was the one identity list that opted out, so a critical match looked like a
+ *    minimal one. Now RiskPill, as in the inventory table and the detail panel.
+ *  - Nothing said the six were a sample of hundreds, so the list read as complete.
+ *  - Rows were inert. Every other identity listing in the app opens the detail panel.
+ *
+ * The critical count leads because it is the number that decides whether to look
+ * closer, and it cannot be inferred from six rows.
+ */
+function TestResult({ result }: { result: PolicyEvalResult }) {
+  const { affected, total, criticalCount, sample } = result;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Test result"
+        description={`${count(affected)} of ${count(total)} identities match. Dry run — nothing was enforced.`}
+      />
+      <CardBody className="space-y-3">
+        {affected === 0 ? (
+          <p className="text-[length:var(--fs-small)] text-text-tertiary">
+            No identities match this rule. It would enforce against nothing as written.
+          </p>
+        ) : (
+          <>
+            {criticalCount > 0 && (
+              <p className="flex items-baseline gap-1.5 text-[length:var(--fs-small)] text-crit-fg">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 translate-y-0.5" aria-hidden="true" />
+                <span>
+                  <span className="tnum font-semibold">{count(criticalCount)}</span> of the matches{' '}
+                  {criticalCount === 1 ? 'is' : 'are'} critical risk.
+                </span>
+              </p>
+            )}
+            <div>
+              <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="eyebrow">Highest risk first</span>
+                {/* Says outright that this is a sample. The list is six rows whatever
+                    the match count, and previously nothing distinguished "six matches"
+                    from "six shown of hundreds". */}
+                <span className="text-[length:var(--fs-micro)] text-text-tertiary">
+                  showing <span className="tnum">{sample.length}</span> of{' '}
+                  <span className="tnum">{count(affected)}</span>
+                </span>
+              </div>
+              <ul className="divide-y divide-border overflow-hidden rounded-[var(--r-md)] border border-border">
+                {sample.map((s) => (
+                  <li key={s.id}>
+                    <Link
+                      to={`/discover/${s.id}`}
+                      className="group flex items-center gap-2.5 bg-surface-2 px-2.5 py-2 transition-colors hover:bg-surface-hover"
+                      aria-label={`${s.name}, risk ${s.riskScore}. Open identity.`}
+                    >
+                      <NhiTypeIcon type={s.type} className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--fs-small)] text-text">
+                        {s.name}
+                      </span>
+                      <RiskPill score={s.riskScore} size="sm" />
+                      <ChevronRight
+                        className="h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-text-secondary"
+                        aria-hidden="true"
+                      />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 export function PolicyBuilderScreen() {
   const { policyId } = useParams();
@@ -252,28 +336,7 @@ export function PolicyBuilderScreen() {
             </>
           )}
 
-          {testResult && (
-            <Card>
-              <CardHeader
-                title="Test result"
-                description={`${count(testResult.affected)} of ${count(testResult.total)} identities match.`}
-              />
-              <CardBody>
-                {testResult.sample.length === 0 ? (
-                  <p className="text-[length:var(--fs-small)] text-text-tertiary">No identities match this rule.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {testResult.sample.map((s) => (
-                      <li key={s.id} className="flex items-center justify-between rounded-[var(--r-sm)] border border-border bg-surface-2 px-2.5 py-1.5">
-                        <span className="truncate font-mono text-[length:var(--fs-small)] text-text">{s.name}</span>
-                        <span className="tnum text-[length:var(--fs-small)] text-text-tertiary">risk {s.riskScore}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardBody>
-            </Card>
-          )}
+          {testResult && <TestResult result={testResult} />}
         </div>
 
         {/* Preview + affected + code */}

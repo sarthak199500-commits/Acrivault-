@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowDown, ArrowUp, Info, Plus, Trash2 } from 'lucide-react';
 import type { PolicyToken } from '@/mocks/types';
-import { ACTIONS, SUBJECTS, actionDef, subjectDef, type Diagnostic } from '@/mocks/policy';
+import { ACTIONS, SUBJECTS, actionDef, diagnosticCovers, subjectDef, type Diagnostic } from '@/mocks/policy';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { IconButton } from '@/components/ui/IconButton';
@@ -117,6 +117,7 @@ function ConditionRow({
   onMove,
   canRemove,
   diagnostics,
+  implicated,
   onApplyFix,
 }: {
   token: PolicyToken;
@@ -126,11 +127,14 @@ function ConditionRow({
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
   canRemove: boolean;
+  /** Diagnostics whose message belongs on this row. */
   diagnostics: Diagnostic[];
+  /** True when this row is part of a contradiction, whether or not it carries the text. */
+  implicated: boolean;
   onApplyFix: (d: Diagnostic) => void;
 }) {
   const def = subjectDef(token.subject);
-  const dead = diagnostics.some((d) => d.severity === 'unsatisfiable');
+  const dead = implicated || diagnostics.some((d) => d.severity === 'unsatisfiable');
   return (
     <div
       className={cn(
@@ -235,6 +239,14 @@ export function TokenCanvas({
             onRemove={() => removeCondition(index)}
             onMove={(dir) => moveCondition(index, dir)}
             diagnostics={diagnostics.filter((d) => d.index === index)}
+            // A contradiction reports once but implicates several rows; those rows
+            // are marked without repeating the sentence on each of them.
+            implicated={diagnostics.some(
+              (d) =>
+                d.severity === 'unsatisfiable' &&
+                d.index !== index &&
+                diagnosticCovers(d, index),
+            )}
             // The fix carries the whole repaired rule, so applying it is a
             // replacement rather than another index-based mutation.
             onApplyFix={(d) => d.fix && onChange(d.fix.tokens)}
