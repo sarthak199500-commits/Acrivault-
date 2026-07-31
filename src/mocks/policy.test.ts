@@ -1,11 +1,38 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { defaultTokens, generatedCode, matchesPolicy, plainEnglish } from './policy';
+import {
+  defaultTokens,
+  generatedCode,
+  isUnsatisfiable,
+  lintRule,
+  matchesPolicy,
+  plainEnglish,
+  withoutCondition,
+  zeroReason,
+} from './policy';
 import { getDataset, typeBreakdown } from './dataset';
 import { evaluatePolicy } from './api';
 import { useUiStore } from '@/stores/ui';
 import type { PolicyToken } from './types';
 
 beforeAll(() => useUiStore.getState().setLatency(0));
+
+/** Build a rule: first condition is WHEN, the rest AND, plus a THEN action. */
+function rule(...conditions: [string, string, string][]): PolicyToken[] {
+  return [
+    ...conditions.map(([subject, operator, value], i) => ({
+      kind: i === 0 ? ('when' as const) : ('and' as const),
+      subject,
+      operator,
+      value,
+    })),
+    { kind: 'then' as const, subject: 'action', operator: 'set', value: 'review' },
+  ];
+}
+
+/** Does any identity in the seeded dataset satisfy this rule? */
+function matchCount(tokens: PolicyToken[]): number {
+  return getDataset().identities.filter((i) => matchesPolicy(i, tokens)).length;
+}
 
 describe('policy grammar', () => {
   it('restates a rule in plain English', () => {
@@ -33,6 +60,206 @@ describe('policy grammar', () => {
     if (agent) {
       expect(matchesPolicy(agent, [{ kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' }])).toBe(true);
       expect(matchesPolicy(agent, [{ kind: 'when', subject: 'type', operator: 'is', value: 'api-key' }])).toBe(false);
+    }
+  });
+});
+
+describe('rule linting: contradictions', () => {
+  // Each case is paired with its real match count, so "unsatisfiable" is not just
+  // asserted — the dataset confirms nothing matches.
+  const contradictions: [string, PolicyToken[]][] = [
+    ['two types at once', rule(['type', 'is', 'ai-agent'], ['type', 'is', 'api-key'])],
+    ['a type and its negation', rule(['type', 'is', 'ai-agent'], ['type', 'is-not', 'ai-agent'])],
+    ['below 60 and above 80', rule(['riskScore', 'lt', '60'], ['riskScore', 'gt', '80'])],
+    ['at least 60 and at most 40', rule(['riskScore', 'gte', '60'], ['riskScore', 'lte', '40'])],
+    ['orphaned both ways', rule(['orphaned', 'is', 'true'], ['orphaned', 'is', 'false'])],
+    ['two governance states', rule(['governanceStatus', 'is', 'governed'], ['governanceStatus', 'is', 'drift'])],
+    ['no conflicts and some conflicts', rule(['conflicts', 'eq', '0'], ['conflicts', 'gt', '0'])],
+    ['unassigned yet owned', rule(['owner', 'empty', ''], ['owner', 'is', 'sre'])],
+    ['two owners', rule(['owner', 'is', 'sre'], ['owner', 'is', 'security'])],
+  ];
+
+  it.each(contradictions)('flags %s as unsatisfiable, and nothing matches', (_label, tokens) => {
+    expect(isUnsatisfiable(lintRule(tokens))).toBe(true);
+    expect(matchCount(tokens)).toBe(0);
+  });
+
+  it('flags a risk score outside the 0–100 domain', () => {
+    const tokens = rule(['riskScore', 'gte', '101']);
+    const diags = lintRule(tokens);
+    expect(isUnsatisfiable(diags)).toBe(true);
+    expect(diags[0].message).toContain('0–100');
+    expect(matchCount(tokens)).toBe(0);
+  });
+
+  it('names the reason rather than just reporting invalidity', () => {
+    const diags = lintRule(rule(['type', 'is', 'ai-agent'], ['type', 'is', 'api-key']));
+    expect(diags[0].message).toContain('exactly one type');
+  });
+
+  it('marks every condition involved, so the conflicting pair is both visible', () => {
+    const diags = lintRule(rule(['riskScore', 'lt', '60'], ['riskScore', 'gt', '80']));
+    expect(diags.filter((d) => d.severity === 'unsatisfiable').map((d) => d.index)).toEqual([0, 1]);
+  });
+});
+
+describe('rule linting: repeated sources are a valid intersection', () => {
+  // `cloud` is the one multi-valued subject: identity.sources is an array, so
+  // repeating it asks for correlation across providers. Blanket "same subject
+  // twice" detection would destroy the most valuable query in the builder.
+  it('does not flag two different sources, and identities do match', () => {
+    const tokens = rule(['cloud', 'includes', 'aws'], ['cloud', 'includes', 'gcp']);
+    expect(lintRule(tokens)).toEqual([]);
+    expect(matchCount(tokens)).toBeGreaterThan(0);
+  });
+
+  it('does not flag all three sources', () => {
+    const tokens = rule(['cloud', 'includes', 'aws'], ['cloud', 'includes', 'gcp'], ['cloud', 'includes', 'azure']);
+    expect(isUnsatisfiable(lintRule(tokens))).toBe(false);
+    expect(matchCount(tokens)).toBeGreaterThan(0);
+  });
+
+  it('still flags an exact duplicate source as redundant', () => {
+    const diags = lintRule(rule(['cloud', 'includes', 'aws'], ['cloud', 'includes', 'aws']));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('redundant');
+  });
+});
+
+describe('rule linting: redundancy', () => {
+  it('flags a bound that narrows nothing, and the count is unchanged by removing it', () => {
+    const tokens = rule(['riskScore', 'gte', '60'], ['riskScore', 'gte', '50']);
+    const diags = lintRule(tokens);
+    const redundant = diags.filter((d) => d.severity === 'redundant');
+    expect(redundant).toHaveLength(1);
+    expect(redundant[0].index).toBe(1);
+    // Proof the diagnosis is right: dropping it leaves an equivalent rule.
+    expect(matchCount(withoutCondition(tokens, 1))).toBe(matchCount(tokens));
+  });
+
+  it('leaves a genuine band alone', () => {
+    const tokens = rule(['riskScore', 'gte', '60'], ['riskScore', 'lte', '80']);
+    expect(lintRule(tokens)).toEqual([]);
+    expect(matchCount(tokens)).toBeGreaterThan(0);
+  });
+
+  it('flags an implied negation', () => {
+    const diags = lintRule(rule(['type', 'is', 'ai-agent'], ['type', 'is-not', 'api-key']));
+    expect(diags.map((d) => d.severity)).toEqual(['redundant']);
+    expect(diags[0].index).toBe(1);
+  });
+
+  it('offers a fix that removes exactly the offending condition', () => {
+    const tokens = rule(['riskScore', 'gte', '60'], ['riskScore', 'gte', '50']);
+    const fix = lintRule(tokens).find((d) => d.severity === 'redundant')?.fix;
+    if (!fix) throw new Error('expected a fix on the redundant condition');
+    expect(fix.tokens.filter((t) => t.kind !== 'then')).toHaveLength(1);
+    expect(lintRule(fix.tokens)).toEqual([]);
+  });
+
+  it('re-normalizes kinds when the first condition is removed', () => {
+    const tokens = rule(['type', 'is', 'ai-agent'], ['riskScore', 'gte', '60']);
+    const next = withoutCondition(tokens, 0);
+    expect(next[0].kind).toBe('when');
+    expect(next[0].subject).toBe('riskScore');
+  });
+});
+
+describe('rule linting: incomplete conditions fail closed', () => {
+  // This was the most dangerous state: `matchesCondition` returned true for NaN,
+  // so a half-typed rule reported the whole population as affected.
+  it('an empty risk score matches nothing rather than everything', () => {
+    const tokens = rule(['riskScore', 'gte', '']);
+    expect(matchCount(tokens)).toBe(0);
+    expect(matchCount(tokens)).not.toBe(getDataset().identities.length);
+  });
+
+  it('reports the empty value so the zero is explained', () => {
+    const diags = lintRule(rule(['riskScore', 'gte', '']));
+    expect(diags.map((d) => d.severity)).toEqual(['incomplete']);
+    expect(zeroReason(rule(['riskScore', 'gte', '']), diags)).toContain('missing its value');
+  });
+
+  it('an empty conflict count matches nothing', () => {
+    expect(matchCount(rule(['conflicts', 'gt', '']))).toBe(0);
+  });
+
+  it('an empty owner name matches nothing, in either direction', () => {
+    // `is not ""` was the subtler half of the same trap: it held for every
+    // identity, so a blank name widened the rule to the whole population.
+    expect(matchCount(rule(['owner', 'is-not', '']))).toBe(0);
+    expect(matchCount(rule(['owner', 'is', '']))).toBe(0);
+    for (const operator of ['is', 'is-not']) {
+      const diags = lintRule(rule(['owner', operator, '']));
+      expect(diags.map((d) => d.severity)).toEqual(['incomplete']);
+    }
+  });
+
+  it('leaves a genuinely satisfiable owner pair alone', () => {
+    // Unassigned AND "not sre" is consistent: an identity with no owner is not sre.
+    const tokens = rule(['owner', 'empty', ''], ['owner', 'is-not', 'sre']);
+    expect(isUnsatisfiable(lintRule(tokens))).toBe(false);
+    expect(matchCount(tokens)).toBeGreaterThan(0);
+  });
+});
+
+describe('rule linting: exhaustive negation and out-of-range values', () => {
+  it('flags excluding every value of an enum', () => {
+    const allTypes = rule(
+      ['type', 'is-not', 'ai-agent'],
+      ['type', 'is-not', 'service-account'],
+      ['type', 'is-not', 'api-key'],
+      ['type', 'is-not', 'oauth-token'],
+      ['type', 'is-not', 'workload-identity'],
+    );
+    expect(isUnsatisfiable(lintRule(allTypes))).toBe(true);
+    expect(matchCount(allTypes)).toBe(0);
+
+    // Excluding all but one is fine, and matches that one.
+    const allButOne = rule(
+      ['type', 'is-not', 'ai-agent'],
+      ['type', 'is-not', 'service-account'],
+      ['type', 'is-not', 'api-key'],
+      ['type', 'is-not', 'oauth-token'],
+    );
+    expect(isUnsatisfiable(lintRule(allButOne))).toBe(false);
+    expect(matchCount(allButOne)).toBeGreaterThan(0);
+  });
+
+  it('flags a negative count or score, which no identity can hold', () => {
+    for (const tokens of [rule(['conflicts', 'eq', '-1']), rule(['riskScore', 'lte', '-1'])]) {
+      expect(isUnsatisfiable(lintRule(tokens))).toBe(true);
+      expect(matchCount(tokens)).toBe(0);
+    }
+  });
+
+  it('flags two different exact counts', () => {
+    const tokens = rule(['conflicts', 'eq', '0'], ['conflicts', 'eq', '1']);
+    expect(isUnsatisfiable(lintRule(tokens))).toBe(true);
+    expect(matchCount(tokens)).toBe(0);
+  });
+});
+
+describe('zeroReason separates impossible from merely empty', () => {
+  it('explains an impossible rule', () => {
+    const tokens = rule(['type', 'is', 'ai-agent'], ['type', 'is', 'api-key']);
+    expect(zeroReason(tokens, lintRule(tokens))).toContain('can never match');
+  });
+
+  it('stays silent for a sound rule that simply matches nobody today', () => {
+    // Logically fine — the data just has no identity with this many conflicts.
+    const tokens = rule(['conflicts', 'gt', '9']);
+    expect(matchCount(tokens)).toBe(0);
+    expect(isUnsatisfiable(lintRule(tokens))).toBe(false);
+    expect(zeroReason(tokens, lintRule(tokens))).toBeNull();
+  });
+});
+
+describe('rule linting: sound rules stay quiet', () => {
+  it('reports nothing for the starter rule or the seeded policies', () => {
+    expect(lintRule(defaultTokens())).toEqual([]);
+    for (const policy of getDataset().policies) {
+      expect(lintRule(policy.tokens), `seeded policy "${policy.name}" should lint clean`).toEqual([]);
     }
   });
 });

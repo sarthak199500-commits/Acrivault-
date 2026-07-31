@@ -15,10 +15,31 @@ import {
 
 export type ValueType = 'enum' | 'number' | 'text';
 
+/**
+ * How many values the subject can hold on ONE identity. This is the fact the
+ * grammar was missing, and without it a rule builder cannot tell a contradiction
+ * from a query that simply matches nothing today.
+ *
+ * - `single` — exactly one value (an identity has one type, one risk score, one
+ *   governance status, one owner). Two conditions on the same single-valued
+ *   subject must be jointly satisfiable or the rule can NEVER match.
+ * - `multi` — a set. Only `cloud`: `identity.sources` is an array, so
+ *   "exists in AWS AND exists in GCP" is the cross-cloud correlation query the
+ *   product exists for, never a conflict. Contradiction checks must skip these.
+ */
+export type Cardinality = 'single' | 'multi';
+
 export interface SubjectDef {
   id: string;
   label: string;
   valueType: ValueType;
+  cardinality: Cardinality;
+  /**
+   * Inclusive integer bounds for numeric subjects, so a condition asking outside
+   * the possible range ("risk score at least 101") is reported rather than
+   * silently matching nothing. Omit `max` where there is no natural ceiling.
+   */
+  domain?: { min: number; max?: number };
   operators: { value: string; label: string }[];
   options?: { value: string; label: string }[];
   defaultOperator: string;
@@ -45,6 +66,7 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'type',
     label: 'Type',
     valueType: 'enum',
+    cardinality: 'single',
     operators: [
       { value: 'is', label: 'is' },
       { value: 'is-not', label: 'is not' },
@@ -57,6 +79,9 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'riskScore',
     label: 'Risk score',
     valueType: 'number',
+    cardinality: 'single',
+    // Scores are precomputed upstream on a 0..100 scale and clamped there.
+    domain: { min: 0, max: 100 },
     operators: [
       { value: 'gte', label: 'is at least' },
       { value: 'lte', label: 'is at most' },
@@ -70,6 +95,7 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'orphaned',
     label: 'Orphaned',
     valueType: 'enum',
+    cardinality: 'single',
     operators: [{ value: 'is', label: 'is' }],
     options: [
       { value: 'true', label: 'true' },
@@ -82,6 +108,10 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'conflicts',
     label: 'Attribute conflicts',
     valueType: 'number',
+    cardinality: 'single',
+    // A count, so never negative. No ceiling asserted: how many attributes can
+    // disagree is an upstream property, not something this grammar should cap.
+    domain: { min: 0 },
     operators: [
       { value: 'gt', label: 'more than' },
       { value: 'eq', label: 'exactly' },
@@ -93,6 +123,7 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'governanceStatus',
     label: 'Governance',
     valueType: 'enum',
+    cardinality: 'single',
     operators: [
       { value: 'is', label: 'is' },
       { value: 'is-not', label: 'is not' },
@@ -103,8 +134,11 @@ export const SUBJECTS: SubjectDef[] = [
   },
   {
     id: 'cloud',
-    label: 'Cloud',
+    label: 'Source',
     valueType: 'enum',
+    // The one multi-valued subject: an identity is correlated across several
+    // sources, so repeating this condition intersects them ("in AWS *and* GCP").
+    cardinality: 'multi',
     operators: [{ value: 'includes', label: 'exists in' }],
     options: cloudOptions,
     defaultOperator: 'includes',
@@ -114,6 +148,7 @@ export const SUBJECTS: SubjectDef[] = [
     id: 'owner',
     label: 'Owner',
     valueType: 'text',
+    cardinality: 'single',
     operators: [
       { value: 'is', label: 'is' },
       { value: 'is-not', label: 'is not' },
@@ -254,7 +289,13 @@ function matchesCondition(identity: Identity, token: PolicyToken): boolean {
       return token.operator === 'is-not' ? identity.type !== v : identity.type === v;
     case 'riskScore': {
       const n = Number(v);
-      if (Number.isNaN(n)) return true;
+      // Fail CLOSED on a malformed or empty value. This used to `return true`,
+      // which made a half-typed condition match the entire population — so an
+      // unfinished rule reported every identity as affected, a number plausible
+      // enough to be believed. On a policy that can quarantine or block, an
+      // incomplete condition must never widen the match set. `lintRule` reports
+      // the empty value separately so the reason is visible, not just the zero.
+      if (!v.trim() || Number.isNaN(n)) return false;
       const s = identity.riskScore;
       return { gte: s >= n, lte: s <= n, gt: s > n, lt: s < n }[token.operator] ?? false;
     }
@@ -262,6 +303,8 @@ function matchesCondition(identity: Identity, token: PolicyToken): boolean {
       return identity.orphaned === (v === 'true');
     case 'conflicts': {
       const n = Number(v);
+      // Fail closed on an empty/malformed count, as for riskScore above.
+      if (!v.trim() || Number.isNaN(n)) return false;
       const c = identity.conflicts.length;
       return token.operator === 'eq' ? c === n : c > n;
     }
@@ -273,6 +316,10 @@ function matchesCondition(identity: Identity, token: PolicyToken): boolean {
       return identity.sources.some((s) => s.cloud === v);
     case 'owner':
       if (token.operator === 'empty') return !identity.owner;
+      // Fail closed on a blank name, as for the numeric subjects above. Without
+      // this, `is not ""` held for every identity, so an unfinished condition
+      // widened the rule to the entire population instead of narrowing it.
+      if (!v.trim()) return false;
       return token.operator === 'is-not' ? identity.owner !== v : identity.owner === v;
     default:
       return false;
@@ -284,6 +331,347 @@ export function matchesPolicy(identity: Identity, tokens: PolicyToken[]): boolea
   const conditions = tokens.filter((t) => t.kind === 'when' || t.kind === 'and');
   if (conditions.length === 0) return false;
   return conditions.every((c) => matchesCondition(identity, c));
+}
+
+/* ------------------------------------------------------------------ linting */
+
+/**
+ * Why a rule is wrong, as opposed to merely unpopular.
+ *
+ * - `unsatisfiable` — no identity can EVER satisfy it, on any dataset. A bare
+ *   "0 affected" cannot express this: it looks identical to a sound rule that
+ *   happens to match nobody today.
+ * - `redundant` — the condition does not change what the rule matches. Removing
+ *   it leaves an equivalent rule.
+ * - `incomplete` — the condition has no usable value yet, so it matches nothing
+ *   until one is supplied.
+ */
+export type DiagnosticSeverity = 'unsatisfiable' | 'redundant' | 'incomplete';
+
+export interface Diagnostic {
+  severity: DiagnosticSeverity;
+  /** Index into the rule's CONDITION list (WHEN/AND only), as the builder renders it. */
+  index: number;
+  message: string;
+  /** A mechanical repair — the full token list with this condition removed. */
+  fix?: { label: string; tokens: PolicyToken[] };
+}
+
+/** Positions of the WHEN/AND tokens within the full token list. */
+function conditionPositions(tokens: PolicyToken[]): number[] {
+  const out: number[] = [];
+  tokens.forEach((t, i) => {
+    if (t.kind === 'when' || t.kind === 'and') out.push(i);
+  });
+  return out;
+}
+
+/** Drop one condition and re-normalize kinds so the first is always WHEN. */
+export function withoutCondition(tokens: PolicyToken[], conditionIndex: number): PolicyToken[] {
+  const target = conditionPositions(tokens)[conditionIndex];
+  if (target === undefined) return tokens;
+  let first = true;
+  return tokens
+    .filter((_, i) => i !== target)
+    .map((t) => {
+      if (t.kind === 'then') return t;
+      const kind = first ? ('when' as const) : ('and' as const);
+      first = false;
+      return { ...t, kind };
+    });
+}
+
+/* Numeric conditions become inclusive integer intervals, so contradiction and
+ * redundancy are one calculation rather than a pile of operator special cases.
+ * Both numeric subjects (risk score, conflict count) are integers, which makes
+ * `gt n` exactly `>= n+1`. */
+interface Interval {
+  lo: number;
+  hi: number;
+}
+const OPEN: Interval = { lo: Number.NEGATIVE_INFINITY, hi: Number.POSITIVE_INFINITY };
+
+function intervalOf(token: PolicyToken): Interval | null {
+  const raw = token.value.trim();
+  const n = Number(raw);
+  if (!raw || Number.isNaN(n)) return null;
+  switch (token.operator) {
+    case 'gte': return { lo: n, hi: OPEN.hi };
+    case 'gt': return { lo: n + 1, hi: OPEN.hi };
+    case 'lte': return { lo: OPEN.lo, hi: n };
+    case 'lt': return { lo: OPEN.lo, hi: n - 1 };
+    case 'eq': return { lo: n, hi: n };
+    default: return OPEN;
+  }
+}
+
+function meet(a: Interval, b: Interval): Interval {
+  return { lo: Math.max(a.lo, b.lo), hi: Math.min(a.hi, b.hi) };
+}
+const empty = (i: Interval): boolean => i.lo > i.hi;
+const sameInterval = (a: Interval, b: Interval): boolean => a.lo === b.lo && a.hi === b.hi;
+
+function domainInterval(def: SubjectDef): Interval {
+  return {
+    lo: def.domain?.min ?? OPEN.lo,
+    hi: def.domain?.max ?? OPEN.hi,
+  };
+}
+
+/** Human-readable restatement of a single condition, for diagnostic copy. */
+function shortPhrase(token: PolicyToken): string {
+  const def = subjectDef(token.subject);
+  const opLabel = def?.operators.find((o) => o.value === token.operator)?.label ?? token.operator;
+  const valLabel = def?.valueType === 'enum' ? optionLabel(def.options, token.value) : token.value;
+  if (token.operator === 'empty') return `${def?.label ?? token.subject} ${opLabel}`;
+  return `${def?.label ?? token.subject} ${opLabel} ${valLabel}`.trim();
+}
+
+/** Values an enum subject may still take, given every condition on it. */
+function allowedEnumValues(conditions: PolicyToken[], def: SubjectDef): Set<string> {
+  let allowed = new Set((def.options ?? []).map((o) => o.value));
+  for (const t of conditions) {
+    if (t.operator === 'is-not') allowed.delete(t.value);
+    else allowed = new Set([...allowed].filter((v) => v === t.value));
+  }
+  return allowed;
+}
+
+const sameSet = (a: Set<string>, b: Set<string>): boolean =>
+  a.size === b.size && [...a].every((v) => b.has(v));
+
+/**
+ * Report contradictions, redundancies, and incomplete conditions in a rule.
+ *
+ * Conditions are ANDed (see `matchesPolicy`), so any two that cannot hold at once
+ * make the whole rule dead. Pure and dataset-independent by design: `unsatisfiable`
+ * means impossible in principle, which is exactly the claim an affected-count of
+ * zero cannot make.
+ *
+ * Redundancy is decided structurally rather than by enumerating operator pairs: a
+ * condition is redundant precisely when removing it leaves the satisfying set
+ * unchanged. That catches "at least 60 AND at least 50" without a rule for it.
+ */
+export function lintRule(tokens: PolicyToken[]): Diagnostic[] {
+  const positions = conditionPositions(tokens);
+  const conditions = positions.map((p) => tokens[p]);
+  const out: Diagnostic[] = [];
+
+  const removeFix = (index: number) => ({
+    label: 'Remove this condition',
+    tokens: withoutCondition(tokens, index),
+  });
+
+  // Group condition indices by subject.
+  const groups = new Map<string, number[]>();
+  conditions.forEach((t, i) => {
+    const list = groups.get(t.subject) ?? [];
+    list.push(i);
+    groups.set(t.subject, list);
+  });
+
+  for (const [subjectId, indices] of groups) {
+    const def = subjectDef(subjectId);
+    if (!def) continue;
+    const at = (i: number) => conditions[i];
+
+    // Exact duplicates are pointless whatever the cardinality.
+    const seen = new Map<string, number>();
+    const dupes = new Set<number>();
+    for (const i of indices) {
+      const key = `${at(i).operator}|${at(i).value}`;
+      const prior = seen.get(key);
+      if (prior !== undefined) {
+        dupes.add(i);
+        out.push({
+          severity: 'redundant',
+          index: i,
+          message: `Identical to condition ${prior + 1}.`,
+          fix: removeFix(i),
+        });
+      } else {
+        seen.set(key, i);
+      }
+    }
+
+    // Values that are missing entirely — flag and exclude from the logic below,
+    // since an absent value implies nothing about satisfiability.
+    const blanks = new Set<number>();
+    for (const i of indices) {
+      const t = at(i);
+      if (t.operator === 'empty') continue;
+      const needsValue = def.valueType === 'number' || def.valueType === 'text';
+      if (needsValue && !t.value.trim()) {
+        blanks.add(i);
+        out.push({
+          severity: 'incomplete',
+          index: i,
+          message: `${def.label} has no value yet, so this condition matches nothing.`,
+        });
+      }
+    }
+
+    const live = indices.filter((i) => !dupes.has(i) && !blanks.has(i));
+
+    // A multi-valued subject intersects rather than conflicts: "exists in AWS AND
+    // exists in GCP" is the correlation query, so no contradiction check applies.
+    if (def.cardinality === 'multi' || live.length === 0) continue;
+
+    if (def.valueType === 'number') {
+      const domain = domainInterval(def);
+      const intervals = new Map(live.map((i) => [i, intervalOf(at(i)) ?? OPEN]));
+      // An absent entry would mean `live` and `intervals` disagree; OPEN is the
+      // identity for `meet`, so falling back to it cannot change a verdict.
+      const iv = (i: number): Interval => intervals.get(i) ?? OPEN;
+      const combined = live.reduce((acc, i) => meet(acc, iv(i)), OPEN);
+
+      if (empty(combined)) {
+        // The conditions fight each other — name the pair on every row involved.
+        const phrases = live.map((i) => shortPhrase(at(i))).join(' and ');
+        for (const i of live) {
+          out.push({
+            severity: 'unsatisfiable',
+            index: i,
+            message: `No ${def.label.toLowerCase()} can be both — ${phrases} is impossible, so this rule can never match.`,
+            fix: live.length > 1 ? removeFix(i) : undefined,
+          });
+        }
+        continue;
+      }
+
+      // Individually satisfiable, but outside the values the field can hold.
+      const withDomain = meet(combined, domain);
+      if (empty(withDomain)) {
+        const range = def.domain?.max === undefined
+          ? `${def.domain?.min ?? 0} or more`
+          : `${def.domain?.min}–${def.domain?.max}`;
+        for (const i of live) {
+          if (empty(meet(iv(i), domain))) {
+            out.push({
+              severity: 'unsatisfiable',
+              index: i,
+              message: `${def.label} is only ever ${range}, so this can never match.`,
+            });
+          }
+        }
+        continue;
+      }
+
+      // Redundant iff dropping it does not change the satisfying interval.
+      if (live.length > 1) {
+        for (const i of live) {
+          const others = live.filter((j) => j !== i).reduce((acc, j) => meet(acc, iv(j)), OPEN);
+          if (sameInterval(meet(others, domain), withDomain)) {
+            out.push({
+              severity: 'redundant',
+              index: i,
+              message: `Already implied by the other ${def.label.toLowerCase()} conditions — this narrows nothing.`,
+              fix: removeFix(i),
+            });
+          }
+        }
+      }
+      continue;
+    }
+
+    if (def.valueType === 'enum') {
+      const allowed = allowedEnumValues(live.map(at), def);
+      if (allowed.size === 0) {
+        const phrases = live.map((i) => shortPhrase(at(i))).join(' and ');
+        for (const i of live) {
+          out.push({
+            severity: 'unsatisfiable',
+            index: i,
+            // The plain-language reason, not just the fact — an identity holding
+            // exactly one value is why these cannot co-exist.
+            message: `An identity has exactly one ${def.label.toLowerCase()}, so ${phrases} can never both be true.`,
+            fix: live.length > 1 ? removeFix(i) : undefined,
+          });
+        }
+        continue;
+      }
+      if (live.length > 1) {
+        for (const i of live) {
+          const others = allowedEnumValues(live.filter((j) => j !== i).map(at), def);
+          if (sameSet(others, allowed)) {
+            out.push({
+              severity: 'redundant',
+              index: i,
+              message: `Already implied by the other ${def.label.toLowerCase()} conditions — this excludes nothing.`,
+              fix: removeFix(i),
+            });
+          }
+        }
+      }
+      continue;
+    }
+
+    // Text (owner): `empty` means no owner at all, so it cannot coexist with a
+    // named one; two different names cannot both hold either.
+    const emptyIdx = live.filter((i) => at(i).operator === 'empty');
+    const isIdx = live.filter((i) => at(i).operator === 'is');
+    const isNotIdx = live.filter((i) => at(i).operator === 'is-not');
+
+    if (emptyIdx.length > 0 && isIdx.length > 0) {
+      for (const i of [...emptyIdx, ...isIdx]) {
+        out.push({
+          severity: 'unsatisfiable',
+          index: i,
+          message: `An identity cannot be unassigned and owned by ${at(isIdx[0]).value || 'someone'} at once.`,
+          fix: removeFix(i),
+        });
+      }
+      continue;
+    }
+    const distinct = new Set(isIdx.map((i) => at(i).value));
+    if (distinct.size > 1) {
+      for (const i of isIdx) {
+        out.push({
+          severity: 'unsatisfiable',
+          index: i,
+          message: `An identity has one owner, so it cannot be ${[...distinct].join(' and ')}.`,
+          fix: removeFix(i),
+        });
+      }
+      continue;
+    }
+    for (const i of isIdx) {
+      if (isNotIdx.some((j) => at(j).value === at(i).value)) {
+        out.push({
+          severity: 'unsatisfiable',
+          index: i,
+          message: `This owner is both required and excluded, so the rule can never match.`,
+          fix: removeFix(i),
+        });
+      }
+    }
+  }
+
+  return out.sort((a, b) => a.index - b.index);
+}
+
+/** True when the rule cannot match any identity, on any dataset. */
+export function isUnsatisfiable(diagnostics: Diagnostic[]): boolean {
+  return diagnostics.some((d) => d.severity === 'unsatisfiable');
+}
+
+/** True when a condition is missing a value the operator needs. */
+export function isIncomplete(diagnostics: Diagnostic[]): boolean {
+  return diagnostics.some((d) => d.severity === 'incomplete');
+}
+
+/**
+ * Why the affected count is zero — so the tile can distinguish "impossible" from
+ * "nothing matches today", which a bare `0` cannot. Returns null when the count
+ * is non-zero or the rule is sound and simply matches nobody.
+ */
+export function zeroReason(tokens: PolicyToken[], diagnostics: Diagnostic[]): string | null {
+  if (isUnsatisfiable(diagnostics)) return 'This rule can never match — see the conditions above.';
+  if (isIncomplete(diagnostics)) return 'A condition is missing its value.';
+  if (tokens.filter((t) => t.kind === 'when' || t.kind === 'and').length === 0) {
+    return 'This rule has no conditions.';
+  }
+  return null;
 }
 
 /** A fresh starter rule for the builder. */
