@@ -1,17 +1,72 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Clock } from 'lucide-react';
+import { Clock, RefreshCw } from 'lucide-react';
 import { AuthCard } from '@/components/ui/AuthCard';
 import { RegistrationProgress } from '@/components/ui/RegistrationProgress';
 import { CodeInput } from '@/components/ui/CodeInput';
 import { Button } from '@/components/ui/Button';
 import { Banner } from '@/components/ui/Banner';
-import { verifyCode, resendCode, VERIFICATION_CODE } from '@/mocks/api';
+import { ProgressBar } from '@/components/ui/ProgressBar';
+import { verifyCode, resendCode, verifyDomain, domainOf, VERIFICATION_CODE } from '@/mocks/api';
 import { errorInfo } from '@/lib/apiError';
 import { announce } from '@/lib/a11y';
 import { useFlowStore } from '@/stores/flow';
 
 const TTL_SECONDS = 600; // 10-minute time-to-live
+
+/**
+ * Step 2 covers both halves of "Verify Email & Domain": the emailed code, then
+ * domain-ownership confirmation. Domain verification is a phase of this screen
+ * rather than a fifth registration step, so the 4-step progress model holds.
+ */
+type Phase = 'email' | 'verifying-domain' | 'domain-verified' | 'domain-failed';
+
+/** How long the verified beat holds before the flow moves on to Terms. */
+const VERIFIED_HOLD_MS = 1800;
+
+/**
+ * The verified beat. Decorative only — the heading already says "Domain verified"
+ * and announce() carries the outcome to assistive tech, so this is aria-hidden
+ * rather than a second thing to read.
+ *
+ * No animation-delay or fill-mode anywhere here: the global reduced-motion rules
+ * crush animation-duration but NOT animation-delay, so a delayed animation with
+ * `backwards` fill would sit on its hidden start state and render no check at all.
+ */
+function SuccessMark() {
+  return (
+    <span className="relative inline-flex h-14 w-14 items-center justify-center" aria-hidden="true">
+      <span
+        className="absolute inset-0 rounded-full bg-[var(--success)] opacity-0 motion-safe:animate-[acv-mark-halo_900ms_ease-out_forwards]"
+      />
+      <svg
+        viewBox="0 0 52 52"
+        className="relative h-14 w-14 motion-safe:animate-[acv-mark-in_240ms_cubic-bezier(0.2,0.8,0.2,1)]"
+      >
+        <circle
+          cx="26"
+          cy="26"
+          r="24"
+          fill="var(--ok-bg)"
+          stroke="var(--success)"
+          strokeWidth="2"
+        />
+        {/* dasharray 30 ≥ the path's ~28 length, so offset 30 hides it completely */}
+        <path
+          d="M16 26.5 L23 33 L36 20"
+          fill="none"
+          stroke="var(--success)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray="30"
+          strokeDashoffset="0"
+          className="motion-safe:animate-[acv-mark-draw_460ms_ease-out]"
+        />
+      </svg>
+    </span>
+  );
+}
 
 function mmss(total: number): string {
   const m = Math.floor(total / 60);
@@ -31,14 +86,17 @@ export function VerifyEmailScreen() {
   const [pending, setPending] = useState(false);
   const [seconds, setSeconds] = useState(TTL_SECONDS);
   const [refocus, setRefocus] = useState(0);
+  const [phase, setPhase] = useState<Phase>('email');
+  const [domainError, setDomainError] = useState<string | undefined>();
   const announced = useRef(false);
 
-  // Countdown. Announce once near the end, not on every tick.
+  // Countdown. Announce once near the end, not on every tick. It stops once the
+  // code is accepted — the code's validity window is irrelevant from then on.
   useEffect(() => {
-    if (seconds <= 0) return;
+    if (phase !== 'email' || seconds <= 0) return;
     const id = window.setInterval(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
     return () => window.clearInterval(id);
-  }, [seconds]);
+  }, [seconds, phase]);
 
   useEffect(() => {
     if (seconds === 60 && !announced.current) {
@@ -47,11 +105,36 @@ export function VerifyEmailScreen() {
     }
   }, [seconds]);
 
+  // Domain verification is fully backend-side with nothing for the user to do, so
+  // the verified card is a confirmation beat rather than a step to act on — long
+  // enough to register the success mark, then it advances itself.
+  useEffect(() => {
+    if (phase !== 'domain-verified') return;
+    const id = window.setTimeout(() => navigate('/register/terms'), VERIFIED_HOLD_MS);
+    return () => window.clearTimeout(id);
+  }, [phase, navigate]);
+
   if (!email) return <Navigate to="/register" replace />;
+
+  const domain = domainOf(email);
 
   const restartTimer = () => {
     setSeconds(TTL_SECONDS);
     announced.current = false;
+  };
+
+  const runDomainVerification = async () => {
+    setDomainError(undefined);
+    setPhase('verifying-domain');
+    announce(`Verifying ownership of ${domain}.`);
+    try {
+      await verifyDomain(domain);
+      setPhase('domain-verified');
+      announce(`${domain} verified.`);
+    } catch (err) {
+      setDomainError(errorInfo(err).message);
+      setPhase('domain-failed');
+    }
   };
 
   const submit = async (value?: string) => {
@@ -62,7 +145,9 @@ export function VerifyEmailScreen() {
     try {
       await verifyCode(entered);
       setRegisterVerified(true);
-      navigate('/register/terms');
+      // Email confirmed — hand straight off to domain verification rather than
+      // advancing to Terms, so step 2 completes both halves.
+      await runDomainVerification();
     } catch (err) {
       const { code: c, message } = errorInfo(err);
       if (c === 'EMAIL_OUTAGE') {
@@ -101,6 +186,61 @@ export function VerifyEmailScreen() {
   };
 
   const expired = seconds <= 0;
+
+  if (phase === 'verifying-domain') {
+    return (
+      <AuthCard
+        title="Verifying your domain"
+        progress={<RegistrationProgress current={1} />}
+        description={
+          <>
+            Confirming that your organization controls{' '}
+            <span className="font-medium text-text">{domain}</span>.
+          </>
+        }
+      >
+        <div className="space-y-3 py-2">
+          <ProgressBar label="Checking domain ownership" />
+          <p className="text-[length:var(--fs-small)] text-text-tertiary">
+            This usually takes a few seconds. Please keep this tab open.
+          </p>
+        </div>
+      </AuthCard>
+    );
+  }
+
+  if (phase === 'domain-verified') {
+    return (
+      <AuthCard title="Domain verified" progress={<RegistrationProgress current={1} />}>
+        <div className="flex flex-col items-center gap-3 py-3">
+          <SuccessMark />
+          <p className="font-mono text-[length:var(--fs-small)] text-text-secondary">{domain}</p>
+        </div>
+      </AuthCard>
+    );
+  }
+
+  if (phase === 'domain-failed') {
+    return (
+      <AuthCard
+        title="We couldn’t verify your domain"
+        progress={<RegistrationProgress current={1} />}
+        description="Your email is confirmed, but we still need to verify your organization's domain."
+      >
+        <div className="space-y-4">
+          <Banner tone="warning">{domainError}</Banner>
+          <Button
+            type="button"
+            className="w-full"
+            leadingIcon={<RefreshCw className="h-4 w-4" />}
+            onClick={() => void runDomainVerification()}
+          >
+            Try again
+          </Button>
+        </div>
+      </AuthCard>
+    );
+  }
 
   return (
     <AuthCard

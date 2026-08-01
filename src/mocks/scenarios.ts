@@ -14,6 +14,7 @@ export type AuthScenario =
   | 'normal'
   | 'email-outage' // verification/invitation email cannot be sent
   | 'code-expired' // verification code has expired (auto-resend + restart timer)
+  | 'domain-unverified' // domain ownership cannot be confirmed after email verification
   | 'legal-docs-failed' // legal documents fail to load
   | 'provisioning-failed' // tenant provisioning fails
   | 'invite-email-failed' // user created but the invitation email failed
@@ -23,6 +24,7 @@ export const AUTH_SCENARIOS: AuthScenario[] = [
   'normal',
   'email-outage',
   'code-expired',
+  'domain-unverified',
   'legal-docs-failed',
   'provisioning-failed',
   'invite-email-failed',
@@ -33,6 +35,7 @@ export const AUTH_SCENARIO_LABELS: Record<AuthScenario, string> = {
   normal: 'Normal',
   'email-outage': 'Email outage',
   'code-expired': 'Code expired',
+  'domain-unverified': 'Domain unverified',
   'legal-docs-failed': 'Legal docs fail',
   'provisioning-failed': 'Provisioning fails',
   'invite-email-failed': 'Invite email fails',
