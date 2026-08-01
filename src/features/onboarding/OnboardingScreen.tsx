@@ -72,31 +72,19 @@ function ConnectStep({
   canConnect: boolean;
   onConnect: (cloud: CloudT) => void;
 }) {
-  const connectable = CLOUDS.filter((c) => states[c] === 'disconnected' || states[c] === 'error');
-  const anyConnecting = CLOUDS.some((c) => states[c] === 'connecting');
   const anyConnected = CLOUDS.some((c) => states[c] === 'connected');
 
   return (
     <div className="space-y-4">
       <TrustStrip />
+      {/* Each cloud is connected from its own card — there is no bulk action, so the
+          rule for proceeding is stated here in text instead. */}
       {canConnect && (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <p className="text-[length:var(--fs-small)] text-text-secondary">
-            {anyConnected
-              ? 'At least one cloud is connected — continue when you’re ready, or add more.'
-              : 'Connect at least one cloud to continue. You can add the others now or later.'}
-          </p>
-          {connectable.length > 0 && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={anyConnecting}
-              onClick={() => connectable.forEach(onConnect)}
-            >
-              {connectable.length === CLOUDS.length ? 'Connect all' : 'Connect remaining'}
-            </Button>
-          )}
-        </div>
+        <p className="text-[length:var(--fs-small)] text-text-secondary">
+          {anyConnected
+            ? 'At least one cloud is connected — continue when you’re ready, or add more.'
+            : 'Connect at least one cloud to continue. You can add the others now or later.'}
+        </p>
       )}
       <div className="grid gap-3 sm:grid-cols-3">
       {CLOUDS.map((cloud) => {

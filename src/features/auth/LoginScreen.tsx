@@ -12,10 +12,26 @@ import { errorInfo } from '@/lib/apiError';
 import { useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 
+/** Labelled rule separating the two sign-in methods. */
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3" aria-hidden="true">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-[length:var(--fs-micro)] uppercase tracking-wide text-text-tertiary">or</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+/** Link-styled control for switching between the two sign-in methods. */
+const SWITCH_CLASSES =
+  'text-[length:var(--fs-small)] font-medium text-accent-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] rounded-[var(--r-sm)]';
+
 /**
- * Sign in. The method is decided per tenant: an IdP-backed tenant uses SSO only
- * (password is never offered); a tenant with no IdP uses the email + password
- * fallback. The dev toggle previews both forks.
+ * Sign in. An IdP-backed tenant leads with SSO but can fall back to email +
+ * password; a tenant with no IdP gets the password form alone. Either way the
+ * password path runs through the MFA challenge, so MFA is never skipped. The dev
+ * toggle previews both tenant shapes.
  */
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -28,11 +44,22 @@ export function LoginScreen() {
   const [error, setError] = useState<string | undefined>();
   const [pending, setPending] = useState(false);
   const [ssoPending, setSsoPending] = useState(false);
+  // Which method is on screen. Only meaningful for an SSO tenant — without an IdP
+  // there is nothing to switch to, so the password form is the whole screen.
+  const [mode, setMode] = useState<'sso' | 'password'>('sso');
 
   const provider = tenant.data?.sso.provider ?? 'entra';
   const tenantHasIdp = tenant.data?.sso.configured ?? true;
   // 'auto' follows the tenant; otherwise the dev toggle forces a path.
-  const useSso = signInPref === 'auto' ? tenantHasIdp : signInPref === 'sso';
+  const ssoOffered = signInPref === 'auto' ? tenantHasIdp : signInPref === 'sso';
+  const showSso = ssoOffered && mode === 'sso';
+
+  // Switching methods drops a stale banner — an SSO failure must not hang over the
+  // password form (and vice versa).
+  const switchTo = (next: 'sso' | 'password') => {
+    setError(undefined);
+    setMode(next);
+  };
 
   const handleSso = async () => {
     setError(undefined);
@@ -69,7 +96,7 @@ export function LoginScreen() {
     <AuthCard
       title="Sign in to Acrivault"
       description={
-        useSso
+        showSso
           ? 'Your organization uses single sign-on.'
           : 'Enter your email and password to continue.'
       }
@@ -88,51 +115,72 @@ export function LoginScreen() {
         </Banner>
       )}
 
-      {useSso ? (
-        <div className="space-y-3">
-          <SsoButton provider={provider} onClick={handleSso} loading={ssoPending} />
-          <p className="text-center text-[length:var(--fs-small)] text-text-secondary">
-            You’ll be redirected to {SSO_PROVIDER_LABELS[provider]} to authenticate. MFA is handled there.
-          </p>
+      {showSso ? (
+        <div className="space-y-4">
+          <div className="space-y-3">
+            <SsoButton provider={provider} onClick={handleSso} loading={ssoPending} />
+            <p className="text-center text-[length:var(--fs-small)] text-text-secondary">
+              You’ll be redirected to {SSO_PROVIDER_LABELS[provider]} to authenticate. MFA is handled there.
+            </p>
+          </div>
+          <OrDivider />
+          <div className="text-center">
+            <button type="button" className={SWITCH_CLASSES} onClick={() => switchTo('password')}>
+              Sign in with password instead
+            </button>
+          </div>
         </div>
       ) : (
-        <form onSubmit={handleLogin} noValidate className="space-y-3">
-          <Input
-            label="Email"
-            type="email"
-            autoComplete="email"
-            placeholder="you@acme.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <Input
-            label="Password"
-            type="password"
-            autoComplete="current-password"
-            placeholder="••••••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <div className="flex justify-end">
-            <Link
-              to="/forgot-password"
-              className="text-[length:var(--fs-small)] font-medium text-accent-text hover:underline"
+        <div className="space-y-4">
+          <form onSubmit={handleLogin} noValidate className="space-y-3">
+            <Input
+              label="Email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@acme.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <Input
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="••••••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <div className="flex justify-end">
+              <Link
+                to="/forgot-password"
+                className="text-[length:var(--fs-small)] font-medium text-accent-text hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <Button
+              type="submit"
+              variant="secondary"
+              className="w-full"
+              loading={pending}
+              disabled={!email.trim() || !password}
             >
-              Forgot password?
-            </Link>
-          </div>
-          <Button
-            type="submit"
-            variant="secondary"
-            className="w-full"
-            loading={pending}
-            disabled={!email.trim() || !password}
-          >
-            {pending ? 'Signing in…' : 'Sign in with password'}
-          </Button>
-        </form>
+              {pending ? 'Signing in…' : 'Sign in with password'}
+            </Button>
+          </form>
+          {/* Only an SSO tenant has a method to go back to. */}
+          {ssoOffered && (
+            <>
+              <OrDivider />
+              <div className="text-center">
+                <button type="button" className={SWITCH_CLASSES} onClick={() => switchTo('sso')}>
+                  Use single sign-on instead
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </AuthCard>
   );
