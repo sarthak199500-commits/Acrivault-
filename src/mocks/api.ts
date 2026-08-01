@@ -810,6 +810,39 @@ export async function verifyCode(code: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
+export interface DomainVerificationResult {
+  domain: string;
+}
+
+/**
+ * Confirm the registering organization controls its email domain — the second
+ * half of registration step 2 ("Verify Email & Domain"), run once the emailed
+ * code is accepted.
+ *
+ * Confirmed requirement (post-FRS, Jul 2026): the backend runs this check
+ * automatically once the email is verified. There is no challenge for the user to
+ * complete, so the screen reports progress and outcome only. The mechanism itself
+ * stays upstream and Architect-owned — nothing here models how ownership is
+ * proven. // ASSUMPTION (whole op): synthetic result + latency
+ */
+export async function verifyDomain(rawDomain: string): Promise<DomainVerificationResult> {
+  await settle();
+  const domain = rawDomain.trim().toLowerCase();
+  if (!domain) {
+    throw new MockApiError(
+      'We could not read a domain from your email address. Please re-enter your work email.',
+      'INVALID_DOMAIN',
+    );
+  }
+  if (authScenario() === 'domain-unverified') {
+    throw new MockApiError(
+      `We could not verify ${domain} right now. You can try again, or register with a different work email.`,
+      'DOMAIN_UNVERIFIED',
+    );
+  }
+  return { domain };
+}
+
 /** Re-send the verification code (resets the validity window in the UI). */
 export async function resendCode(): Promise<{ ok: true }> {
   await settle();

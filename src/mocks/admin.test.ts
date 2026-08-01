@@ -10,6 +10,7 @@ import {
   resolveInvite,
   suspendUser,
   verifyCode,
+  verifyDomain,
 } from './api';
 import { useUiStore } from '@/stores/ui';
 
@@ -37,6 +38,16 @@ describe('registration', () => {
   it('forces the expired-code path under the scenario', async () => {
     useUiStore.getState().setAuthScenario('code-expired');
     await expect(verifyCode('123456')).rejects.toMatchObject({ code: 'CODE_EXPIRED' });
+  });
+
+  it('verifies the domain after the email, and rejects an empty one', async () => {
+    await expect(verifyDomain('NewCo.com')).resolves.toEqual({ domain: 'newco.com' });
+    await expect(verifyDomain('  ')).rejects.toMatchObject({ code: 'INVALID_DOMAIN' });
+  });
+
+  it('forces the unverified-domain path under the scenario', async () => {
+    useUiStore.getState().setAuthScenario('domain-unverified');
+    await expect(verifyDomain('newco.com')).rejects.toMatchObject({ code: 'DOMAIN_UNVERIFIED' });
   });
 });
 
