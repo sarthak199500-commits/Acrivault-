@@ -11,7 +11,7 @@ import { requestAccess } from '@/mocks/api';
 import { errorInfo } from '@/lib/apiError';
 import { useFlowStore } from '@/stores/flow';
 
-/** Flow A · screen 1. A new organization starts here with a work email. */
+/** Flow A · step 1. A new organization starts here with a work email. */
 export function RequestAccessScreen() {
   const navigate = useNavigate();
   const setRegisterEmail = useFlowStore((s) => s.setRegisterEmail);
@@ -29,7 +29,12 @@ export function RequestAccessScreen() {
     try {
       const res = await requestAccess(email);
       setRegisterEmail(res.email);
-      useFlowStore.getState().setRegisterVerified(false);
+      // Clear every downstream flag: re-entering with a different email must not
+      // inherit verification from an abandoned attempt.
+      const flow = useFlowStore.getState();
+      flow.setRegisterVerified(false);
+      flow.setDomainVerified(false);
+      flow.setPasswordSet(false);
       navigate('/register/verify');
     } catch (err) {
       const { code, message } = errorInfo(err);

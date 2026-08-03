@@ -6,7 +6,12 @@ import { cn } from '@/lib/cn';
  * progress for assistive tech — sized to fit the narrow auth card where a fully
  * labelled horizontal stepper would crowd.
  */
-export const REGISTRATION_STEPS = ['Account', 'Verify', 'Terms', 'Secure'] as const;
+/**
+ * Domain ownership is its own numbered step, distinct from the emailed code.
+ * "Secure" is shared by password creation and MFA enrollment — one securing step
+ * completed across two screens, in that order.
+ */
+export const REGISTRATION_STEPS = ['Account', 'Verify', 'Domain', 'Terms', 'Secure'] as const;
 
 export function RegistrationProgress({ current }: { current: number }) {
   const total = REGISTRATION_STEPS.length;

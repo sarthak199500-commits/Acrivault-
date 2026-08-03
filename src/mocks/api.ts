@@ -14,6 +14,7 @@ import {
   typeBreakdown,
 } from './dataset';
 import { riskBand } from '@/lib/risk';
+import { passwordError } from '@/lib/password';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
 import type {
@@ -1025,16 +1026,64 @@ export interface DomainVerificationResult {
   domain: string;
 }
 
+/** The DNS record an organization publishes to prove it controls its domain. */
+export interface DomainChallenge {
+  domain: string;
+  recordType: 'TXT';
+  /** Host label. '@' is the zone apex. */
+  name: string;
+  /** Full record value, e.g. `acrivault-verify=<32 hex>`. */
+  value: string;
+}
+
 /**
- * Confirm the registering organization controls its email domain — the second
- * half of registration step 2 ("Verify Email & Domain"), run once the emailed
- * code is accepted.
+ * Deterministic 32-hex token for a domain. Stable across reloads so the record a
+ * reviewer copies keeps matching the one on screen; a random value would appear to
+ * rotate under the user mid-verification. Not a security primitive — the real token
+ * is minted server-side. // ASSUMPTION
+ */
+function verificationToken(domain: string): string {
+  // FNV-1a, four times over salted inputs, to fill 32 hex chars without a crypto dep.
+  const chunk = (salt: string): string => {
+    let h = 0x811c9dc5;
+    for (const ch of `${salt}:${domain}`) {
+      h ^= ch.charCodeAt(0);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+  };
+  return ['a', 'b', 'c', 'd'].map(chunk).join('');
+}
+
+/**
+ * The TXT record for registration step 3. Synchronous derivation behind an async
+ * signature so swapping in a real endpoint needs no caller change.
+ */
+export async function getDomainChallenge(rawDomain: string): Promise<DomainChallenge> {
+  await settle();
+  const domain = rawDomain.trim().toLowerCase();
+  if (!domain) {
+    throw new MockApiError(
+      'We could not read a domain from your email address. Please re-enter your work email.',
+      'INVALID_DOMAIN',
+    );
+  }
+  return {
+    domain,
+    recordType: 'TXT',
+    name: '@',
+    value: `acrivault-verify=${verificationToken(domain)}`,
+  };
+}
+
+/**
+ * Confirm the registering organization controls its email domain — the second half
+ * of registration step 3 ("Domain"). The user publishes the TXT record from
+ * getDomainChallenge, then triggers this check.
  *
- * Confirmed requirement (post-FRS, Jul 2026): the backend runs this check
- * automatically once the email is verified. There is no challenge for the user to
- * complete, so the screen reports progress and outcome only. The mechanism itself
- * stays upstream and Architect-owned — nothing here models how ownership is
- * proven. // ASSUMPTION (whole op): synthetic result + latency
+ * Blocking by design: Terms and tenant provisioning are unreachable until it
+ * passes. The resolver itself stays upstream and Architect-owned — nothing here
+ * models DNS lookup. // ASSUMPTION (whole op): synthetic result + latency
  */
 export async function verifyDomain(rawDomain: string): Promise<DomainVerificationResult> {
   await settle();
@@ -1046,9 +1095,11 @@ export async function verifyDomain(rawDomain: string): Promise<DomainVerificatio
     );
   }
   if (authScenario() === 'domain-unverified') {
+    // The common real-world case is propagation lag, not a wrong record, so the
+    // copy points at waiting rather than at the user having made a mistake.
     throw new MockApiError(
-      `We could not verify ${domain} right now. You can try again, or register with a different work email.`,
-      'DOMAIN_UNVERIFIED',
+      'TXT record not found on the domain yet. DNS changes can take up to an hour to propagate — try again shortly.',
+      'DOMAIN_TXT_NOT_FOUND',
     );
   }
   return { domain };
@@ -1208,6 +1259,9 @@ export async function login(rawEmail: string, password: string): Promise<{ user:
   }
   const user = getDataset().users.find((u) => u.email === email);
   if (!user || user.status === 'deleted') {
+    // An owner who registered in this session is a valid account even though they
+    // were never seeded into the Acme tenant.
+    if (registeredOwners.has(email)) return { user: ownerUser(email) };
     throw new MockApiError('Invalid email or password.', 'INVALID_CREDENTIALS');
   }
   if (user.status === 'suspended') {
@@ -1229,7 +1283,46 @@ export async function forgotPassword(_rawEmail: string): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-export async function resetPassword(token: string, password: string): Promise<{ ok: true }> {
+/**
+ * Confirm the emailed recovery code. Separate from verifyCode so a registration
+ * scenario cannot make recovery fail (and vice versa) — the two flows are
+ * exercised independently. Shares the fixed synthetic code.
+ */
+export async function verifyPasswordOtp(code: string): Promise<{ ok: true }> {
+  await settle();
+  if (authScenario() === 'code-expired') {
+    throw new MockApiError(
+      'This code has expired. A new code has been sent to your email.',
+      'CODE_EXPIRED',
+    );
+  }
+  if (code.trim() !== VERIFICATION_CODE) {
+    throw new MockApiError('Invalid recovery code. Please try again.', 'INVALID_CODE');
+  }
+  return { ok: true };
+}
+
+/** Re-send the recovery code (resets the validity window in the UI). */
+export async function resendPasswordOtp(): Promise<{ ok: true }> {
+  await settle();
+  if (authScenario() === 'email-outage') {
+    throw new MockApiError(
+      'We are having trouble sending the recovery email. Please try again in a few minutes.',
+      'EMAIL_OUTAGE',
+    );
+  }
+  return { ok: true };
+}
+
+/**
+ * Set a new password. `token` is present on the emailed-link path and absent on the
+ * OTP path, where the confirmed code is the proof instead — so an undefined token is
+ * valid, but an expired one is not.
+ */
+export async function resetPassword(
+  token: string | undefined,
+  password: string,
+): Promise<{ ok: true }> {
   await settle();
   if (token === 'expired' || token === 'acme-expired-002') {
     throw new MockApiError(
@@ -1237,10 +1330,50 @@ export async function resetPassword(token: string, password: string): Promise<{ 
       'EXPIRED_TOKEN',
     );
   }
-  if (password.length < 12) {
-    throw new MockApiError('Password must be at least 12 characters.', 'WEAK_PASSWORD');
-  }
+  const weak = passwordError(password);
+  if (weak) throw new MockApiError(weak, 'WEAK_PASSWORD');
   return { ok: true };
+}
+
+/**
+ * Emails that finished setting a password during registration in this session.
+ *
+ * A registering owner is deliberately not persisted into the seeded Acme tenant (see
+ * acceptLegal), so without this login() would reject the very password the owner just
+ * created. Emails only — the password itself is never stored, matching the rest of the
+ * simulation, which does not verify passwords at all. // ASSUMPTION
+ */
+const registeredOwners = new Set<string>();
+
+/**
+ * Create the tenant owner's password — the first factor, set before MFA enrollment.
+ * Validated against the same policy the UI checklist renders, so the two can never
+ * disagree. Records the email as a known account so the owner can subsequently sign
+ * in; the password is never stored. // ASSUMPTION
+ */
+export async function createPassword(
+  rawEmail: string,
+  password: string,
+): Promise<{ ok: true }> {
+  await settle();
+  const weak = passwordError(password);
+  if (weak) throw new MockApiError(weak, 'WEAK_PASSWORD');
+  const email = rawEmail.trim().toLowerCase();
+  if (email) registeredOwners.add(email);
+  return { ok: true };
+}
+
+/** The synthetic Tenant Admin created by registration, for login() to return. */
+function ownerUser(email: string): User {
+  return {
+    id: `usr_owner_${email.replace(/\W/g, '').slice(0, 8)}`,
+    tenantId: 'tnt_registered',
+    name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    email,
+    role: 'tenant-admin',
+    status: 'active',
+    authMethod: 'password',
+  };
 }
 
 /* ------------------------------------------------------------- invitations */

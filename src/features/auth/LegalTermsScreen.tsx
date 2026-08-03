@@ -11,10 +11,11 @@ import { acceptLegal, getLegalDocs } from '@/mocks/api';
 import { errorInfo } from '@/lib/apiError';
 import { useFlowStore } from '@/stores/flow';
 
-/** Flow A · screen 3. Read and accept the ToS and DPA, then create the org. */
+/** Flow A · step 4. Read and accept the ToS and DPA, then create the org. */
 export function LegalTermsScreen() {
   const navigate = useNavigate();
   const email = useFlowStore((s) => s.registerEmail);
+  const domainVerified = useFlowStore((s) => s.domainVerified);
   const docs = useQuery({ queryKey: ['legal-docs'], queryFn: getLegalDocs });
 
   const [consents, setConsents] = useState<Consents>({ tos: false, dpa: false });
@@ -22,6 +23,9 @@ export function LegalTermsScreen() {
   const [error, setError] = useState<string | undefined>();
 
   if (!email) return <Navigate to="/register" replace />;
+  // Domain verification is blocking: no tenant is ever provisioned on a domain the
+  // organization has not proven it controls.
+  if (!domainVerified) return <Navigate to="/register/domain" replace />;
 
   const both = consents.tos && consents.dpa;
 
@@ -42,7 +46,7 @@ export function LegalTermsScreen() {
     <AuthCard
       title="Review and accept"
       description="Accept the Terms of Service and Data Processing Agreement to create your organization."
-      progress={<RegistrationProgress current={2} />}
+      progress={<RegistrationProgress current={3} />}
     >
       {error && (
         <Banner tone="critical" className="mb-4">

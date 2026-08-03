@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { Clock } from 'lucide-react';
 import { AuthCard } from '@/components/ui/AuthCard';
-import { RegistrationProgress } from '@/components/ui/RegistrationProgress';
 import { CodeInput } from '@/components/ui/CodeInput';
 import { Button } from '@/components/ui/Button';
 import { Banner } from '@/components/ui/Banner';
-import { verifyCode, resendCode, VERIFICATION_CODE } from '@/mocks/api';
+import { resendPasswordOtp, verifyPasswordOtp, VERIFICATION_CODE } from '@/mocks/api';
 import { errorInfo } from '@/lib/apiError';
 import { announce } from '@/lib/a11y';
 import { useFlowStore } from '@/stores/flow';
 
-const TTL_SECONDS = 600; // 10-minute time-to-live
+const TTL_SECONDS = 600; // 10-minute time-to-live, matching registration
 
 function mmss(total: number): string {
   const m = Math.floor(total / 60);
@@ -20,13 +19,14 @@ function mmss(total: number): string {
 }
 
 /**
- * Flow A · step 2. Confirm control of the email with a 6-digit code, then hand
- * off to domain verification.
+ * Recovery step 2. Confirm the emailed code before allowing a new password to be
+ * set. Deliberately identical in mechanics to the registration code screen — same
+ * TTL, resend, and auto-resend-on-expiry — so the two read as one pattern.
  */
-export function VerifyEmailScreen() {
+export function ResetOtpScreen() {
   const navigate = useNavigate();
-  const email = useFlowStore((s) => s.registerEmail);
-  const setRegisterVerified = useFlowStore((s) => s.setRegisterVerified);
+  const email = useFlowStore((s) => s.resetEmail);
+  const setResetOtpVerified = useFlowStore((s) => s.setResetOtpVerified);
 
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | undefined>();
@@ -36,7 +36,6 @@ export function VerifyEmailScreen() {
   const [refocus, setRefocus] = useState(0);
   const announced = useRef(false);
 
-  // Countdown. Announce once near the end, not on every tick.
   useEffect(() => {
     if (seconds <= 0) return;
     const id = window.setInterval(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
@@ -46,11 +45,12 @@ export function VerifyEmailScreen() {
   useEffect(() => {
     if (seconds === 60 && !announced.current) {
       announced.current = true;
-      announce('One minute left to enter your verification code.');
+      announce('One minute left to enter your recovery code.');
     }
   }, [seconds]);
 
-  if (!email) return <Navigate to="/register" replace />;
+  // Reached only from the email step; a direct hit restarts recovery.
+  if (!email) return <Navigate to="/forgot-password" replace />;
 
   const restartTimer = () => {
     setSeconds(TTL_SECONDS);
@@ -58,31 +58,22 @@ export function VerifyEmailScreen() {
   };
 
   const submit = async (value?: string) => {
-    const entered = value ?? code;
     setError(undefined);
     setOutage(false);
     setPending(true);
     try {
-      await verifyCode(entered);
-      setRegisterVerified(true);
-      navigate('/register/domain');
+      await verifyPasswordOtp(value ?? code);
+      setResetOtpVerified(true);
+      navigate('/reset-password');
     } catch (err) {
       const { code: c, message } = errorInfo(err);
-      if (c === 'EMAIL_OUTAGE') {
-        setOutage(true);
-      } else if (c === 'CODE_EXPIRED') {
-        setError(message);
-        setCode('');
-        setRefocus((n) => n + 1);
-        // The spec calls for auto-resend on expiry, restarting the 10-minute timer.
-        void resendCode().catch(() => undefined);
+      setError(message);
+      setCode('');
+      setRefocus((n) => n + 1);
+      if (c === 'CODE_EXPIRED') {
+        // Auto-resend on expiry, restarting the validity window.
+        void resendPasswordOtp().catch(() => undefined);
         restartTimer();
-      } else {
-        // Invalid code: clear the boxes and refocus the first one so the user can
-        // retype immediately rather than deleting six wrong digits by hand.
-        setError(message);
-        setCode('');
-        setRefocus((n) => n + 1);
       }
     } finally {
       setPending(false);
@@ -94,12 +85,11 @@ export function VerifyEmailScreen() {
     setOutage(false);
     setCode('');
     try {
-      await resendCode();
+      await resendPasswordOtp();
       restartTimer();
-      announce('A new verification code has been sent.');
+      announce('A new recovery code has been sent.');
     } catch (err) {
-      const { code: c } = errorInfo(err);
-      if (c === 'EMAIL_OUTAGE') setOutage(true);
+      if (errorInfo(err).code === 'EMAIL_OUTAGE') setOutage(true);
     }
   };
 
@@ -107,24 +97,28 @@ export function VerifyEmailScreen() {
 
   return (
     <AuthCard
-      title="Verify your email"
-      progress={<RegistrationProgress current={1} />}
+      title="Enter your recovery code"
       description={
         <>
-          We sent a 6-digit code to <span className="font-medium text-text">{email}</span>. Enter it
-          below to continue.
+          If an account exists for <span className="font-medium text-text">{email}</span>, we sent it
+          a 6-digit code. Enter it to choose a new password.
         </>
+      }
+      footer={
+        <Link to="/login" className="font-medium text-accent-text hover:underline">
+          Back to sign in
+        </Link>
       }
     >
       {outage && (
         <Banner tone="warning" className="mb-4">
-          We are having trouble sending the verification email. Please try again in a few minutes.
+          We are having trouble sending the recovery email. Please try again in a few minutes.
         </Banner>
       )}
 
       <div className="space-y-4">
         <CodeInput
-          label="Verification code"
+          label="Recovery code"
           value={code}
           onChange={setCode}
           onComplete={(v) => submit(v)}

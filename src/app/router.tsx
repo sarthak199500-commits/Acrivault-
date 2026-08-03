@@ -144,12 +144,23 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import('@/features/auth/VerifyEmailScreen')).VerifyEmailScreen }),
       },
       {
+        // Second half of step 2 — domain ownership. Blocking: Terms redirects back
+        // here until it passes.
+        path: 'register/domain',
+        lazy: async () => ({ Component: (await import('@/features/auth/VerifyDomainScreen')).VerifyDomainScreen }),
+      },
+      {
         path: 'register/terms',
         lazy: async () => ({ Component: (await import('@/features/auth/LegalTermsScreen')).LegalTermsScreen }),
       },
       {
         path: 'register/complete',
         lazy: async () => ({ Component: (await import('@/features/auth/RegisterCompleteScreen')).RegisterCompleteScreen }),
+      },
+      {
+        // Final registration step, after MFA enrollment — exits to onboarding.
+        path: 'register/password',
+        lazy: async () => ({ Component: (await import('@/features/auth/CreatePasswordScreen')).CreatePasswordScreen }),
       },
       {
         path: 'login',
@@ -170,6 +181,15 @@ export const router = createBrowserRouter([
       {
         path: 'forgot-password',
         lazy: async () => ({ Component: (await import('@/features/auth/ForgotPasswordScreen')).ForgotPasswordScreen }),
+      },
+      {
+        path: 'forgot-password/verify',
+        lazy: async () => ({ Component: (await import('@/features/auth/ResetOtpScreen')).ResetOtpScreen }),
+      },
+      // Two ways in: the recovery code (no token) or an emailed link (tokened).
+      {
+        path: 'reset-password',
+        lazy: async () => ({ Component: (await import('@/features/auth/ResetPasswordScreen')).ResetPasswordScreen }),
       },
       {
         path: 'reset-password/:token',

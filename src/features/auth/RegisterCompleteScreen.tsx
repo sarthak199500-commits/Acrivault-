@@ -7,7 +7,7 @@ import { ProgressBar } from '@/components/ui/ProgressBar';
 import { useFlowStore } from '@/stores/flow';
 import { useUiStore } from '@/stores/ui';
 
-/** Flow A · screen 4. Tenant provisioned; route the owner into mandatory MFA. */
+/** Flow A · tenant provisioned; route the owner into the Secure step. */
 export function RegisterCompleteScreen() {
   const navigate = useNavigate();
   const email = useFlowStore((s) => s.registerEmail);
@@ -52,7 +52,8 @@ export function RegisterCompleteScreen() {
           <div className="text-[length:var(--fs-small)]">
             <p className="font-medium text-text">Organization provisioned</p>
             <p className="text-text-secondary">
-              Multi-factor authentication is required for every account. Set it up to finish.
+              Set a password and enrol in multi-factor authentication to finish. Both are required
+              for every account.
             </p>
           </div>
         </div>
@@ -61,9 +62,9 @@ export function RegisterCompleteScreen() {
           type="button"
           className="w-full"
           leadingIcon={<ShieldCheck className="h-4 w-4" />}
-          onClick={() => navigate('/mfa/setup')}
+          onClick={() => navigate('/register/password')}
         >
-          Set up authentication
+          Secure your account
         </Button>
       </div>
     </AuthCard>
