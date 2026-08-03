@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRef, useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AuthCard } from '@/components/ui/AuthCard';
 import { RegistrationProgress } from '@/components/ui/RegistrationProgress';
@@ -12,26 +12,48 @@ import { errorInfo } from '@/lib/apiError';
 import { useAuthStore } from '@/stores/auth';
 import { useFlowStore } from '@/stores/flow';
 
-/** Mandatory MFA enrollment. There is never an option to skip or disable it. */
+/**
+ * Mandatory MFA enrollment — the second factor, added once a password exists. There
+ * is never an option to skip or disable it.
+ *
+ * Reached the same way from both entry flows: registration sends the owner here from
+ * Create Password (step 5b), and an invited user arrives from Accept Invitation after
+ * setting theirs.
+ */
 export function MfaSetupScreen() {
   const navigate = useNavigate();
   const signIn = useAuthStore((s) => s.signIn);
   const firstRun = useFlowStore((s) => s.firstRun);
+  const passwordSet = useFlowStore((s) => s.passwordSet);
   const setFirstRun = useFlowStore((s) => s.setFirstRun);
   const enrollment = useQuery({ queryKey: ['mfa-enroll'], queryFn: mfaEnroll, staleTime: Infinity });
 
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [verifying, setVerifying] = useState(false);
+  /**
+   * Latch marking enrollment as committed, so clearing firstRun below cannot re-arm
+   * the guard. A ref, not state: the Zustand update flushes a synchronous re-render
+   * that would arrive before a queued React state update.
+   */
+  const done = useRef(false);
+
+  // A registering owner must not reach the second factor before the first exists.
+  // Invited users have firstRun false and set their password on the invite screen.
+  if (firstRun && !passwordSet && !done.current) {
+    return <Navigate to="/register/password" replace />;
+  }
 
   const confirm = async (value?: string) => {
     setError(undefined);
     setVerifying(true);
     try {
       await mfaVerify(value ?? code);
+      done.current = true;
       signIn();
-      // First-run registration lands on Onboarding & Connect; invited users
-      // (existing, already-connected tenant) go straight to the dashboard.
+      // Registration is complete. A brand-new tenant lands on Onboarding & Connect;
+      // an invited user joins an existing, already-connected tenant and goes to the
+      // dashboard.
       const toOnboarding = firstRun;
       setFirstRun(false);
       navigate(toOnboarding ? '/onboarding' : '/');
@@ -46,7 +68,7 @@ export function MfaSetupScreen() {
   return (
     <AuthCard
       title="Set up authentication"
-      progress={firstRun ? <RegistrationProgress current={3} /> : undefined}
+      progress={firstRun ? <RegistrationProgress current={4} /> : undefined}
     >
       {enrollment.isPending ? (
         <SkeletonText lines={6} />

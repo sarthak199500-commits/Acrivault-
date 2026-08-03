@@ -80,13 +80,17 @@ export const EXTRA_TITLES: Record<string, string> = {
   '/resilience/copilot': 'Defender Copilot',
   // Registration & authentication (AuthLayout, outside the app shell).
   '/register': 'Request Access',
-  '/register/verify': 'Verify Email & Domain',
+  '/register/verify': 'Verify Email',
+  '/register/domain': 'Verify Domain',
   '/register/terms': 'Legal Terms',
   '/register/complete': 'Welcome to Acrivault',
+  '/register/password': 'Create your password',
   '/login': 'Sign in',
   '/accept-invite': 'Accept Invitation',
   '/mfa/setup': 'Set up authentication',
   '/mfa/challenge': 'Verify it’s you',
   '/forgot-password': 'Reset your password',
+  // Explicit: the prefix fallback would otherwise title this "Reset your password".
+  '/forgot-password/verify': 'Enter your recovery code',
   '/reset-password': 'Set a new password',
 };

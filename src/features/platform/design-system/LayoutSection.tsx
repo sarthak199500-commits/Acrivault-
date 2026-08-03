@@ -86,6 +86,7 @@ export function LayoutSection() {
           >
             <RegistrationProgress current={0} />
             <RegistrationProgress current={2} />
+            <RegistrationProgress current={4} />
           </DocCard>
         </div>
       </div>

@@ -2,15 +2,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   acceptInvite,
   activateUser,
+  createPassword,
   deleteUser,
+  getDomainChallenge,
   inviteUser,
   listAudit,
   listUsers,
+  login,
   requestAccess,
+  resetPassword,
   resolveInvite,
   suspendUser,
   verifyCode,
   verifyDomain,
+  verifyPasswordOtp,
 } from './api';
 import { useUiStore } from '@/stores/ui';
 
@@ -47,7 +52,74 @@ describe('registration', () => {
 
   it('forces the unverified-domain path under the scenario', async () => {
     useUiStore.getState().setAuthScenario('domain-unverified');
-    await expect(verifyDomain('newco.com')).rejects.toMatchObject({ code: 'DOMAIN_UNVERIFIED' });
+    await expect(verifyDomain('newco.com')).rejects.toMatchObject({
+      code: 'DOMAIN_TXT_NOT_FOUND',
+    });
+  });
+
+  it('issues a stable TXT challenge per domain', async () => {
+    const first = await getDomainChallenge('NewCo.com');
+    expect(first).toMatchObject({ domain: 'newco.com', recordType: 'TXT', name: '@' });
+    expect(first.value).toMatch(/^acrivault-verify=[0-9a-f]{32}$/);
+    // Stable across calls — a value that appeared to rotate would invalidate the
+    // record the user is midway through publishing.
+    expect((await getDomainChallenge('newco.com')).value).toBe(first.value);
+    // ...and distinct per domain.
+    expect((await getDomainChallenge('other.com')).value).not.toBe(first.value);
+    await expect(getDomainChallenge('  ')).rejects.toMatchObject({ code: 'INVALID_DOMAIN' });
+  });
+});
+
+describe('password recovery', () => {
+  it('verifies the known recovery code and rejects others', async () => {
+    await expect(verifyPasswordOtp('123456')).resolves.toEqual({ ok: true });
+    await expect(verifyPasswordOtp('000000')).rejects.toMatchObject({ code: 'INVALID_CODE' });
+  });
+
+  it('accepts a reset with a confirmed code and no token', async () => {
+    await expect(resetPassword(undefined, 'Vault-Keeper9!')).resolves.toEqual({ ok: true });
+  });
+
+  it('still rejects an expired emailed link', async () => {
+    await expect(resetPassword('expired', 'Vault-Keeper9!')).rejects.toMatchObject({
+      code: 'EXPIRED_TOKEN',
+    });
+  });
+
+  it('enforces the full password policy, not just length', async () => {
+    // 14 chars but no symbol — the old length-only check would have let this through.
+    await expect(resetPassword(undefined, 'VaultKeeper999')).rejects.toMatchObject({
+      code: 'WEAK_PASSWORD',
+    });
+    await expect(createPassword('founder@newco.com', 'short')).rejects.toMatchObject({
+      code: 'WEAK_PASSWORD',
+    });
+    await expect(createPassword('founder@newco.com', 'Vault-Keeper9!')).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('lets a registered owner sign in with the password they just created', async () => {
+    // The owner is never seeded into the Acme tenant, so before createPassword ran
+    // there was no account to sign in to — the create-password screen promised a
+    // credential the login screen then rejected.
+    await expect(login('owner@newco-signin.com', 'Vault-Keeper9!')).rejects.toMatchObject({
+      code: 'INVALID_CREDENTIALS',
+    });
+
+    await createPassword('Owner@NewCo-SignIn.com', 'Vault-Keeper9!');
+
+    // Case-insensitive, and surfaced as the Tenant Admin of their own tenant.
+    await expect(login('owner@newco-signin.com', 'Vault-Keeper9!')).resolves.toMatchObject({
+      user: { email: 'owner@newco-signin.com', role: 'tenant-admin', status: 'active' },
+    });
+  });
+
+  it('still rejects an unrelated address after an owner registers', async () => {
+    await createPassword('owner@newco-other.com', 'Vault-Keeper9!');
+    await expect(login('stranger@newco-other.com', 'Vault-Keeper9!')).rejects.toMatchObject({
+      code: 'INVALID_CREDENTIALS',
+    });
   });
 });
 

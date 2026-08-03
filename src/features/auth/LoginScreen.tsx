@@ -23,10 +23,6 @@ function OrDivider() {
   );
 }
 
-/** Link-styled control for switching between the two sign-in methods. */
-const SWITCH_CLASSES =
-  'text-[length:var(--fs-small)] font-medium text-accent-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] rounded-[var(--r-sm)]';
-
 /**
  * Sign in. An IdP-backed tenant leads with SSO but can fall back to email +
  * password; a tenant with no IdP gets the password form alone. Either way the
@@ -124,11 +120,16 @@ export function LoginScreen() {
             </p>
           </div>
           <OrDivider />
-          <div className="text-center">
-            <button type="button" className={SWITCH_CLASSES} onClick={() => switchTo('password')}>
-              Sign in with password instead
-            </button>
-          </div>
+          {/* Ghost: a real alternate action, not a footnote — full width so it reads
+              as a peer of the primary method above it. */}
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            onClick={() => switchTo('password')}
+          >
+            Sign in with password instead
+          </Button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -173,11 +174,14 @@ export function LoginScreen() {
           {ssoOffered && (
             <>
               <OrDivider />
-              <div className="text-center">
-                <button type="button" className={SWITCH_CLASSES} onClick={() => switchTo('sso')}>
-                  Use single sign-on instead
-                </button>
-              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => switchTo('sso')}
+              >
+                Use single sign-on instead
+              </Button>
             </>
           )}
         </div>

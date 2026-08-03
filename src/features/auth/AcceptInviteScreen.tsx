@@ -1,16 +1,17 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2 } from 'lucide-react';
 import { AuthCard } from '@/components/ui/AuthCard';
 import { SsoButton } from '@/components/ui/SsoButton';
-import { Input } from '@/components/ui/Input';
+import { PasswordFields } from '@/components/ui/PasswordFields';
 import { Button } from '@/components/ui/Button';
 import { Banner } from '@/components/ui/Banner';
 import { KeyValueList } from '@/components/ui/KeyValueList';
 import { SkeletonText } from '@/components/ui/Skeleton';
 import { acceptInvite, getTenant, resolveInvite, ssoReturn, ssoStart } from '@/mocks/api';
 import { ROLE_LABELS } from '@/lib/permissions';
+import { passwordError } from '@/lib/password';
 import { SSO_PROVIDER_LABELS } from '@/mocks/types';
 import { errorInfo } from '@/lib/apiError';
 import { useAuthStore } from '@/stores/auth';
@@ -29,6 +30,11 @@ export function AcceptInviteScreen() {
   const [joinError, setJoinError] = useState<string | undefined>();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [passwordValid, setPasswordValid] = useState(false);
+
+  // Stable identity — PasswordFields reports validity from an effect, so a fresh
+  // callback each render would re-fire it on every keystroke.
+  const handleValidity = useCallback((v: boolean) => setPasswordValid(v), []);
 
   const provider = tenant.data?.sso.provider ?? 'entra';
 
@@ -51,8 +57,12 @@ export function AcceptInviteScreen() {
   const joinWithPassword = async (e: FormEvent) => {
     e.preventDefault();
     setJoinError(undefined);
-    if (password.length < 12) {
-      setJoinError('Password must be at least 12 characters.');
+    // The submit button is already gated on PasswordFields' validity; this is the
+    // belt-and-braces check for a submit that arrives another way (Enter key with a
+    // stale render, autofill).
+    const weak = passwordError(password);
+    if (weak) {
+      setJoinError(weak);
       return;
     }
     if (password !== confirm) {
@@ -152,27 +162,17 @@ export function AcceptInviteScreen() {
         {useSso ? (
           <SsoButton provider={provider} onClick={joinWithSso} loading={joining} />
         ) : (
-          <form onSubmit={joinWithPassword} noValidate className="space-y-3">
-            <Input
-              label="Create password"
-              type="password"
-              autoComplete="new-password"
-              placeholder="At least 12 characters"
-              hint="Use at least 12 characters."
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+          <form onSubmit={joinWithPassword} noValidate className="space-y-4">
+            <PasswordFields
+              password={password}
+              onPasswordChange={setPassword}
+              confirm={confirm}
+              onConfirmChange={setConfirm}
+              passwordLabel="Create password"
+              disabled={joining}
+              onValidityChange={handleValidity}
             />
-            <Input
-              label="Confirm password"
-              type="password"
-              autoComplete="new-password"
-              placeholder="Re-enter your password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-            />
-            <Button type="submit" className="w-full" loading={joining} disabled={!password || !confirm}>
+            <Button type="submit" className="w-full" loading={joining} disabled={!passwordValid}>
               {joining ? 'Creating account…' : 'Set password & continue'}
             </Button>
           </form>

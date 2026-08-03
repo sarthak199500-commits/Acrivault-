@@ -49,10 +49,18 @@ export function MfaChallengeScreen() {
         >
           {verifying ? 'Verifying…' : 'Verify'}
         </Button>
-        <p className="text-center text-[length:var(--fs-micro)] text-text-tertiary">
-          Synthetic — the code is{' '}
-          <span className="tnum font-medium text-text-secondary">{MFA_CODE}</span>.
-        </p>
+        {/* Reviewer aid, dev builds only — never shipped to production. */}
+        {import.meta.env.DEV && (
+          <p className="flex items-center justify-center gap-2 text-[length:var(--fs-micro)] text-text-tertiary">
+            <span className="rounded-[var(--r-xs)] border border-border bg-surface px-1.5 py-0.5 font-medium uppercase tracking-wide text-text-secondary">
+              Demo aid
+            </span>
+            <span>
+              Synthetic — the code is{' '}
+              <span className="tnum font-medium text-text-secondary">{MFA_CODE}</span>.
+            </span>
+          </p>
+        )}
       </div>
     </AuthCard>
   );
