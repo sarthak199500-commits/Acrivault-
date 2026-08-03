@@ -26,7 +26,8 @@ import { RiskPill } from '@/components/ui/RiskPill';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
 import { useCan } from '@/components/ui/Can';
 import { cn } from '@/lib/cn';
-import { count, pluralize } from '@/lib/format';
+import { count, pluralize, relativeTime } from '@/lib/format';
+import { ProviderMark } from '@/components/ui/ProviderMark';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
 import { announce } from '@/lib/a11y';
@@ -84,27 +85,82 @@ function TestResult({ result }: { result: PolicyEvalResult }) {
                   <span className="tnum">{count(affected)}</span>
                 </span>
               </div>
-              <ul className="divide-y divide-border overflow-hidden rounded-[var(--r-md)] border border-border">
-                {sample.map((s) => (
-                  <li key={s.id}>
-                    <Link
-                      to={`/discover/${s.id}`}
-                      className="group flex items-center gap-2.5 bg-surface-2 px-2.5 py-2 transition-colors hover:bg-surface-hover"
-                      aria-label={`${s.name}, risk ${s.riskScore}. Open identity.`}
-                    >
-                      <NhiTypeIcon type={s.type} className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-                      <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--fs-small)] text-text">
-                        {s.name}
-                      </span>
-                      <RiskPill score={s.riskScore} size="sm" />
-                      <ChevronRight
-                        className="h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-text-secondary"
-                        aria-hidden="true"
-                      />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              {/* One column template, declared once here and read by both the header
+                  and every row, so the two cannot drift apart — the first attempt
+                  hard-coded widths in both places and they disagreed immediately.
+                  Risk gets a fixed 7rem because RiskPill sizes to its label, and a
+                  content-sized cell at the end of a flex row drags every column left
+                  of it out of line on whichever row says "Critical".
+                  Hidden columns collapse to 0 rather than leaving a gap, which is why
+                  spacing is per-cell padding instead of a grid gap. */}
+              <div
+                className={cn(
+                  '[--cols:minmax(0,1fr)_auto_0px_0px_0px_7rem_auto]',
+                  'sm:[--cols:minmax(0,1fr)_auto_3.5rem_0px_0px_7rem_auto]',
+                  'md:[--cols:minmax(0,1fr)_auto_3.5rem_8rem_0px_7rem_auto]',
+                  'lg:[--cols:minmax(0,1fr)_auto_3.5rem_8rem_6rem_7rem_auto]',
+                )}
+              >
+                <div className="mb-1 hidden grid-cols-[var(--cols)] items-center px-2.5 md:grid">
+                  <span className="eyebrow">Identity</span>
+                  <span />
+                  <span className="hidden pl-2.5 text-right eyebrow sm:block">Cloud</span>
+                  <span className="pl-2.5 text-right eyebrow">Owner</span>
+                  <span className="hidden pl-2.5 text-right eyebrow lg:block">Last seen</span>
+                  <span className="pl-2.5 text-right eyebrow">Risk</span>
+                  <span className="pl-2" />
+                </div>
+                <ul className="divide-y divide-border overflow-hidden rounded-[var(--r-md)] border border-border">
+                  {sample.map((s) => (
+                    <li key={s.id}>
+                      <Link
+                        to={`/discover/${s.id}`}
+                        className="group grid grid-cols-[var(--cols)] items-center bg-surface-2 px-2.5 py-2 transition-colors hover:bg-surface-hover"
+                        aria-label={`${s.name}, risk ${s.riskScore}, owner ${s.owner ?? 'unassigned'}, last seen ${relativeTime(s.lastSeen)}. Open identity.`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <NhiTypeIcon type={s.type} className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                          <span className="truncate font-mono text-[length:var(--fs-small)] text-text">
+                            {s.name}
+                          </span>
+                        </span>
+                        {/* An orphan is the case most worth catching before activating:
+                            nobody would answer for what this rule does to it. Its track
+                            is content-sized, but it sits before every fixed one, so a
+                            row with no flag cannot shift the columns after it. */}
+                        <span className="pl-2.5 text-right text-[length:var(--fs-micro)] text-warn-fg">
+                          {s.orphaned && <span title="Orphaned — no accountable owner">orphaned</span>}
+                        </span>
+                        <span className="hidden items-center justify-end gap-1 pl-2.5 sm:flex">
+                          {s.clouds.map((c) => (
+                            <ProviderMark key={c} cloud={c} className="h-3.5" />
+                          ))}
+                        </span>
+                        <span
+                          className={cn(
+                            'hidden truncate pl-2.5 text-right text-[length:var(--fs-micro)] md:block',
+                            s.owner ? 'text-text-tertiary' : 'text-warn-fg',
+                          )}
+                        >
+                          {s.owner ?? 'unassigned'}
+                        </span>
+                        <span className="hidden pl-2.5 text-right text-[length:var(--fs-micro)] text-text-tertiary lg:block">
+                          {relativeTime(s.lastSeen)}
+                        </span>
+                        <span className="flex justify-end pl-2.5">
+                          <RiskPill score={s.riskScore} size="sm" />
+                        </span>
+                        <span className="flex justify-end pl-2">
+                          <ChevronRight
+                            className="h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform group-hover:translate-x-0.5 group-hover:text-text-secondary"
+                            aria-hidden="true"
+                          />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </>
         )}
@@ -122,7 +178,13 @@ export function PolicyBuilderScreen() {
   const canCreate = useCan('policy.create');
   const canTest = useCan('policy.test');
   const canActivate = useCan('policy.activate');
-  const readOnly = !canCreate;
+  /**
+   * An archived policy is immutable — savePolicy and activatePolicy both reject it
+   * (FR-011). Lock the canvas on the way in rather than letting someone rewrite a
+   * rule and only learn it was frozen when the save comes back with an error.
+   */
+  const isArchived = existing.data?.status === 'archived';
+  const readOnly = !canCreate || isArchived;
 
   const [name, setName] = useState('');
   const [tokens, setTokens] = useState<PolicyToken[]>(defaultTokens);
@@ -242,7 +304,7 @@ export function PolicyBuilderScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow={isEditing ? 'Know · Govern · Edit' : 'Know · Govern · New'}
+        eyebrow={isArchived ? 'Know · Govern · Archived' : isEditing ? 'Know · Govern · Edit' : 'Know · Govern · New'}
         title="Policy Builder"
         description="Compose a rule from WHEN / AND / THEN tokens. The preview, affected count, and code are illustrative."
         actions={
@@ -254,7 +316,11 @@ export function PolicyBuilderScreen() {
 
       {readOnly && (
         <div className="mb-4">
-          <Banner tone="info">You&apos;re viewing this policy read-only. Authoring requires an Analyst or Admin role.</Banner>
+          <Banner tone="info">
+            {isArchived
+              ? 'This policy is archived — retained for audit and no longer editable. Archiving cannot be undone.'
+              : "You're viewing this policy read-only. Authoring requires an Analyst or Admin role."}
+          </Banner>
         </div>
       )}
 
@@ -327,16 +393,18 @@ export function PolicyBuilderScreen() {
                 )}
               </div>
               <p className={cn('text-[length:var(--fs-small)]', dead ? 'text-crit-fg' : 'text-text-tertiary')}>
+                {/* The third branch fires only once a result is on screen, and the
+                    result card states the dry-run fact itself — so this drops the
+                    repetition and says what is left to do. */}
                 {dead
                   ? 'Resolve the contradiction above — a rule that can never match cannot be activated.'
                   : activationBlocked
                     ? 'Test is a dry-run — nothing is enforced. A policy must pass a test before it can be activated.'
-                    : 'Test is a dry-run — nothing is enforced until you Save & activate.'}
+                    : 'Nothing is enforced until you Save & activate.'}
               </p>
             </>
           )}
 
-          {testResult && <TestResult result={testResult} />}
         </div>
 
         {/* Preview + affected + code */}
@@ -387,6 +455,16 @@ export function PolicyBuilderScreen() {
 
           <CodeBlock code={code} label="Generated policy · read-only · illustrative" />
         </div>
+
+        {/* Spans both columns: this is a list of matched identities with a name, a
+            risk badge, and a chevron per row, and at half width the badge crowded
+            the name. It also reads as the outcome of the whole screen rather than
+            something belonging to the rule column. */}
+        {testResult && (
+          <div className="lg:col-span-2">
+            <TestResult result={testResult} />
+          </div>
+        )}
       </div>
 
       <Dialog

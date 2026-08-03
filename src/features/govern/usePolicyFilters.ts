@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { PolicyStatus } from '@/mocks/types';
-import type { PolicyListFilter, PolicySort } from './policyList';
+import type { PolicyListFilter, PolicySort, PolicyTab } from './policyList';
 
 const SORTS: PolicySort[] = ['modified', 'activated', 'name', 'affected'];
 
@@ -11,20 +11,30 @@ function parseList<T extends string>(raw: string | null): T[] {
 }
 
 /**
- * Search / status / sort state for the policy list, kept in the URL
- * (?q / ?status / ?sort) so refresh, back/forward, and deep links preserve the
- * view — the same convention Manage Users and Inventory use. Selection itself is
- * client-side over the loaded list (see policyList.ts).
+ * Tab / search / status / sort state for the policy list, kept in the URL
+ * (?tab / ?q / ?status / ?sort) so refresh, back/forward, and deep links preserve
+ * the view — the same convention Manage Users and Inventory use. Selection itself
+ * is client-side over the loaded list (see policyList.ts).
  */
 export function usePolicyFilters() {
   const [params, setParams] = useSearchParams();
 
-  const filter = useMemo<PolicyListFilter>(() => {
+  const { tab, filter } = useMemo<{ tab: PolicyTab; filter: PolicyListFilter }>(() => {
     const sort = params.get('sort') as PolicySort | null;
+    const parsed = parseList<PolicyStatus>(params.get('status'));
+    // Before the archive became its own tab, it was reached with ?status=archived.
+    // Translate those links instead of leaving them on an empty live list.
+    const tab: PolicyTab =
+      params.get('tab') === 'archive' || parsed.includes('archived') ? 'archive' : 'live';
     return {
-      search: params.get('q') ?? '',
-      statuses: parseList<PolicyStatus>(params.get('status')),
-      sort: sort && SORTS.includes(sort) ? sort : 'modified',
+      tab,
+      filter: {
+        search: params.get('q') ?? '',
+        // The archive is one population — a live-status filter there would hide
+        // every row, and 'archived' is no longer a facet option on either tab.
+        statuses: tab === 'archive' ? [] : parsed.filter((s) => s !== 'archived'),
+        sort: sort && SORTS.includes(sort) ? sort : 'modified',
+      },
     };
   }, [params]);
 
@@ -70,7 +80,18 @@ export function usePolicyFilters() {
     [update],
   );
 
+  /** A tab switch changes population, so it resets the narrowing that was scoped to the old one. */
+  const setTab = useCallback(
+    (next: string) =>
+      update((n) => {
+        if (next === 'archive') n.set('tab', 'archive');
+        else n.delete('tab');
+        ['q', 'status'].forEach((k) => n.delete(k));
+      }),
+    [update],
+  );
+
   const activeCount = (filter.search ? 1 : 0) + filter.statuses.length;
 
-  return { filter, setSearch, setSort, toggleStatus, clearAll, activeCount };
+  return { tab, setTab, filter, setSearch, setSort, toggleStatus, clearAll, activeCount };
 }
