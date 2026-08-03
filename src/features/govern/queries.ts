@@ -3,6 +3,7 @@ import {
   activatePolicy,
   archivePolicy,
   getPolicy,
+  listAudit,
   listPolicies,
   savePolicy,
   suspendPolicy,
@@ -25,6 +26,16 @@ export function usePolicy(id: string | undefined) {
     queryFn: () => getPolicy(id as string),
     enabled: !!id,
   });
+}
+
+/**
+ * Audit entries, read here to attribute archived policies — the Policy entity
+ * records no archivedAt/archivedBy, so the log is the register of who retired
+ * what. Shares the Audit Log's cache key, and every policy write already
+ * invalidates ['audit'] (see useInvalidatePolicies).
+ */
+export function usePolicyAudit() {
+  return useQuery({ queryKey: ['audit', ''], queryFn: () => listAudit() });
 }
 
 /** Evaluate a draft rule's tokens for the live affected-count. Persists nothing. */

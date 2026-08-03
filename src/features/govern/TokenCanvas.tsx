@@ -28,9 +28,11 @@ function KindChip({ kind }: { kind: PolicyToken['kind'] }) {
 function ValueControl({
   token,
   onChange,
+  disabled,
 }: {
   token: PolicyToken;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   const def = subjectDef(token.subject);
   if (token.subject === 'owner' && token.operator === 'empty') {
@@ -45,6 +47,7 @@ function ValueControl({
         ariaLabel="Value"
         size="sm"
         className="min-w-32"
+        disabled={disabled}
       />
     );
   }
@@ -57,6 +60,7 @@ function ValueControl({
       onChange={(e) => onChange(e.target.value)}
       className="h-8"
       placeholder={def?.valueType === 'number' ? '0' : 'value'}
+      disabled={disabled}
     />
   );
 }
@@ -72,9 +76,12 @@ function ValueControl({
 function RowDiagnostics({
   diagnostics,
   onApplyFix,
+  disabled,
 }: {
   diagnostics: Diagnostic[];
   onApplyFix: (d: Diagnostic) => void;
+  /** A fix rewrites the rule, so it is unavailable wherever the canvas is locked. */
+  disabled?: boolean;
 }) {
   if (diagnostics.length === 0) return null;
   return (
@@ -92,7 +99,7 @@ function RowDiagnostics({
           >
             <Icon className="h-3 w-3 shrink-0 translate-y-0.5" aria-hidden="true" />
             <span className="min-w-0">{d.message}</span>
-            {d.fix && (
+            {d.fix && !disabled && (
               <button
                 type="button"
                 onClick={() => onApplyFix(d)}
@@ -119,6 +126,7 @@ function ConditionRow({
   diagnostics,
   implicated,
   onApplyFix,
+  disabled,
 }: {
   token: PolicyToken;
   isFirst: boolean;
@@ -127,6 +135,7 @@ function ConditionRow({
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
   canRemove: boolean;
+  disabled?: boolean;
   /** Diagnostics whose message belongs on this row. */
   diagnostics: Diagnostic[];
   /** True when this row is part of a contradiction, whether or not it carries the text. */
@@ -155,6 +164,7 @@ function ConditionRow({
         ariaLabel="Condition subject"
         size="sm"
         className="min-w-36"
+        disabled={disabled}
       />
       <Select
         value={token.operator}
@@ -163,20 +173,21 @@ function ConditionRow({
         ariaLabel="Operator"
         size="sm"
         className="min-w-28"
+        disabled={disabled}
       />
-      <ValueControl token={token} onChange={(value) => onChange({ value })} />
+      <ValueControl token={token} onChange={(value) => onChange({ value })} disabled={disabled} />
       <div className="ml-auto flex items-center gap-0.5">
-        <IconButton label="Move up" size="sm" onClick={() => onMove(-1)} disabled={isFirst}>
+        <IconButton label="Move up" size="sm" onClick={() => onMove(-1)} disabled={disabled || isFirst}>
           <ArrowUp className="h-3.5 w-3.5" />
         </IconButton>
-        <IconButton label="Move down" size="sm" onClick={() => onMove(1)} disabled={isLast}>
+        <IconButton label="Move down" size="sm" onClick={() => onMove(1)} disabled={disabled || isLast}>
           <ArrowDown className="h-3.5 w-3.5" />
         </IconButton>
-        <IconButton label="Remove condition" size="sm" onClick={onRemove} disabled={!canRemove}>
+        <IconButton label="Remove condition" size="sm" onClick={onRemove} disabled={disabled || !canRemove}>
           <Trash2 className="h-3.5 w-3.5" />
         </IconButton>
       </div>
-      <RowDiagnostics diagnostics={diagnostics} onApplyFix={onApplyFix} />
+      <RowDiagnostics diagnostics={diagnostics} onApplyFix={onApplyFix} disabled={disabled} />
     </div>
   );
 }
@@ -226,12 +237,16 @@ export function TokenCanvas({
   };
 
   return (
+    // pointer-events-none alone left every control in the tab order and unmarked,
+    // so a keyboard or screen-reader user could still rewrite a locked rule. Each
+    // control now carries a real disabled state; the wrapper stays as a backstop.
     <div className={cn('space-y-3', disabled && 'pointer-events-none opacity-60')}>
       <div className="space-y-2">
         {conditions.map((token, index) => (
           <ConditionRow
             key={index}
             token={token}
+            disabled={disabled}
             isFirst={index === 0}
             isLast={index === conditions.length - 1}
             canRemove={conditions.length > 1}
@@ -252,7 +267,13 @@ export function TokenCanvas({
             onApplyFix={(d) => d.fix && onChange(d.fix.tokens)}
           />
         ))}
-        <Button variant="ghost" size="sm" leadingIcon={<Plus className="h-3.5 w-3.5" />} onClick={addCondition}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<Plus className="h-3.5 w-3.5" />}
+          onClick={addCondition}
+          disabled={disabled}
+        >
           Add condition
         </Button>
       </div>
@@ -270,6 +291,7 @@ export function TokenCanvas({
             ariaLabel="Action"
             size="sm"
             className="min-w-32"
+            disabled={disabled}
           />
           {actionDef(action.subject)?.operators.some((o) => o.label) && (
             <span className="text-[length:var(--fs-small)] text-text-tertiary">
@@ -283,6 +305,7 @@ export function TokenCanvas({
             ariaLabel="Action value"
             size="sm"
             className="min-w-36"
+            disabled={disabled}
           />
         </div>
       )}

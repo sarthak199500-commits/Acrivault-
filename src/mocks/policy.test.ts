@@ -357,6 +357,29 @@ describe('dry-run sample surfaces the worst matches, not arbitrary ones', () => 
     expect(res.sample.every((s) => s.type === 'ai-agent')).toBe(true);
   });
 
+  it('carries the context a reviewer needs to judge a match in place', async () => {
+    // A name and a score cannot answer "should this rule enforce" — who is
+    // accountable, where it lives, and whether it is still live all bear on it.
+    const { identityById } = getDataset();
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '0' }]);
+    expect(res.sample.length).toBeGreaterThan(0);
+    for (const s of res.sample) {
+      const identity = identityById.get(s.id);
+      expect(identity).toBeDefined();
+      expect(s.owner).toBe(identity?.owner);
+      expect(s.orphaned).toBe(identity?.orphaned);
+      expect(s.lastSeen).toBe(identity?.lastSeen);
+      expect(s.clouds.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('dedupes clouds — a correlated identity can report the same cloud twice', async () => {
+    const res = await evaluatePolicy([{ kind: 'when', subject: 'riskScore', operator: 'gte', value: '0' }]);
+    for (const s of res.sample) {
+      expect(s.clouds).toEqual([...new Set(s.clouds)]);
+    }
+  });
+
   it('test and evaluate agree — one shared evaluator, so they cannot drift', async () => {
     const tokens: PolicyToken[] = [{ kind: 'when', subject: 'type', operator: 'is', value: 'api-key' }];
     const evaluated = await evaluatePolicy(tokens);
@@ -524,5 +547,42 @@ describe('FR-010 / FR-011 · suspend, reactivate, archive', () => {
 
     const audit = await listAudit();
     expect(audit.some((e) => e.action === 'archived policy' && e.target === 'To be archived')).toBe(true);
+  });
+
+  it('archives a draft directly — it never enforced, so there is nothing to suspend', async () => {
+    // Held literally, "suspend before archiving" left a draft with no exit but to
+    // activate it first, enforcing an unwanted rule to earn the right to bin it.
+    const saved = await savePolicy(draft('Mistaken draft'));
+    const archived = await archivePolicy(saved.id);
+    expect(archived.status).toBe('archived');
+    expect(await listPolicies().then((p) => p.some((x) => x.id === saved.id))).toBe(false);
+  });
+
+  it('archives a tested policy directly', async () => {
+    const { policy } = await testPolicy(draft('Tested but never live'));
+    expect(policy.status).toBe('tested');
+    await expect(archivePolicy(policy.id)).resolves.toMatchObject({ status: 'archived' });
+  });
+
+  it('distinguishes a discarded policy from a retired one in the audit detail', async () => {
+    const neverLive = await savePolicy(draft('Never enforced'));
+    await archivePolicy(neverLive.id);
+
+    const { policy } = await testPolicy(draft('Once enforced'));
+    await activatePolicy(policy.id);
+    await suspendPolicy(policy.id);
+    await archivePolicy(policy.id);
+
+    const audit = await listAudit();
+    const detailFor = (name: string) =>
+      audit.find((e) => e.action === 'archived policy' && e.target === name)?.detail ?? '';
+    expect(detailFor('Never enforced')).toMatch(/discarded before it ever enforced/i);
+    expect(detailFor('Once enforced')).toMatch(/retired after enforcing/i);
+  });
+
+  it('refuses to archive a policy that is already archived', async () => {
+    const saved = await savePolicy(draft('Archive once only'));
+    await archivePolicy(saved.id);
+    await expect(archivePolicy(saved.id)).rejects.toMatchObject({ code: 'INVALID_TRANSITION' });
   });
 });

@@ -424,8 +424,23 @@ export interface PolicyEvalResult {
    * risk-ranked sample of six.
    */
   criticalCount: number;
-  /** Matches ranked by risk, highest first. See `evaluationOf`. */
-  sample: { id: string; name: string; type: NhiType; riskScore: number }[];
+  /**
+   * Matches ranked by risk, highest first. See `evaluationOf`.
+   *
+   * Carries the context a reviewer needs to judge a match without leaving the
+   * builder: who is accountable, which clouds it lives in, and whether it is still
+   * live. A name and a score alone cannot answer "should this rule enforce".
+   */
+  sample: {
+    id: string;
+    name: string;
+    type: NhiType;
+    riskScore: number;
+    owner?: string;
+    clouds: Cloud[];
+    lastSeen: string;
+    orphaned: boolean;
+  }[];
 }
 
 /** How many matches the dry-run shows inline. */
@@ -449,7 +464,17 @@ function evaluationOf(matched: Identity[], total: number): PolicyEvalResult {
     sample: [...matched]
       .sort((a, b) => b.riskScore - a.riskScore)
       .slice(0, EVAL_SAMPLE_SIZE)
-      .map((i) => ({ id: i.id, name: i.name, type: i.type, riskScore: i.riskScore })),
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        type: i.type,
+        riskScore: i.riskScore,
+        owner: i.owner,
+        // Deduped: a correlated identity often reports the same cloud twice.
+        clouds: [...new Set(i.sources.map((s) => s.cloud))],
+        lastSeen: i.lastSeen,
+        orphaned: i.orphaned,
+      })),
   };
 }
 
@@ -650,19 +675,39 @@ export function suspendPolicy(id: string): Promise<Policy> {
 }
 
 /**
- * Retire a suspended policy (role-gated: `policy.lifecycle`). Archiving is
- * reachable only from Suspended — never straight from Active (FR-011).
+ * Retire a policy that is not enforcing (role-gated: `policy.lifecycle`).
+ *
+ * FR-011 as written allows this only from Suspended. That guard exists so nobody
+ * retires a live rule without first watching enforcement stop — which is real for
+ * Active and vacuous for Draft and Tested, since neither ever enforced anything.
+ * Held literally it also left those two states with no exit at all: clearing a
+ * mistaken draft meant activating it first, enforcing an unwanted rule against
+ * real identities purely to be allowed to throw it away. So Active still has to
+ * suspend first, and Draft and Tested may archive directly.
+ *
+ * Deviation from FR-011 as specced — flagged back to the BA, not silently taken.
  */
 export function archivePolicy(id: string): Promise<Policy> {
   return respond(() => {
     const policy = findPolicy(id);
     assertActorCan('policy.lifecycle');
-    if (policy.status !== 'suspended') {
+    if (policy.status === 'archived') {
+      throw new MockApiError('This policy is already archived.', 'INVALID_TRANSITION');
+    }
+    if (policy.status === 'active') {
       throw new MockApiError('Suspend this policy before archiving it.', 'INVALID_TRANSITION');
     }
+    // Recorded before the status write, which is what erases the distinction.
+    const enforced = !!policy.activatedAt;
     policy.status = 'archived';
     policy.updatedAt = new Date().toISOString();
-    appendAudit('archived policy', policy.name, 'Retained for audit; hidden from the default policy list.');
+    appendAudit(
+      'archived policy',
+      policy.name,
+      enforced
+        ? 'Retired after enforcing. Retained for audit; hidden from the default policy list.'
+        : 'Discarded before it ever enforced. Retained for audit; hidden from the default policy list.',
+    );
     return { ...policy };
   });
 }
