@@ -13,8 +13,9 @@ import {
   Radar,
   type LucideIcon,
 } from 'lucide-react';
-import { useAlerts } from './queries';
-import type { Alert, RiskBand } from '@/mocks/types';
+import { useAlerts, useMonitoringBaseline } from './queries';
+import type { AlertWithIdentity } from '@/mocks/api';
+import type { MonitoringBaseline, RiskBand } from '@/mocks/types';
 import { bucketByTime, splitAcknowledged } from './alertGrouping';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
@@ -23,7 +24,7 @@ import { FilterPill } from '@/components/ui/FilterPill';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
-import { pluralize, relativeTime } from '@/lib/format';
+import { count, pluralize, relativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { SEVERITY_TONE } from '@/lib/tones';
 
@@ -37,57 +38,123 @@ const SEVERITY_ICON: Record<RiskBand, LucideIcon> = {
 };
 const SEVERITY_ORDER: RiskBand[] = ['critical', 'high', 'medium', 'low'];
 
-function BaselineStrip({ alerts }: { alerts: Alert[] }) {
-  const learning = alerts.find((a) => a.baseline === 'learning' && a.baselineProgress);
-  if (learning && learning.baselineProgress) {
-    const { day, of } = learning.baselineProgress;
-    const pct = Math.round((day / of) * 100);
+/**
+ * Tenant baseline coverage (FRS 3.7: communicate 'learning' vs 'established' rather
+ * than implying full coverage). Reports how many identities are still forming a
+ * baseline — a single alert's own progress is per-alert and belongs in its detail,
+ * not here, where it would read as a system-wide fact.
+ */
+function BaselineStrip({
+  baseline,
+  failed,
+}: {
+  baseline: MonitoringBaseline | undefined;
+  failed: boolean;
+}) {
+  // Say the coverage is unknown rather than leave a placeholder that reads as loading.
+  // Implying an established baseline we cannot confirm is the one thing this strip
+  // exists to prevent.
+  if (failed) {
     return (
       <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-          <Radar className="h-4 w-4 text-warn-fg" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[length:var(--fs-small)] font-medium text-text">Baseline still learning</span>
-              <span className="tnum text-[length:var(--fs-small)] text-text-secondary">day {day} of {of}</span>
-            </div>
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
-              <div className="h-full rounded-full bg-[var(--warning)]" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-        </div>
-        <div className="border-t border-border px-4 py-2 text-[length:var(--fs-micro)] text-text-tertiary">
-          Early signal may be noisy — alerts during the learning window are not yet fully trustworthy.
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Radar className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
+          <span className="text-[length:var(--fs-small)] text-text-secondary">
+            Baseline coverage unavailable — treat the alerts below as unqualified until it loads.
+          </span>
         </div>
       </Card>
     );
   }
+  if (!baseline) return <div className="mb-4 h-16 rounded-[var(--r-lg)] border border-border bg-surface" />;
+
+  if (baseline.state === 'established') {
+    return (
+      <Card className="mb-4">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <CircleCheck className="h-4 w-4 text-[var(--success)]" aria-hidden="true" />
+          <span className="text-[length:var(--fs-small)] text-text">
+            Baseline established — all {count(baseline.monitored)} monitored identities have a settled
+            baseline, so alerts reflect deviations from normal behavior.
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  const settled = Math.max(0, baseline.monitored - baseline.learning);
+  const pct = baseline.monitored > 0 ? Math.round((settled / baseline.monitored) * 100) : 0;
   return (
     <Card className="mb-4">
-      <div className="flex items-center gap-3 px-4 py-3">
-        <CircleCheck className="h-4 w-4 text-[var(--success)]" aria-hidden="true" />
-        <span className="text-[length:var(--fs-small)] text-text">
-          Baseline established — monitoring is calibrated and alerts reflect deviations from normal behavior.
-        </span>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <Radar className="h-4 w-4 text-warn-fg" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[length:var(--fs-small)] font-medium text-text">Baseline still learning</span>
+            <span className="tnum text-[length:var(--fs-small)] text-text-secondary">
+              {count(settled)} of {count(baseline.monitored)} established
+            </span>
+          </div>
+          <div
+            className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Identities with an established baseline"
+          >
+            <div className="h-full rounded-full bg-[var(--warning)]" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-border px-4 py-2 text-[length:var(--fs-micro)] text-text-tertiary">
+        {pluralize(baseline.learning, 'identity', 'identities')}{' '}
+        {baseline.learning === 1 ? 'is' : 'are'} still forming a {baseline.windowDays}-day baseline. Alerts
+        raised on {baseline.learning === 1 ? 'it' : 'them'} are early signal, not yet a verdict.
       </div>
     </Card>
   );
 }
 
-function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: () => void }) {
+/**
+ * Severity | content | time, on a fixed first column.
+ *
+ * The badge used to sit in the flow, and badge width tracks the word — "Critical" runs
+ * wider than "High" — so each row started its title at a different x and the feed read
+ * as two ragged left edges. Pinning the column width lets the badge keep its natural
+ * size while every title, description and identity name shares one edge.
+ */
+const ROW_GRID = 'grid-cols-[5.75rem_minmax(0,1fr)_auto]';
+
+function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => void }) {
   const SevIcon = SEVERITY_ICON[alert.severity];
   return (
     <button
       type="button"
       onClick={onOpen}
-      // Left severity rail double-encodes severity by colour + position.
-      style={{ borderLeftColor: `var(--risk-${alert.severity})` }}
-      className="flex w-full items-start gap-3 border-b border-l-[3px] border-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-hover"
+      className={cn(
+        'relative grid w-full items-baseline gap-x-3 border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-hover',
+        ROW_GRID,
+      )}
     >
-      <Badge tone={SEVERITY_TONE[alert.severity]} icon={<SevIcon className="h-3 w-3" />} className="mt-0.5 shrink-0 capitalize">
+      {/* Severity mark, centred on the row. As an edge-to-edge left border this ran
+          unbroken from row to row, so adjacent bands — medium #d6a93c above high #e8913d —
+          blended into one continuous stripe instead of reading as one mark per alert.
+          The height is a balance: long enough to register as a rail, short enough to
+          leave a clear gap above and below it. */}
+      <span
+        aria-hidden="true"
+        className="absolute left-0 top-1/2 h-10 w-[3px] -translate-y-1/2 rounded-full"
+        style={{ backgroundColor: `var(--risk-${alert.severity})` }}
+      />
+      <Badge
+        tone={SEVERITY_TONE[alert.severity]}
+        icon={<SevIcon className="h-3 w-3" />}
+        className="capitalize"
+      >
         {alert.severity}
       </Badge>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-text">{alert.title}</span>
           {alert.baseline === 'learning' && (
@@ -95,15 +162,23 @@ function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: () => void }) {
           )}
         </div>
         <p className="mt-0.5 truncate text-[length:var(--fs-small)] text-text-secondary">{alert.description}</p>
-        <p className="mt-0.5 font-mono text-[length:var(--fs-micro)] text-text-tertiary">{alert.identityId}</p>
+        <p className="mt-0.5 font-mono text-[length:var(--fs-micro)] text-text-tertiary">{alert.identityName}</p>
       </div>
-      <span className="tnum shrink-0 text-[length:var(--fs-small)] text-text-tertiary">{relativeTime(alert.createdAt)}</span>
+      <span className="tnum whitespace-nowrap text-[length:var(--fs-small)] text-text-tertiary">
+        {relativeTime(alert.createdAt)}
+      </span>
     </button>
   );
 }
 
 /** Settled alerts, out of the inline flow but at full contrast when expanded. */
-function AcknowledgedSection({ alerts, onOpen }: { alerts: Alert[]; onOpen: (a: Alert) => void }) {
+function AcknowledgedSection({
+  alerts,
+  onOpen,
+}: {
+  alerts: AlertWithIdentity[];
+  onOpen: (a: AlertWithIdentity) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (alerts.length === 0) return null;
   return (
@@ -130,6 +205,7 @@ function AcknowledgedSection({ alerts, onOpen }: { alerts: Alert[]; onOpen: (a: 
 
 export function MonitorScreen() {
   const query = useAlerts();
+  const baseline = useMonitoringBaseline();
   const navigate = useNavigate();
   const location = useLocation();
   const [severity, setSeverity] = useState<RiskBand | null>(null);
@@ -140,7 +216,8 @@ export function MonitorScreen() {
     return c;
   }, [query.data]);
 
-  const openAlert = (a: Alert) => navigate({ pathname: `/monitor/${a.id}`, search: location.search });
+  const openAlert = (a: AlertWithIdentity) =>
+    navigate({ pathname: `/monitor/${a.id}`, search: location.search });
 
   return (
     <div>
@@ -175,7 +252,7 @@ export function MonitorScreen() {
           const buckets = bucketByTime(active);
           return (
             <div>
-              <BaselineStrip alerts={alerts} />
+              <BaselineStrip baseline={baseline.data} failed={baseline.isError} />
 
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
                 <FilterPill label="All" count={alerts.length} selected={severity === null} onClick={() => setSeverity(null)} />

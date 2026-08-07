@@ -28,6 +28,7 @@ import type {
   Identity,
   IdentityStatus,
   Invitation,
+  MonitoringBaseline,
   NhiType,
   NotificationItem,
   Policy,
@@ -366,17 +367,62 @@ export function assignOwner(identityId: string, owner: string): Promise<Identity
 
 /* --------------------------------------------------------------------- alerts */
 
-export function listAlerts(severity?: RiskBand): Promise<Alert[]> {
+/** Alert joined with its identity's display name (raw ids are not UI labels). */
+export type AlertWithIdentity = Alert & { identityName: string };
+
+function withAlertIdentityName(alert: Alert): AlertWithIdentity {
+  return {
+    ...alert,
+    identityName: getDataset().identityById.get(alert.identityId)?.name ?? alert.identityId,
+  };
+}
+
+export function listAlerts(severity?: RiskBand): Promise<AlertWithIdentity[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
     let rows = getDataset().alerts.filter((a) => a.status !== 'resolved');
     if (severity) rows = rows.filter((a) => a.severity === severity);
-    return rows;
+    return rows.map(withAlertIdentityName);
   });
 }
 
-export function getAlert(id: string): Promise<Alert | null> {
-  return respond(() => getDataset().alerts.find((a) => a.id === id) ?? null);
+export function getAlert(id: string): Promise<AlertWithIdentity | null> {
+  return respond(() => {
+    const alert = getDataset().alerts.find((a) => a.id === id);
+    return alert ? withAlertIdentityName(alert) : null;
+  });
+}
+
+/**
+ * The tenant's monitoring baseline. Derived here from per-identity alert state only
+ * because the real derivation is Architect-owned — the shape is what the UI needs:
+ * a state, and how many identities are still forming a baseline.
+ * // ASSUMPTION: baseline window + derivation are Architect-owned.
+ */
+export function getMonitoringBaseline(): Promise<MonitoringBaseline> {
+  return respond(() => {
+    if (isEmptyForced()) return { state: 'learning', learning: 0, monitored: 0, windowDays: 14 };
+    const { alerts, identities } = getDataset();
+    const learning = new Set(
+      alerts.filter((a) => a.baseline === 'learning').map((a) => a.identityId),
+    );
+    return {
+      state: learning.size > 0 ? 'learning' : 'established',
+      learning: learning.size,
+      monitored: identities.length,
+      windowDays: 14,
+    };
+  });
+}
+
+/** The most recent session for an identity, for the agent-alert → replay jump. */
+export function getLatestSessionForIdentity(identityId: string): Promise<AgentSessionWithIdentity | null> {
+  return respond(() => {
+    const session = getDataset()
+      .sessions.filter((s) => s.identityId === identityId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    return session ? withIdentityName(session) : null;
+  });
 }
 
 export function acknowledgeAlert(id: string): Promise<Alert> {
@@ -384,6 +430,7 @@ export function acknowledgeAlert(id: string): Promise<Alert> {
     const alert = getDataset().alerts.find((a) => a.id === id);
     if (!alert) throw new MockApiError('Alert not found.');
     alert.status = 'acknowledged';
+    appendAudit('acknowledged alert', alert.title, `${alert.severity} alert on ${identityLabel(alert.identityId)}.`);
     return { ...alert };
   });
 }
@@ -393,6 +440,9 @@ export function resolveAlert(id: string): Promise<Alert> {
     const alert = getDataset().alerts.find((a) => a.id === id);
     if (!alert) throw new MockApiError('Alert not found.');
     alert.status = 'resolved';
+    // FRS 3.7: resolution is logged. The feed drops it, so the audit trail is the
+    // only remaining record that this alert was ever raised and by whom it was closed.
+    appendAudit('resolved alert', alert.title, `${alert.severity} alert on ${identityLabel(alert.identityId)}.`);
     return { ...alert };
   });
 }
@@ -763,17 +813,39 @@ export interface BlastOrigin {
   reach: number;
 }
 
-/** A curated set of identities that have relationships, for the blast-radius picker. */
+/**
+ * Identities that have relationships, for the blast-radius picker — ordered by reach,
+ * then risk. Reach leads because this screen is about scale: sorting by risk alone put
+ * a high-risk identity with one connection at the top, and the graph opened near-empty.
+ */
 export function listBlastOrigins(limit = 40): Promise<BlastOrigin[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
     const { identities } = getDataset();
     return identities
       .filter((i) => i.relationships.length > 0)
-      .sort((a, b) => b.riskScore - a.riskScore)
+      .sort((a, b) => b.relationships.length - a.relationships.length || b.riskScore - a.riskScore)
       .slice(0, limit)
       .map((i) => ({ id: i.id, name: i.name, type: i.type, riskScore: i.riskScore, reach: i.relationships.length }));
   });
+}
+
+/**
+ * Nodes drawn per ring. The radial layout stops being readable past this, but the
+ * cap is presentational only: `summary` always reports the full walk, and `graph`
+ * reports how much of it is drawn. A summary that counted only drawn nodes would
+ * understate a hub identity's reach — the opposite of what Blast Radius is for.
+ */
+const GRAPH_DIRECT_CAP = 10;
+const GRAPH_TRANSITIVE_PER_DIRECT = 2;
+
+/** Minutes as a readable duration — a wide blast radius runs past the point where "~216 min" reads. */
+function containmentLabel(minutes: number): string {
+  if (minutes < 90) return `~${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = Math.round((minutes % 60) / 15) * 15;
+  if (rest === 0 || rest === 60) return `~${rest === 60 ? hours + 1 : hours} hr`;
+  return `~${hours} hr ${rest} min`;
 }
 
 export function getBlastRadius(originId: string): Promise<BlastRadius | null> {
@@ -782,45 +854,57 @@ export function getBlastRadius(originId: string): Promise<BlastRadius | null> {
     const origin = identityById.get(originId);
     if (!origin) return null;
 
+    // Walk the whole reachable set first. // ASSUMPTION: reachability is Resilience-core.
+    const reached = new Map<string, ReachEdge['kind']>();
+    const onwardOf = new Map<string, Identity[]>();
+    const directs: Identity[] = [];
+
+    for (const rel of origin.relationships) {
+      const hop = identityById.get(rel.identityId);
+      if (!hop || hop.id === origin.id || reached.has(hop.id)) continue;
+      reached.set(hop.id, 'direct');
+      directs.push(hop);
+    }
+    for (const hop of directs) {
+      const onward: Identity[] = [];
+      for (const rel of hop.relationships) {
+        const hop2 = identityById.get(rel.identityId);
+        if (!hop2 || hop2.id === origin.id || reached.has(hop2.id)) continue;
+        // Cascade: reaching it would force a revocation or reissue of its own.
+        reached.set(hop2.id, hop2.orphaned || hop2.riskScore > 70 ? 'cascade' : 'transitive');
+        onward.push(hop2);
+      }
+      onwardOf.set(hop.id, onward);
+    }
+
+    const summary = { direct: 0, transitive: 0, cascade: 0 };
+    for (const kind of reached.values()) summary[kind] += 1;
+
+    // Then draw as much of it as stays legible.
     const nodes: ReachNode[] = [
       { id: origin.id, identityId: origin.id, label: origin.name, kind: 'origin' },
     ];
     const edges: ReachEdge[] = [];
-    const seen = new Set<string>([origin.id]);
-
-    // Direct: first-hop relationships. // ASSUMPTION: reachability is Resilience-core.
-    const direct = origin.relationships.slice(0, 6);
-    for (const rel of direct) {
-      const t = identityById.get(rel.identityId);
-      if (!t || seen.has(t.id)) continue;
-      seen.add(t.id);
-      nodes.push({ id: t.id, identityId: t.id, label: t.name, kind: 'direct' });
-      edges.push({ from: origin.id, to: t.id, kind: 'direct' });
-
-      // Transitive: second hop.
-      for (const rel2 of t.relationships.slice(0, 2)) {
-        const t2 = identityById.get(rel2.identityId);
-        if (!t2 || seen.has(t2.id)) continue;
-        seen.add(t2.id);
-        const kind = t2.orphaned || t2.riskScore > 70 ? 'cascade' : 'transitive';
-        nodes.push({ id: t2.id, identityId: t2.id, label: t2.name, kind });
-        edges.push({ from: t.id, to: t2.id, kind });
+    for (const hop of directs.slice(0, GRAPH_DIRECT_CAP)) {
+      nodes.push({ id: hop.id, identityId: hop.id, label: hop.name, kind: 'direct' });
+      edges.push({ from: origin.id, to: hop.id, kind: 'direct' });
+      const onward = onwardOf.get(hop.id) ?? [];
+      for (const hop2 of onward.slice(0, GRAPH_TRANSITIVE_PER_DIRECT)) {
+        const kind = reached.get(hop2.id) ?? 'transitive';
+        nodes.push({ id: hop2.id, identityId: hop2.id, label: hop2.name, kind });
+        edges.push({ from: hop.id, to: hop2.id, kind });
       }
     }
 
-    const summary = {
-      direct: nodes.filter((n) => n.kind === 'direct').length,
-      transitive: nodes.filter((n) => n.kind === 'transitive').length,
-      cascade: nodes.filter((n) => n.kind === 'cascade').length,
-    };
     const totalReach = summary.direct + summary.transitive + summary.cascade;
     return {
       originIdentityId: origin.id,
       nodes,
       edges,
       summary,
+      graph: { drawn: nodes.length - 1, total: totalReach },
       // ASSUMPTION: estimated containment is a Resilience-owned display value.
-      estimatedContainment: `~${Math.max(4, Math.round(totalReach * 1.5 + 4))} min`,
+      estimatedContainment: containmentLabel(Math.max(4, Math.round(totalReach * 1.5 + 4))),
     };
   });
 }
@@ -993,6 +1077,11 @@ function emailOf(raw: string): { email: string; domain: string } {
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/** An identity's display name for audit detail — never its raw id. */
+function identityLabel(identityId: string): string {
+  return getDataset().identityById.get(identityId)?.name ?? identityId;
 }
 
 /** Append an immutable audit entry attributed to the current actor. */

@@ -67,10 +67,19 @@ export function RadialGraph({
   nodes,
   edges,
   visibleKinds,
+  onSelect,
+  reachTotal,
 }: {
   nodes: ReachNode[];
   edges: ReachEdge[];
   visibleKinds: Set<ReachKind>;
+  /** Open a reached node. Nodes become buttons when provided, static marks otherwise. */
+  onSelect?: (node: ReachNode) => void;
+  /**
+   * Size of the full reachable set, when the drawn nodes are only part of it. Without
+   * it the accessible description would present the capped subset as the whole reach.
+   */
+  reachTotal?: number;
 }) {
   const [active, setActive] = useState<string | null>(null);
   const placed = useMemo(() => layout(nodes, edges), [nodes, edges]);
@@ -80,13 +89,21 @@ export function RadialGraph({
     return n ? visibleKinds.has(n.kind) : false;
   };
 
-  const summary = `Reachability graph: ${nodes.filter((n) => n.kind === 'direct').length} direct, ${nodes.filter((n) => n.kind === 'transitive').length} transitive, ${nodes.filter((n) => n.kind === 'cascade').length} cascade nodes reachable from the origin.`;
+  const drawn = nodes.filter((n) => n.kind !== 'origin').length;
+  const byKind = (kind: ReachKind) => nodes.filter((n) => n.kind === kind).length;
+  const breakdown = `${byKind('direct')} direct, ${byKind('transitive')} transitive, ${byKind('cascade')} cascade`;
+  const summary =
+    reachTotal !== undefined && reachTotal > drawn
+      ? `Reachability graph, showing ${drawn} of ${reachTotal} reachable identities: ${breakdown} drawn from the origin.`
+      : `Reachability graph: ${breakdown} nodes reachable from the origin.`;
 
   return (
+    // role="group", not role="img": an img role makes its subtree presentational, which
+    // would silence every node's label while the nodes stay in the tab order.
     <svg
       viewBox={`0 0 ${W} ${H}`}
       className="h-auto w-full"
-      role="img"
+      role="group"
       aria-label={summary}
     >
       {/* guide rings */}
@@ -119,18 +136,35 @@ export function RadialGraph({
         if (!visibleKinds.has(n.kind)) return null;
         const r = n.kind === 'origin' ? 11 : n.kind === 'direct' ? 7 : 5.5;
         const isActive = active === n.id;
+        // The origin is where you already are, so only reached nodes are actionable.
+        const actionable = !!onSelect && n.kind !== 'origin';
         return (
           <g
             key={n.id}
             transform={`translate(${n.x},${n.y})`}
             tabIndex={0}
-            role="img"
-            aria-label={`${KIND_LABEL[n.kind]}: ${n.label}`}
+            role={actionable ? 'button' : 'img'}
+            aria-label={
+              actionable
+                ? `${KIND_LABEL[n.kind]}: ${n.label} — open identity`
+                : `${KIND_LABEL[n.kind]}: ${n.label}`
+            }
             onMouseEnter={() => setActive(n.id)}
             onMouseLeave={() => setActive(null)}
             onFocus={() => setActive(n.id)}
             onBlur={() => setActive(null)}
-            className="cursor-default"
+            onClick={actionable ? () => onSelect?.(n) : undefined}
+            onKeyDown={
+              actionable
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelect?.(n);
+                    }
+                  }
+                : undefined
+            }
+            className={actionable ? 'cursor-pointer' : 'cursor-default'}
           >
             <circle
               r={isActive ? r + 2 : r}
