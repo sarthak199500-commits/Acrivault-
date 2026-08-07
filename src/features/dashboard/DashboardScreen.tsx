@@ -259,27 +259,22 @@ function ActivityCard({ data }: { data: OverviewData }) {
         description={`Identities discovered and alerts raised over the last 14 days${range}.`}
       />
       <CardBody className="flex flex-1 flex-col">
-        {/* Visible legend for sighted users — the alert series is the risk colour. */}
-        <div className="mb-1 flex items-center gap-4 text-[length:var(--fs-micro)] text-text-secondary">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2.5 rounded-[2px] bg-accent" aria-hidden="true" />
-            Discovered
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3.5 rounded-full bg-[var(--warning)]" aria-hidden="true" />
-            Alerts
-          </span>
-        </div>
         {/*
-          h-[260px] is a definite height on purpose. Recharts' ResponsiveContainer is
+          No legend row here. Each panel now carries its own series name above its
+          plot, which is strictly better than a shared key above both: the label sits
+          beside the line it names, and it is what tells the two stacked y axes apart.
+          A legend as well would be the same information twice.
+
+          h-[280px] is a definite height on purpose. Recharts' ResponsiveContainer is
           height:100%, which collapses to 0 against an auto-height parent — `flex-1`
           alone only works while this card is a stretched grid item. Keeping an
-          explicit height means the chart survives a layout change.
+          explicit height means the chart survives a layout change. It absorbs the
+          two panel labels and the rule between them that replaced the legend.
         */}
         <div
           role="img"
           aria-label="Area chart of identities discovered and alerts raised over the last 14 days."
-          className="h-[260px] flex-1"
+          className="h-[280px] flex-1"
         >
           <ActivityChart data={data.activity} />
         </div>
