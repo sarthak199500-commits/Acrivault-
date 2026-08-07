@@ -32,8 +32,17 @@ const SEED = 20260101;
 const DEFAULT_SIZE = 1500;
 const MAX_SIZE = 50000;
 
-// A fixed "now" so relative times and the dataset stay deterministic across runs.
-export const NOW = new Date('2026-06-25T12:00:00.000Z');
+/**
+ * "Now" for the synthetic dataset, anchored to the top of the current hour.
+ *
+ * SEED — not this value — is what keeps the data deterministic: ids, names, types,
+ * risk scores and relationships are identical across runs. Only timestamps move,
+ * and they have to: relative times and the Monitor feed's recency buckets are read
+ * against the real clock, so a pinned date silently rots. Once it drifts a month,
+ * every alert reads "last month", the Today / Earlier-this-week buckets stop
+ * rendering, and a live alert feed looks abandoned.
+ */
+export const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
 
 function resolveSize(): number {
   let size = DEFAULT_SIZE;

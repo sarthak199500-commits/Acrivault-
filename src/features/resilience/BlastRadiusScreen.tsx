@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { GitBranch, Timer } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, GitBranch, ShieldHalf, Timer, Workflow } from 'lucide-react';
 import { useBlastOrigins, useBlastRadius } from './queries';
 import type { ReachKind } from '@/components/charts/RadialGraph';
 import { RadialGraph, KIND_COLOR, KIND_LABEL } from '@/components/charts/RadialGraph';
@@ -29,8 +29,43 @@ function ReachStat({ kind, value }: { kind: ReachKind; value: number }) {
   );
 }
 
+/**
+ * The two Wave-2 concepts the FRS links from this screen. Both are surfaces only —
+ * neither runs anything in Wave 1, so each carries its Concept badge here as well.
+ */
+function RelatedActions() {
+  const actions = [
+    { to: '/resilience/rehearsals', label: 'Rehearse recovery', icon: ShieldHalf },
+    { to: '/resilience/copilot', label: 'Ask Copilot', icon: Workflow },
+  ];
+  return (
+    <Card>
+      <CardHeader title="Related actions" />
+      <CardBody className="space-y-2 pt-0">
+        {actions.map(({ to, label, icon: Icon }) => (
+          <Link
+            key={to}
+            to={to}
+            className="flex items-center justify-between gap-2 rounded-[var(--r-md)] border border-border bg-surface-2 px-3 py-2 hover:border-border-strong"
+          >
+            <span className="inline-flex items-center gap-2 text-[length:var(--fs-small)] text-accent-text">
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {label}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Badge tone="neutral">Concept</Badge>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
+            </span>
+          </Link>
+        ))}
+      </CardBody>
+    </Card>
+  );
+}
+
 export function BlastRadiusScreen() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const originParam = searchParams.get('origin');
   const origins = useBlastOrigins();
   const [originId, setOriginId] = useState<string>(originParam ?? '');
@@ -41,7 +76,8 @@ export function BlastRadiusScreen() {
     if (originParam) setOriginId(originParam);
   }, [originParam]);
 
-  // Auto-select the highest-risk origin once the list loads (nice populated default).
+  // Auto-select the first origin once the list loads. The list is ordered by reach,
+  // so the default opens on a graph worth looking at rather than a near-empty one.
   useEffect(() => {
     if (!originId && origins.data && origins.data.length > 0) setOriginId(origins.data[0].id);
   }, [origins.data, originId]);
@@ -49,7 +85,10 @@ export function BlastRadiusScreen() {
   const radius = useBlastRadius(originId || undefined);
 
   const originOptions = useMemo(() => {
-    const opts = (origins.data ?? []).map((o) => ({ value: o.id, label: `${o.name}  ·  risk ${o.riskScore}` }));
+    const opts = (origins.data ?? []).map((o) => ({
+      value: o.id,
+      label: `${o.name}  ·  risk ${o.riskScore}  ·  ${o.reach} direct`,
+    }));
     // A deep-linked origin may sit outside the top-N picker list; surface it (with its
     // resolved name once the radius loads) so the Select shows a label, not a blank.
     if (originId && !opts.some((o) => o.value === originId)) {
@@ -138,13 +177,24 @@ export function BlastRadiusScreen() {
                     }
                   />
                   <CardBody>
-                    <RadialGraph nodes={data.nodes} edges={data.edges} visibleKinds={visible} />
-                    {/* Accessible text alternative for the graph. */}
-                    <ul className="sr-only">
-                      {data.nodes.map((n) => (
-                        <li key={n.id}>{KIND_LABEL[n.kind]}: {n.label}</li>
-                      ))}
-                    </ul>
+                    <RadialGraph
+                      nodes={data.nodes}
+                      edges={data.edges}
+                      visibleKinds={visible}
+                      onSelect={(n) => navigate(`/discover/${n.identityId}`)}
+                      reachTotal={data.graph.total}
+                    />
+                    {data.graph.drawn < data.graph.total ? (
+                      <p className="mt-2 text-[length:var(--fs-micro)] text-text-tertiary">
+                        Graph shows {count(data.graph.drawn)} of {count(data.graph.total)} reachable
+                        identities — capped so the paths stay readable. The reach summary counts all{' '}
+                        {count(data.graph.total)}.
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-[length:var(--fs-micro)] text-text-tertiary">
+                        Showing the complete reachable set. Select any node to open that identity.
+                      </p>
+                    )}
                   </CardBody>
                 </Card>
 
@@ -170,6 +220,8 @@ export function BlastRadiusScreen() {
                       {pluralize(data.summary.cascade, 'identity', 'identities')} {data.summary.cascade === 1 ? 'sits' : 'sit'} on a cascade path — compromising the origin could force {data.summary.cascade === 1 ? 'its' : 'their'} revocation or reissue.
                     </Banner>
                   )}
+
+                  <RelatedActions />
                 </div>
               </div>
             );

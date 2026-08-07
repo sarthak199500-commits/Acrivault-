@@ -197,10 +197,31 @@ export interface ReachEdge {
 }
 export interface BlastRadius {
   originIdentityId: string;
+  /** The drawn subset of the reachable set — capped for legibility, see `graph`. */
   nodes: ReachNode[];
   edges: ReachEdge[];
+  /** True reach, counted over the whole walk — never the drawn subset. */
   summary: { direct: number; transitive: number; cascade: number };
+  /** How much of the reachable set the graph draws, so the cap is never silent. */
+  graph: { drawn: number; total: number };
   estimatedContainment: string; // display string, e.g. "~12 min" // ASSUMPTION: Resilience-owned
+}
+
+/**
+ * Tenant-wide monitoring baseline. Anomaly detection is only at full strength once
+ * an identity's behavioural baseline is established, and the FRS requires the UI to
+ * say which state it is in rather than imply full coverage.
+ * // ASSUMPTION: baseline derivation + window length are Architect-owned; the UI
+ * // displays this value and never computes it.
+ */
+export interface MonitoringBaseline {
+  state: 'learning' | 'established';
+  /** Identities whose baseline is still forming. */
+  learning: number;
+  /** Identities under monitoring. */
+  monitored: number;
+  /** Length of the baseline window, in days. */
+  windowDays: number;
 }
 
 export interface AuditEntry {

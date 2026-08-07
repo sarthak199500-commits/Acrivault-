@@ -264,13 +264,23 @@ export function generateIdentities(seed: number, size: number, now: Date): Ident
   for (let i = 0; i < size; i++) {
     identities.push(makeIdentity(rng, i, now));
   }
-  // Second pass: wire a few relationships so Blast Radius has something to walk.
+  // Second pass: wire relationships so Blast Radius has something to walk.
+  //
+  // The distribution is deliberately long-tailed. Most identities touch a handful
+  // of others, but a few hubs — a shared CI key, a central orchestrator agent —
+  // reach far more. Blast Radius exists for exactly those: a uniformly thin graph
+  // never produces the high-reach identity whose scale the FRS asks us to make clear.
   const relRng = new Rng(seed ^ 0x9e3779b9);
+  const HUB_RATE = 0.02;
   for (const identity of identities) {
-    const links = relRng.weighted([0, 1, 2, 3, 5], [3, 4, 3, 2, 1]);
+    const links = relRng.bool(HUB_RATE)
+      ? relRng.int(14, 34)
+      : relRng.weighted([0, 1, 2, 3, 5], [3, 4, 3, 2, 1]);
+    const linked = new Set<string>([identity.id]);
     for (let i = 0; i < links; i++) {
       const other = identities[relRng.int(0, identities.length - 1)];
-      if (other.id === identity.id) continue;
+      if (linked.has(other.id)) continue;
+      linked.add(other.id);
       identity.relationships.push({
         identityId: other.id,
         kind: relRng.pick(['assumes', 'shares-credential', 'invokes', 'delegates-to']),

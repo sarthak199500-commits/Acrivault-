@@ -1,7 +1,7 @@
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import { CheckCheck, CircleCheck, Lightbulb } from 'lucide-react';
-import { useAlert, useAlertActions, useAlertIdentity } from './queries';
-import type { Alert } from '@/mocks/types';
+import { CheckCheck, CircleCheck, Lightbulb, Sparkles } from 'lucide-react';
+import { useAlert, useAlertActions, useAlertIdentity, useAlertSession } from './queries';
+import type { AlertWithIdentity } from '@/mocks/api';
 import { Drawer } from '@/components/ui/Drawer';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -14,16 +14,19 @@ import { SkeletonText, Skeleton } from '@/components/ui/Skeleton';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { useCan } from '@/components/ui/Can';
 import { riskBand } from '@/lib/risk';
-import { dateTime } from '@/lib/format';
+import { dateTime, pluralize } from '@/lib/format';
 import { toast } from '@/stores/toast';
 import { useUiStore } from '@/stores/ui';
 import { SEVERITY_TONE } from '@/lib/tones';
 
 
-function Body({ alert }: { alert: Alert }) {
+function Body({ alert }: { alert: AlertWithIdentity }) {
   const identityQuery = useAlertIdentity(alert.identityId);
   const identity = identityQuery.data;
   const band = identity ? riskBand(identity.riskScore) : null;
+  // FRS 3.7: alerts link to the identity and, for agents, the session replay.
+  const sessionQuery = useAlertSession(alert.identityId, identity?.type === 'ai-agent');
+  const session = sessionQuery.data;
 
   return (
     <div>
@@ -73,12 +76,38 @@ function Body({ alert }: { alert: Alert }) {
         ) : null}
       </section>
 
+      {identity?.type === 'ai-agent' && (
+        <section className="mb-5">
+          <h3 className="eyebrow mb-2">Agent session</h3>
+          {sessionQuery.isPending ? (
+            <SkeletonText lines={1} />
+          ) : session ? (
+            <Link
+              to={`/intelligence/${session.id}`}
+              className="flex items-center justify-between gap-3 rounded-[var(--r-md)] border border-border bg-surface-2 px-3 py-2.5 hover:border-border-strong"
+            >
+              <span className="inline-flex items-center gap-2 text-[length:var(--fs-small)] text-accent-text">
+                <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
+                Open session replay
+              </span>
+              <span className="tnum shrink-0 text-[length:var(--fs-small)] text-text-tertiary">
+                {pluralize(session.anomalyCount, 'anomalous step')}
+              </span>
+            </Link>
+          ) : (
+            <p className="text-[length:var(--fs-small)] text-text-tertiary">
+              No recorded session for this agent yet.
+            </p>
+          )}
+        </section>
+      )}
+
       <KeyValueList items={[{ label: 'Raised', value: dateTime(alert.createdAt) }, { label: 'Alert id', value: alert.id, mono: true }]} />
     </div>
   );
 }
 
-function Footer({ alert, onResolved }: { alert: Alert; onResolved: () => void }) {
+function Footer({ alert, onResolved }: { alert: AlertWithIdentity; onResolved: () => void }) {
   const { acknowledge, resolve } = useAlertActions();
   const canAck = useCan('alert.acknowledge');
   const canResolve = useCan('alert.resolve');
@@ -96,7 +125,11 @@ function Footer({ alert, onResolved }: { alert: Alert; onResolved: () => void })
           variant="secondary"
           leadingIcon={<CheckCheck className="h-4 w-4" />}
           loading={acknowledge.isPending}
-          onClick={() => acknowledge.mutate(alert.id, { onSuccess: () => toast('Alert acknowledged') })}
+          onClick={() =>
+            acknowledge.mutate(alert.id, {
+              onSuccess: () => toast('Alert acknowledged', { description: 'Recorded in the audit log.' }),
+            })
+          }
         >
           Acknowledge
         </Button>
@@ -105,7 +138,17 @@ function Footer({ alert, onResolved }: { alert: Alert; onResolved: () => void })
         <Button
           leadingIcon={<CircleCheck className="h-4 w-4" />}
           loading={resolve.isPending}
-          onClick={() => resolve.mutate(alert.id, { onSuccess: () => { toast('Alert resolved', { tone: 'success' }); onResolved(); } })}
+          onClick={() =>
+            resolve.mutate(alert.id, {
+              onSuccess: () => {
+                toast('Alert resolved', {
+                  tone: 'success',
+                  description: 'It leaves the active feed and is recorded in the audit log.',
+                });
+                onResolved();
+              },
+            })
+          }
         >
           Resolve
         </Button>
