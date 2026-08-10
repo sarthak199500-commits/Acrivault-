@@ -659,12 +659,16 @@ export function generateTenant(now: Date): Tenant {
 }
 
 // Seed users covering every role and every status, so the user list shows all
-// states out of the box. usr_1 (Alex Kim) is the signed-in actor / org owner.
+// states out of the box. usr_1 (Alex Kim) is the signed-in actor — a Tenant
+// Admin, so the default view exercises the admin surface without being the
+// protected Owner. usr_0 (Noor Haddad) is the tenant's single Tenant Owner,
+// seeded separately so the Owner-protection guard is demonstrable.
 // A second Tenant Admin (Dana) exists so rank-gating is demonstrable distinctly
 // from the never-act-on-self rule.
 export function generateUsers(now: Date): User[] {
   const base = { tenantId: TENANT_ID } as const;
   return [
+    { ...base, id: 'usr_0', name: 'Noor Haddad', email: 'noor.haddad@acme.com', role: 'tenant-owner', status: 'active', authMethod: 'sso', lastLogin: iso(now, 6 * HOUR) },
     { ...base, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 2 * HOUR) },
     { ...base, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 1 * DAY) },
     { ...base, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 5 * HOUR) },

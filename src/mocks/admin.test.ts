@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   acceptInvite,
   activateUser,
+  addUser,
   createPassword,
   deleteUser,
+  editUser,
   getDomainChallenge,
-  inviteUser,
   listAudit,
   listUsers,
   login,
@@ -109,9 +110,10 @@ describe('password recovery', () => {
 
     await createPassword('Owner@NewCo-SignIn.com', 'Vault-Keeper9!');
 
-    // Case-insensitive, and surfaced as the Tenant Admin of their own tenant.
+    // Case-insensitive, and surfaced as the Tenant Owner of their own tenant —
+    // the first user created at tenant creation owns it (spec §2).
     await expect(login('owner@newco-signin.com', 'Vault-Keeper9!')).resolves.toMatchObject({
-      user: { email: 'owner@newco-signin.com', role: 'tenant-admin', status: 'active' },
+      user: { email: 'owner@newco-signin.com', role: 'tenant-owner', status: 'active' },
     });
   });
 
@@ -123,19 +125,19 @@ describe('password recovery', () => {
   });
 });
 
-describe('invitations', () => {
+describe('adding users', () => {
   it('rejects out-of-domain and duplicate emails', async () => {
     await expect(
-      inviteUser({ email: 'x@globex.com', role: 'analyst' }),
+      addUser({ email: 'x@globex.com', role: 'analyst' }),
     ).rejects.toMatchObject({ code: 'DOMAIN_MISMATCH' });
     await expect(
-      inviteUser({ email: 'jordan.rivera@acme.com', role: 'analyst' }),
+      addUser({ email: 'jordan.rivera@acme.com', role: 'analyst' }),
     ).rejects.toMatchObject({ code: 'DUPLICATE_USER' });
   });
 
   it('creates a pending user, writes audit, and reports email failure under scenario', async () => {
     const before = (await listUsers()).length;
-    const { user, emailFailed } = await inviteUser({
+    const { user, emailFailed } = await addUser({
       email: 'brand.new@acme.com',
       role: 'analyst',
     });
@@ -143,13 +145,13 @@ describe('invitations', () => {
     expect(emailFailed).toBe(false);
     expect((await listUsers()).length).toBe(before + 1);
     const audit = await listAudit();
-    expect(audit.some((a) => a.action === 'invited user' && a.target === 'brand.new@acme.com')).toBe(true);
+    expect(audit.some((a) => a.action === 'added user' && a.target === 'brand.new@acme.com')).toBe(true);
   });
 
-  it('only a tenant admin can invite: an analyst is forbidden even for a lower role', async () => {
+  it('only a tenant admin can add users: an analyst is forbidden even for a lower role', async () => {
     useUiStore.getState().setRole('analyst');
     await expect(
-      inviteUser({ email: 'someone@acme.com', role: 'viewer' }),
+      addUser({ email: 'someone@acme.com', role: 'viewer' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
@@ -188,6 +190,24 @@ describe('lifecycle and rank gating', () => {
     // …but usr_1 (the acting Tenant Admin) is now the last active one.
     await expect(suspendUser('usr_1')).rejects.toMatchObject({ code: 'LAST_TENANT_ADMIN' });
     await expect(deleteUser('usr_1')).rejects.toMatchObject({ code: 'LAST_TENANT_ADMIN' });
+  });
+
+  it('a tenant admin cannot act on the tenant owner at all', async () => {
+    // usr_0 is the seeded Tenant Owner; the acting role is Tenant Admin.
+    await expect(suspendUser('usr_0')).rejects.toMatchObject({ code: 'RANK_VIOLATION' });
+    await expect(deleteUser('usr_0')).rejects.toMatchObject({ code: 'RANK_VIOLATION' });
+    await expect(editUser('usr_0', { role: 'analyst' })).rejects.toMatchObject({
+      code: 'RANK_VIOLATION',
+    });
+  });
+
+  it('even the tenant owner cannot suspend, remove, or demote the owner', async () => {
+    useUiStore.getState().setRole('tenant-owner');
+    await expect(suspendUser('usr_0')).rejects.toMatchObject({ code: 'TENANT_OWNER_PROTECTED' });
+    await expect(deleteUser('usr_0')).rejects.toMatchObject({ code: 'TENANT_OWNER_PROTECTED' });
+    await expect(editUser('usr_0', { role: 'tenant-admin' })).rejects.toMatchObject({
+      code: 'TENANT_OWNER_PROTECTED',
+    });
   });
 
   it('deleting a user removes them from the list but keeps their audit entries', async () => {

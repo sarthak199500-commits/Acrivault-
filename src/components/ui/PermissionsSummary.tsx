@@ -5,13 +5,15 @@ import { can, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions'
 // so the summary stays truthful if the matrix changes.
 const DESCRIBED: { cap: Capability; phrase: string }[] = [
   { cap: 'view', phrase: 'View the dashboard, inventory, and audit log' },
+  { cap: 'audit.export', phrase: 'Export the audit log' },
   { cap: 'investigate', phrase: 'Investigate identities and agent sessions' },
   { cap: 'alert.resolve', phrase: 'Acknowledge and resolve alerts' },
   { cap: 'policy.create', phrase: 'Author and test policies' },
   { cap: 'policy.activate', phrase: 'Activate policies' },
+  { cap: 'rotate.request', phrase: 'Recommend a credential rotation' },
   { cap: 'rotate.emergency', phrase: 'Run emergency credential rotation' },
   { cap: 'session.quarantine', phrase: 'Quarantine agent sessions' },
-  { cap: 'users.invite', phrase: 'Invite teammates' },
+  { cap: 'users.add', phrase: 'Add teammates' },
   { cap: 'users.delete', phrase: 'Suspend and remove users' },
   { cap: 'sso.manage', phrase: 'Configure sign-in & SSO' },
   { cap: 'tenant.manage', phrase: 'Manage organization settings' },

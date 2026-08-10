@@ -88,9 +88,11 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: 'acrivault.ui',
-      // Bumped when the role model changed: 'admin' became 'security-admin' and
-      // Tenant Admin was added on top. Migrate any persisted legacy role.
-      version: 2,
+      // Bumped when the role model changed: v2 renamed 'admin' to 'security-admin'
+      // and added Tenant Admin on top; v3 added Tenant Owner above that. No v3
+      // value rewrite is needed — every persisted role stayed valid — but the
+      // bump re-runs the unknown-role guard below.
+      version: 3,
       migrate: (persisted, version) => {
         const state = { ...((persisted ?? {}) as Record<string, unknown>) };
         if (version < 2 && state.role === 'admin') {

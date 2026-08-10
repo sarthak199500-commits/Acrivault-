@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, ArrowRight, Info, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Info, UserPlus } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -18,11 +18,16 @@ import { PERSONAL_DOMAINS, domainOf } from '@/mocks/api';
 import { useUiStore } from '@/stores/ui';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
-import { useInviteUser, useResendInvite, useTenant, useUsers } from './queries';
+import { useAddUser, useResendInvite, useTenant, useUsers } from './queries';
 
 type Step = 'form' | 'review';
 
-export function InviteUserDialog({
+/**
+ * Add a teammate to the tenant. The admin-facing action is "add"; the person
+ * added still receives an invitation email carrying their setup link, which is
+ * why the invitation wording survives on the artifact (not on the action).
+ */
+export function AddUserDialog({
   open,
   onOpenChange,
 }: {
@@ -33,7 +38,7 @@ export function InviteUserDialog({
   const assignable = assignableRoles(actorRole);
   const users = useUsers();
   const tenant = useTenant();
-  const invite = useInviteUser();
+  const add = useAddUser();
   const resend = useResendInvite();
 
   const allowedDomains = useMemo(() => tenant.data?.allowedDomains ?? [], [tenant.data]);
@@ -106,11 +111,11 @@ export function InviteUserDialog({
     ? `SSO via ${SSO_PROVIDER_LABELS[provider]}`
     : 'Email + Password (fallback) — MFA enrollment required';
 
-  const send = async () => {
+  const submit = async () => {
     setSendBanner(null);
     const email = values.email.trim().toLowerCase();
     try {
-      const res = await invite.mutateAsync({
+      const res = await add.mutateAsync({
         email,
         role,
         validity,
@@ -118,10 +123,13 @@ export function InviteUserDialog({
       if (res.emailFailed) {
         setSendBanner({
           tone: 'warning',
-          msg: 'User created successfully, but we could not send the invitation email. Please try resending the invite from the user list.',
+          msg: 'User added, but we could not send the invitation email. Please resend it from the user list.',
         });
       } else {
-        toast(`Invitation sent to ${email}!`, { tone: 'success' });
+        toast(`${email} added`, {
+          tone: 'success',
+          description: 'Invitation email sent with their setup link.',
+        });
         onOpenChange(false);
       }
     } catch (err) {
@@ -149,7 +157,7 @@ export function InviteUserDialog({
           Cancel
         </Button>
         <Button onClick={onReview} trailingIcon={<ArrowRight className="h-4 w-4" />}>
-          Review invitation
+          Review details
         </Button>
       </>
     ) : (
@@ -157,8 +165,8 @@ export function InviteUserDialog({
         <Button variant="ghost" onClick={() => setStep('form')} leadingIcon={<ArrowLeft className="h-4 w-4" />}>
           Back
         </Button>
-        <Button onClick={send} loading={invite.isPending} leadingIcon={<Send className="h-4 w-4" />}>
-          Send invitation
+        <Button onClick={submit} loading={add.isPending} leadingIcon={<UserPlus className="h-4 w-4" />}>
+          Add user
         </Button>
       </>
     );
@@ -168,11 +176,11 @@ export function InviteUserDialog({
       open={open}
       onOpenChange={onOpenChange}
       size="md"
-      title="Invite user"
+      title="Add user"
       description={
         step === 'form'
           ? 'Only email and role are required. Name and profile details come from your identity provider.'
-          : 'Review the invitation before sending.'
+          : 'Review the details before adding this user.'
       }
       footer={footer}
     >
@@ -194,7 +202,7 @@ export function InviteUserDialog({
           />
 
           {dupPending && (
-            <InlineAlert tone="warning" title="Already invited.">
+            <InlineAlert tone="warning" title="Already added.">
               {dupPending.email} has a pending invitation.{' '}
               <button
                 type="button"

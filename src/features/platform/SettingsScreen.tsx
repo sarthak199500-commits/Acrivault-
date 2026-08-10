@@ -48,7 +48,7 @@ function UsersCard() {
     <Card>
       <CardHeader
         title="Users"
-        description="Invite teammates, assign roles, and manage access."
+        description="Add teammates, assign roles, and manage access."
         action={
           <Link to="/settings/users" className={buttonClasses('secondary', 'sm')}>
             Manage users
