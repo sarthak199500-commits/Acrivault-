@@ -368,12 +368,16 @@ export function assignOwner(identityId: string, owner: string): Promise<Identity
 /* --------------------------------------------------------------------- alerts */
 
 /** Alert joined with its identity's display name (raw ids are not UI labels). */
-export type AlertWithIdentity = Alert & { identityName: string };
+export type AlertWithIdentity = Alert & { identityName: string; identityType: NhiType };
 
 function withAlertIdentityName(alert: Alert): AlertWithIdentity {
+  const identity = getDataset().identityById.get(alert.identityId);
   return {
     ...alert,
-    identityName: getDataset().identityById.get(alert.identityId)?.name ?? alert.identityId,
+    identityName: identity?.name ?? alert.identityId,
+    // The feed marks each alert with its identity's type glyph — AI agents lead the
+    // product, so an agent alert should be recognisable without opening it.
+    identityType: identity?.type ?? 'service-account',
   };
 }
 
