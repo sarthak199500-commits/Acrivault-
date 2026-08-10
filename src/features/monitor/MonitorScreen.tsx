@@ -1,18 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import {
-  Activity,
-  AlertCircle,
-  AlertOctagon,
-  AlertTriangle,
-  BellOff,
-  ChevronRight,
-  Circle,
-  CircleCheck,
-  Info,
-  Radar,
-  type LucideIcon,
-} from 'lucide-react';
+import { Activity, BellOff, ChevronRight, CircleCheck, Radar } from 'lucide-react';
 import { useAlerts, useMonitoringBaseline } from './queries';
 import type { AlertWithIdentity } from '@/mocks/api';
 import type { MonitoringBaseline, RiskBand } from '@/mocks/types';
@@ -20,22 +8,15 @@ import { bucketByTime, splitAcknowledged } from './alertGrouping';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
 import { FilterPill } from '@/components/ui/FilterPill';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { count, pluralize, relativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { SEVERITY_TONE } from '@/lib/tones';
+import { SEVERITY_FG } from '@/lib/tones';
 
-// Shape (icon), not hue alone, distinguishes severity — colourblind safe.
-const SEVERITY_ICON: Record<RiskBand, LucideIcon> = {
-  critical: AlertOctagon,
-  high: AlertTriangle,
-  medium: AlertCircle,
-  low: Info,
-  minimal: Circle,
-};
 const SEVERITY_ORDER: RiskBand[] = ['critical', 'high', 'medium', 'low'];
 
 /**
@@ -117,56 +98,62 @@ function BaselineStrip({
 }
 
 /**
- * Severity | content | time, on a fixed first column.
+ * Two lines: what happened, then who and when.
  *
- * The badge used to sit in the flow, and badge width tracks the word — "Critical" runs
- * wider than "High" — so each row started its title at a different x and the feed read
- * as two ragged left edges. Pinning the column width lets the badge keep its natural
- * size while every title, description and identity name shares one edge.
+ * This carries exactly the four things FRS 3.7 asks the feed to show — severity,
+ * identity, type of anomaly (the title), and time. The alert's description is detail,
+ * not feed data, so it lives in the drawer; on a row it repeated across alerts drawn
+ * from the same template and made distinct alerts look like duplicates.
+ *
+ * Severity leads the meta line as letter-spaced caps rather than a pill. A pill's width
+ * tracks its word — "Critical" runs wider than "High" — so in the flow it shifted every
+ * following element and the feed read as a ragged left edge.
  */
-const ROW_GRID = 'grid-cols-[5.75rem_minmax(0,1fr)_auto]';
-
 function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => void }) {
-  const SevIcon = SEVERITY_ICON[alert.severity];
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={cn(
-        'relative grid w-full items-baseline gap-x-3 border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-surface-hover',
-        ROW_GRID,
-      )}
+      className="group relative flex w-full items-start gap-3 border-b border-border py-3 pl-4 pr-3 text-left last:border-b-0 hover:bg-surface-hover"
     >
-      {/* Severity mark, centred on the row. As an edge-to-edge left border this ran
-          unbroken from row to row, so adjacent bands — medium #d6a93c above high #e8913d —
-          blended into one continuous stripe instead of reading as one mark per alert.
-          The height is a balance: long enough to register as a rail, short enough to
-          leave a clear gap above and below it. */}
+      {/* Severity mark. As an edge-to-edge left border this ran unbroken from row to
+          row, so adjacent bands — medium #d6a93c above high #e8913d — blended into one
+          continuous stripe instead of reading as one mark per alert. Spanning the text
+          block keeps it tied to its own row. */}
       <span
         aria-hidden="true"
-        className="absolute left-0 top-1/2 h-10 w-[3px] -translate-y-1/2 rounded-full"
+        className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
         style={{ backgroundColor: `var(--risk-${alert.severity})` }}
       />
-      <Badge
-        tone={SEVERITY_TONE[alert.severity]}
-        icon={<SevIcon className="h-3 w-3" />}
-        className="capitalize"
-      >
-        {alert.severity}
-      </Badge>
-      <div className="min-w-0">
+
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-text">{alert.title}</span>
           {alert.baseline === 'learning' && (
             <Badge tone="neutral" className="shrink-0">learning</Badge>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[length:var(--fs-small)] text-text-secondary">{alert.description}</p>
-        <p className="mt-0.5 font-mono text-[length:var(--fs-micro)] text-text-tertiary">{alert.identityName}</p>
+
+        <div className="mt-1 flex min-w-0 items-center gap-2 text-[length:var(--fs-micro)] text-text-tertiary">
+          {/* SEVERITY_FG, not --risk-*: the risk hues are fills, tuned for spines and
+              dots. As text on the row they clear AA at rest but critical falls to
+              3.6:1 against --surface-hover, so hovering a row would drop its own label
+              below contrast. These foregrounds are tuned for that. */}
+          <span className={cn('shrink-0 font-semibold uppercase tracking-[0.12em]', SEVERITY_FG[alert.severity])}>
+            {alert.severity}
+          </span>
+          <span aria-hidden="true">·</span>
+          <NhiTypeIcon type={alert.identityType} className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-mono">{alert.identityName}</span>
+          <span aria-hidden="true">·</span>
+          <span className="tnum whitespace-nowrap">{relativeTime(alert.createdAt)}</span>
+        </div>
       </div>
-      <span className="tnum whitespace-nowrap text-[length:var(--fs-small)] text-text-tertiary">
-        {relativeTime(alert.createdAt)}
-      </span>
+
+      <ChevronRight
+        className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary group-hover:text-text-secondary"
+        aria-hidden="true"
+      />
     </button>
   );
 }
