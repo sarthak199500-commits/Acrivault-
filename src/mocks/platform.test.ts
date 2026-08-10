@@ -48,4 +48,36 @@ describe('platform', () => {
     const filtered = await listAudit('system');
     expect(filtered.every((e) => e.actor.includes('system') || e.action.includes('system'))).toBe(true);
   });
+
+  // An append-only trail is evidence (FRS §3.10): time may not appear to move
+  // backwards. Live entries are unshifted onto the front, so the seeded tail has
+  // to already read newest-first for the whole log to.
+  it('the audit log reads newest-first', async () => {
+    const rows = await listAudit();
+    expect(rows.length).toBeGreaterThan(1);
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i - 1].at >= rows[i].at).toBe(true);
+    }
+  });
+
+  // Seeded rows sit next to rows the user just generated, and the live paths
+  // write human labels (identity/policy names, emails) — an internal id in the
+  // Target column marks a row as fake.
+  it('audit targets are human labels, never internal ids', async () => {
+    const rows = await listAudit();
+    expect(rows.length).toBeGreaterThan(0);
+    const withIdTargets = rows.filter((e) => /^(idn|usr|pol|alr|ses|rot)_/.test(e.target));
+    expect(withIdTargets).toEqual([]);
+  });
+
+  it('audit targets suit the action they record', async () => {
+    const rows = await listAudit();
+    const roleChanges = rows.filter((e) => e.action === 'changed user role');
+    expect(roleChanges.length).toBeGreaterThan(0);
+    expect(roleChanges.every((e) => e.target.includes('@'))).toBe(true);
+
+    const ssoEdits = rows.filter((e) => e.action === 'updated SSO config');
+    expect(ssoEdits.length).toBeGreaterThan(0);
+    expect(ssoEdits.every((e) => e.target.includes('SSO') && !e.target.includes('@'))).toBe(true);
+  });
 });

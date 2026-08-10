@@ -4,7 +4,9 @@
 
 import {
   CLOUDS,
+  CLOUD_LABELS,
   NHI_TYPES,
+  SSO_PROVIDER_LABELS,
   type AgentSession,
   type Alert,
   type AttributeConflict,
@@ -531,22 +533,60 @@ export function generateRotations(
 
 /* ------------------------------------------ audit, notifications, etc. */
 
-export function generateAudit(seed: number, now: Date): AuditEntry[] {
+export function generateAudit(
+  identities: Identity[],
+  policies: Policy[],
+  users: User[],
+  tenant: Tenant,
+  seed: number,
+  now: Date,
+): AuditEntry[] {
   const rng = new Rng(seed ^ 0xa0d17);
-  const actions = [
-    'acknowledged alert', 'resolved alert', 'activated policy', 'requested rotation',
-    'executed emergency rotation', 'marked session reviewed', 'quarantined session',
-    'connected cloud', 'updated SSO config', 'changed user role',
-  ];
   const actors = ['alex.kim@acme.test', 'jordan.r@acme.test', 'sam.lee@acme.test', 'system'];
-  return Array.from({ length: 60 }, (_, i) => ({
-    id: `aud_${i.toString(36).padStart(4, '0')}`,
-    at: new Date(now.getTime() - i * rng.int(1, 6) * 3600000).toISOString(),
-    actor: rng.pick(actors),
-    action: rng.pick(actions),
-    target: `idn_${rng.int(0, 999).toString(36).padStart(6, '0')}`,
-    detail: rng.bool(0.4) ? 'Synthetic event for demonstration.' : undefined,
-  }));
+
+  // Sessions belong to AI agents, so a session entry names one — falling back to
+  // the wider population at scales too small to contain any agent.
+  const agents = identities.filter((i) => i.type === 'ai-agent');
+  const sessionSubjects = agents.length > 0 ? agents : identities;
+  const ssoTarget = `${tenant.name} — SSO (${SSO_PROVIDER_LABELS[tenant.sso.provider]})`;
+
+  // Each action names what it acted on in the vocabulary the live appendAudit
+  // paths use — an identity or policy name, a user's email, a cloud, the tenant —
+  // never an internal id. A seeded row and a row the user just generated have to
+  // be indistinguishable in kind, and an identity id is meaningless against a
+  // role change or an SSO edit in any case.
+  const actions: ReadonlyArray<[string, () => string]> = [
+    ['acknowledged alert', () => rng.pick(identities).name],
+    ['resolved alert', () => rng.pick(identities).name],
+    ['activated policy', () => rng.pick(policies).name],
+    ['requested rotation', () => rng.pick(identities).name],
+    ['executed emergency rotation', () => rng.pick(identities).name],
+    ['marked session reviewed', () => rng.pick(sessionSubjects).name],
+    ['quarantined session', () => rng.pick(sessionSubjects).name],
+    ['connected cloud', () => CLOUD_LABELS[rng.pick(CLOUDS)]],
+    ['updated SSO config', () => ssoTarget],
+    ['changed user role', () => rng.pick(users).email],
+  ];
+
+  // Strictly descending in time. The log is append-only, tamper-evident evidence
+  // (FRS §3.10) and live entries are unshifted onto the front, so the seeded tail
+  // has to already read newest-first. (Was `now - i * rng.int(1, 6) * HOUR`, which
+  // scaled a fresh random multiplier by i and so wandered forwards and backwards.)
+  let at = now.getTime() - rng.int(5, 55) * 60000;
+  const entries: AuditEntry[] = [];
+  for (let i = 0; i < 60; i++) {
+    const [action, target] = rng.pick(actions);
+    entries.push({
+      id: `aud_${i.toString(36).padStart(4, '0')}`,
+      at: new Date(at).toISOString(),
+      actor: rng.pick(actors),
+      action,
+      target: target(),
+      detail: rng.bool(0.4) ? 'Synthetic event for demonstration.' : undefined,
+    });
+    at -= rng.int(1, 6) * 3600000;
+  }
+  return entries;
 }
 
 export function generateNotifications(seed: number, now: Date): NotificationItem[] {
