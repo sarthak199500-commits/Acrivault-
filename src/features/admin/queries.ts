@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   activateUser,
+  addUser,
   deleteUser,
   editUser,
   getTenant,
-  inviteUser,
   listUsers,
   resendInvite,
   suspendUser,
-  type InvitePayload,
+  type AddUserPayload,
   type UserPatch,
 } from '@/mocks/api';
 
@@ -29,10 +29,10 @@ function useUserInvalidation() {
   };
 }
 
-export function useInviteUser() {
+export function useAddUser() {
   const invalidate = useUserInvalidation();
   return useMutation({
-    mutationFn: (payload: InvitePayload) => inviteUser(payload),
+    mutationFn: (payload: AddUserPayload) => addUser(payload),
     onSuccess: invalidate,
   });
 }

@@ -219,10 +219,18 @@ function DetailFooter({
   const canRotateStd = useCan('rotate.standard');
   const canRequest = useCan('rotate.request');
   const canQuarantine = useCan('session.quarantine');
+  // Recommend: an Analyst proposes the quarantine for an admin to carry out.
+  const canRecommendQuarantine = useCan('session.quarantineRecommend');
   const canGovern = useCan('policy.create');
   const showSessions = identity.type === 'ai-agent';
   const anyControl =
-    canRotateStd || canRequest || canQuarantine || canAssignOwner || canGovern || showSessions;
+    canRotateStd ||
+    canRequest ||
+    canQuarantine ||
+    canRecommendQuarantine ||
+    canAssignOwner ||
+    canGovern ||
+    showSessions;
   const rotate = useRequestRotations();
   const [confirmQuarantine, setConfirmQuarantine] = useState(false);
 
@@ -283,7 +291,7 @@ function DetailFooter({
           View sessions
         </Link>
       )}
-      {canQuarantine && (
+      {canQuarantine ? (
         <Button
           size="sm"
           variant="ghost"
@@ -293,17 +301,41 @@ function DetailFooter({
         >
           Quarantine
         </Button>
-      )}
+      ) : canRecommendQuarantine ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          leadingIcon={<ShieldX className="h-3.5 w-3.5" />}
+          onClick={() => setConfirmQuarantine(true)}
+        >
+          Recommend quarantine
+        </Button>
+      ) : null}
       <ConfirmDialog
         open={confirmQuarantine}
         onOpenChange={setConfirmQuarantine}
-        title={`Quarantine ${identity.name}?`}
-        description="The identity keeps existing but is blocked from acting until released. Synthetic — no upstream state changes."
-        confirmLabel="Quarantine"
-        confirmVariant="danger"
+        title={
+          canQuarantine
+            ? `Quarantine ${identity.name}?`
+            : `Recommend quarantining ${identity.name}?`
+        }
+        description={
+          canQuarantine
+            ? 'The identity keeps existing but is blocked from acting until released. Synthetic — no upstream state changes.'
+            : 'Your role can propose this but not carry it out. An admin reviews the recommendation and decides. Synthetic — no upstream state changes.'
+        }
+        confirmLabel={canQuarantine ? 'Quarantine' : 'Send recommendation'}
+        confirmVariant={canQuarantine ? 'danger' : 'primary'}
         onConfirm={() => {
           setConfirmQuarantine(false);
-          toast(`${identity.name} quarantined`, { tone: 'critical' });
+          if (canQuarantine) {
+            toast(`${identity.name} quarantined`, { tone: 'critical' });
+          } else {
+            toast(`Quarantine recommended for ${identity.name}`, {
+              tone: 'success',
+              description: 'Sent to an admin for approval.',
+            });
+          }
         }}
       />
     </div>
