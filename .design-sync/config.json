@@ -1,0 +1,139 @@
+{
+  "projectId": "d807f6b7-8b8b-4572-8c03-504bc66a58ba",
+  "shape": "package",
+  "pkg": "acrivault",
+  "globalName": "Acrivault",
+  "srcDir": "src/components",
+  "tsconfig": "tsconfig.app.json",
+  "buildCmd": "node .design-sync/gen-entry.mjs && npm run build && mkdir -p .design-sync/.cache && cp dist/assets/index-*.css .design-sync/.cache/compiled.css && cat .design-sync/theme-default.css >> .design-sync/.cache/compiled.css",
+  "cssEntry": ".design-sync/.cache/compiled.css",
+  "docsDir": ".design-sync/docs",
+  "overrides": {
+    "Dialog": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "760x520"
+    },
+    "ConfirmDialog": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "760x480"
+    },
+    "Drawer": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "900x600"
+    },
+    "CommandPalette": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "760x560"
+    },
+    "DropdownMenu": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "640x440"
+    },
+    "Popover": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "640x440"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "520x300"
+    },
+    "Toaster": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "640x400"
+    },
+    "ScrollableTable": {
+      "cardMode": "column"
+    },
+    "RoleSwitcher": {
+      "cardMode": "single",
+      "primaryStory": "InTopBar",
+      "viewport": "1120x300"
+    }
+  },
+  "extraFonts": [
+    ".design-sync/fonts/fonts.css"
+  ],
+  "componentSrcMap": {
+    "Accordion": "src/components/ui/Accordion.tsx",
+    "AuthCard": "src/components/ui/AuthCard.tsx",
+    "Avatar": "src/components/ui/Avatar.tsx",
+    "Badge": "src/components/ui/Badge.tsx",
+    "Banner": "src/components/ui/Banner.tsx",
+    "Breadcrumb": "src/components/ui/Breadcrumb.tsx",
+    "Button": "src/components/ui/Button.tsx",
+    "Can": "src/components/ui/Can.tsx",
+    "Card": "src/components/ui/Card.tsx",
+    "Checkbox": "src/components/ui/Checkbox.tsx",
+    "CloudGlyph": "src/components/ui/CloudGlyph.tsx",
+    "CodeBlock": "src/components/ui/CodeBlock.tsx",
+    "CodeInput": "src/components/ui/CodeInput.tsx",
+    "Combobox": "src/components/ui/Combobox.tsx",
+    "CommandPalette": "src/components/ui/CommandPalette.tsx",
+    "ConfirmDialog": "src/components/ui/ConfirmDialog.tsx",
+    "DensityToggle": "src/components/ui/DensityToggle.tsx",
+    "Dialog": "src/components/ui/Dialog.tsx",
+    "Drawer": "src/components/ui/Drawer.tsx",
+    "DropdownMenu": "src/components/ui/DropdownMenu.tsx",
+    "EmptyState": "src/components/ui/EmptyState.tsx",
+    "ErrorState": "src/components/ui/ErrorState.tsx",
+    "FilterMenu": "src/components/ui/FilterMenu.tsx",
+    "FilterPill": "src/components/ui/FilterPill.tsx",
+    "IconButton": "src/components/ui/IconButton.tsx",
+    "InlineAlert": "src/components/ui/InlineAlert.tsx",
+    "Input": "src/components/ui/Input.tsx",
+    "KeyValueList": "src/components/ui/KeyValueList.tsx",
+    "KpiTile": "src/components/ui/KpiTile.tsx",
+    "LegalConsent": "src/components/ui/LegalConsent.tsx",
+    "Logo": "src/components/ui/Logo.tsx",
+    "MfaChallenge": "src/components/ui/MfaChallenge.tsx",
+    "MfaEnroll": "src/components/ui/MfaEnroll.tsx",
+    "NhiTypeIcon": "src/components/ui/NhiTypeIcon.tsx",
+    "Pagination": "src/components/ui/Pagination.tsx",
+    "PermissionsSummary": "src/components/ui/PermissionsSummary.tsx",
+    "Popover": "src/components/ui/Popover.tsx",
+    "ProgressBar": "src/components/ui/ProgressBar.tsx",
+    "ProviderBadge": "src/components/ui/ProviderBadge.tsx",
+    "QueryBoundary": "src/components/ui/QueryBoundary.tsx",
+    "RadioGroup": "src/components/ui/RadioGroup.tsx",
+    "RegistrationProgress": "src/components/ui/RegistrationProgress.tsx",
+    "RiskPill": "src/components/ui/RiskPill.tsx",
+    "RoleRestricted": "src/components/ui/RoleRestricted.tsx",
+    "RoleSwitcher": "src/components/ui/RoleSwitcher.tsx",
+    "ScanProgress": "src/components/ui/ScanProgress.tsx",
+    "ScreenHeader": "src/components/ui/ScreenHeader.tsx",
+    "ScrollableTable": "src/components/ui/ScrollableTable.tsx",
+    "SegmentedControl": "src/components/ui/SegmentedControl.tsx",
+    "Select": "src/components/ui/Select.tsx",
+    "Skeleton": "src/components/ui/Skeleton.tsx",
+    "Slider": "src/components/ui/Slider.tsx",
+    "Sparkline": "src/components/ui/Sparkline.tsx",
+    "SsoButton": "src/components/ui/SsoButton.tsx",
+    "StatusBadge": "src/components/ui/StatusBadge.tsx",
+    "StatusDot": "src/components/ui/StatusDot.tsx",
+    "Stepper": "src/components/ui/Stepper.tsx",
+    "Switch": "src/components/ui/Switch.tsx",
+    "Tabs": "src/components/ui/Tabs.tsx",
+    "Tag": "src/components/ui/Tag.tsx",
+    "Textarea": "src/components/ui/Textarea.tsx",
+    "ThemeToggle": "src/components/ui/ThemeToggle.tsx",
+    "Timeline": "src/components/ui/Timeline.tsx",
+    "Toaster": "src/components/ui/Toaster.tsx",
+    "Tooltip": "src/components/ui/Tooltip.tsx",
+    "ValidityWindowField": "src/components/ui/ValidityWindowField.tsx",
+    "ActivityChart": "src/components/charts/ActivityChart.tsx",
+    "BarChart": "src/components/charts/BarChart.tsx",
+    "LineChart": "src/components/charts/LineChart.tsx",
+    "RadialGraph": "src/components/charts/RadialGraph.tsx"
+  },
+  "provider": {
+    "component": "DsPreviewProviders"
+  }
+}
