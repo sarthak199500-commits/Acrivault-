@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
@@ -19,5 +19,9 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    // Worktrees live under .claude/, and each holds a full checkout with its own
+    // tests. Without this, a run from the repo root collects every branch's suite
+    // at once and reports failures that belong to code not checked out here.
+    exclude: [...configDefaults.exclude, '.claude/**'],
   },
 });
