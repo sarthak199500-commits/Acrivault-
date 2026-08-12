@@ -261,6 +261,18 @@
 }
 
 /*
+ * Monitor's baseline radar. A full turn, so the reduced-motion overrides above land
+ * the wedge back at its start angle — a radar parked mid-scan, still legible as a
+ * radar. Deliberately slow: this runs for as long as a baseline is forming (days),
+ * not as long as a request is in flight.
+ */
+@keyframes acv-radar-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
  * Success mark (registration's verified beat): the ring settles, the check draws
  * itself, one halo ripples out and clears. Each animation runs FROM an offset
  * toward the element's resting CSS state — same rationale as drawer-in — so the
