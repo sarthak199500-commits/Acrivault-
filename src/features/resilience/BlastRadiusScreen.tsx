@@ -8,7 +8,7 @@ import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Banner } from '@/components/ui/Banner';
-import { Select } from '@/components/ui/Select';
+import { Combobox } from '@/components/ui/Combobox';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -67,8 +67,17 @@ export function BlastRadiusScreen() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const originParam = searchParams.get('origin');
-  const origins = useBlastOrigins();
+  const [typed, setTyped] = useState('');
+  const [query, setQuery] = useState('');
+  const origins = useBlastOrigins(query);
+
+  // Same 200ms as the inventory's search field: one request per pause, not per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(typed), 200);
+    return () => clearTimeout(t);
+  }, [typed]);
   const [originId, setOriginId] = useState<string>(originParam ?? '');
+  const [autoSelected, setAutoSelected] = useState(false);
   const [visible, setVisible] = useState<Set<ReachKind>>(new Set(['origin', 'direct', 'transitive', 'cascade']));
 
   // A deep link (?origin=…) from an identity's detail wins over the auto-selected default.
@@ -76,27 +85,33 @@ export function BlastRadiusScreen() {
     if (originParam) setOriginId(originParam);
   }, [originParam]);
 
-  // Auto-select the first origin once the list loads. The list is ordered by reach,
-  // so the default opens on a graph worth looking at rather than a near-empty one.
+  // Open on the widest-reaching identity so the screen lands on a graph worth reading.
+  // Flagged, because a graph nobody asked for looks like a finding unless it is labelled.
   useEffect(() => {
-    if (!originId && origins.data && origins.data.length > 0) setOriginId(origins.data[0].id);
+    const first = origins.data?.suggestions ? origins.data.origins[0] : undefined;
+    if (!originId && first) {
+      setOriginId(first.id);
+      setAutoSelected(true);
+    }
   }, [origins.data, originId]);
 
   const radius = useBlastRadius(originId || undefined);
+  const originName = radius.data?.nodes.find((n) => n.kind === 'origin')?.label;
 
-  const originOptions = useMemo(() => {
-    const opts = (origins.data ?? []).map((o) => ({
-      value: o.id,
-      label: `${o.name}  ·  risk ${o.riskScore}  ·  ${o.reach} direct`,
-    }));
-    // A deep-linked origin may sit outside the top-N picker list; surface it (with its
-    // resolved name once the radius loads) so the Select shows a label, not a blank.
-    if (originId && !opts.some((o) => o.value === originId)) {
-      const label = radius.data?.nodes.find((n) => n.kind === 'origin')?.label ?? originId;
-      return [{ value: originId, label }, ...opts];
-    }
-    return opts;
-  }, [origins.data, originId, radius.data]);
+  const originOptions = useMemo(
+    () =>
+      (origins.data?.origins ?? []).map((o) => ({
+        value: o.id,
+        label: o.name,
+        meta: o.reach > 0 ? `risk ${o.riskScore} · ${o.reach} direct` : 'no relationships to map',
+        // Listed so a near-miss explains itself; unselectable because there is no graph.
+        disabled: o.reach === 0,
+      })),
+    [origins.data],
+  );
+
+  const searchable = origins.data?.searchable ?? 0;
+  const showingSuggestions = origins.data?.suggestions ?? true;
 
   const toggleKind = (k: ReachKind) =>
     setVisible((prev) => {
@@ -116,16 +131,60 @@ export function BlastRadiusScreen() {
       />
 
       <div className="mb-4 max-w-md">
-        {origins.isPending ? (
+        {origins.isPending && !origins.data ? (
           <Skeleton className="h-9 w-full" />
         ) : (
-          <Select
+          <Combobox
             value={originId}
-            onValueChange={setOriginId}
+            onChange={(id: string) => {
+              setOriginId(id);
+              setAutoSelected(false);
+            }}
             options={originOptions}
+            onQueryChange={setTyped}
+            // Only while there is genuinely nothing to show. Previous results stay put
+            // during a refetch, so the list does not blank out on every keystroke.
+            loading={origins.isFetching && !!typed && originOptions.length === 0}
+            // The chosen origin is usually outside both the suggestions and any active
+            // search, so the trigger takes its name from the loaded graph instead.
+            selectedLabel={originName}
             ariaLabel="Origin identity"
-            placeholder="Pick an origin identity…"
+            placeholder="Choose an identity to analyse…"
+            searchPlaceholder={
+              searchable > 0 ? `Search ${count(searchable)} identities by name…` : 'Search identities by name…'
+            }
+            groupLabel={
+              showingSuggestions
+                ? 'Highest reach in your estate'
+                : pluralize(originOptions.length, 'match', 'matches')
+            }
+            emptyContent={
+              <span>
+                No identity matching that name. Check the spelling, or search the full inventory where you
+                can also filter by type, risk, and owner.
+              </span>
+            }
+            footer={
+              showingSuggestions ? (
+                <>
+                  <span>Showing the 40 widest-reaching</span>
+                  <Link to="/discover" className="text-accent-text hover:underline">
+                    Browse inventory →
+                  </Link>
+                </>
+              ) : (
+                <Link to="/discover" className="text-accent-text hover:underline">
+                  Filter by type, risk, and owner in the inventory →
+                </Link>
+              )
+            }
+            className="w-full"
           />
+        )}
+        {autoSelected && originId && (
+          <p className="mt-1.5 text-[length:var(--fs-micro)] text-text-tertiary">
+            Showing your widest-reaching identity. Search above, or pick another from the inventory.
+          </p>
         )}
       </div>
 

@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Activity, BellOff, ChevronRight, CircleCheck, Radar } from 'lucide-react';
+import { Activity, BellOff, ChevronRight, X } from 'lucide-react';
 import { useAlerts, useMonitoringBaseline } from './queries';
+import { BaselineStrip } from './BaselineStrip';
+import { useMonitorFilters } from './useMonitorFilters';
 import type { AlertWithIdentity } from '@/mocks/api';
-import type { MonitoringBaseline, RiskBand } from '@/mocks/types';
+import type { RiskBand } from '@/mocks/types';
 import { bucketByTime, splitAcknowledged } from './alertGrouping';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
@@ -13,89 +15,12 @@ import { FilterPill } from '@/components/ui/FilterPill';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
-import { count, pluralize, relativeTime } from '@/lib/format';
+import { pluralize, relativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { SEVERITY_FG } from '@/lib/tones';
 
 const SEVERITY_ORDER: RiskBand[] = ['critical', 'high', 'medium', 'low'];
 
-/**
- * Tenant baseline coverage (FRS 3.7: communicate 'learning' vs 'established' rather
- * than implying full coverage). Reports how many identities are still forming a
- * baseline — a single alert's own progress is per-alert and belongs in its detail,
- * not here, where it would read as a system-wide fact.
- */
-function BaselineStrip({
-  baseline,
-  failed,
-}: {
-  baseline: MonitoringBaseline | undefined;
-  failed: boolean;
-}) {
-  // Say the coverage is unknown rather than leave a placeholder that reads as loading.
-  // Implying an established baseline we cannot confirm is the one thing this strip
-  // exists to prevent.
-  if (failed) {
-    return (
-      <Card className="mb-4">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <Radar className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
-          <span className="text-[length:var(--fs-small)] text-text-secondary">
-            Baseline coverage unavailable — treat the alerts below as unqualified until it loads.
-          </span>
-        </div>
-      </Card>
-    );
-  }
-  if (!baseline) return <div className="mb-4 h-16 rounded-[var(--r-lg)] border border-border bg-surface" />;
-
-  if (baseline.state === 'established') {
-    return (
-      <Card className="mb-4">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <CircleCheck className="h-4 w-4 text-[var(--success)]" aria-hidden="true" />
-          <span className="text-[length:var(--fs-small)] text-text">
-            Baseline established — all {count(baseline.monitored)} monitored identities have a settled
-            baseline, so alerts reflect deviations from normal behavior.
-          </span>
-        </div>
-      </Card>
-    );
-  }
-
-  const settled = Math.max(0, baseline.monitored - baseline.learning);
-  const pct = baseline.monitored > 0 ? Math.round((settled / baseline.monitored) * 100) : 0;
-  return (
-    <Card className="mb-4">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <Radar className="h-4 w-4 text-warn-fg" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[length:var(--fs-small)] font-medium text-text">Baseline still learning</span>
-            <span className="tnum text-[length:var(--fs-small)] text-text-secondary">
-              {count(settled)} of {count(baseline.monitored)} established
-            </span>
-          </div>
-          <div
-            className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2"
-            role="progressbar"
-            aria-valuenow={pct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Identities with an established baseline"
-          >
-            <div className="h-full rounded-full bg-[var(--warning)]" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      </div>
-      <div className="border-t border-border px-4 py-2 text-[length:var(--fs-micro)] text-text-tertiary">
-        {pluralize(baseline.learning, 'identity', 'identities')}{' '}
-        {baseline.learning === 1 ? 'is' : 'are'} still forming a {baseline.windowDays}-day baseline. Alerts
-        raised on {baseline.learning === 1 ? 'it' : 'them'} are early signal, not yet a verdict.
-      </div>
-    </Card>
-  );
-}
 
 /**
  * Two lines: what happened, then who and when.
@@ -195,13 +120,20 @@ export function MonitorScreen() {
   const baseline = useMonitoringBaseline();
   const navigate = useNavigate();
   const location = useLocation();
-  const [severity, setSeverity] = useState<RiskBand | null>(null);
+  const { severity, setSeverity, learningOnly, showLearningOnly, clearLearningOnly } =
+    useMonitorFilters();
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     (query.data ?? []).forEach((a) => (c[a.severity] = (c[a.severity] ?? 0) + 1));
     return c;
   }, [query.data]);
+
+  // Alerts the baseline caveat actually applies to — the strip's link promises this count.
+  const learningCount = useMemo(
+    () => (query.data ?? []).filter((a) => a.baseline === 'learning').length,
+    [query.data],
+  );
 
   const openAlert = (a: AlertWithIdentity) =>
     navigate({ pathname: `/monitor/${a.id}`, search: location.search });
@@ -212,6 +144,19 @@ export function MonitorScreen() {
         eyebrow="Know · Monitor"
         title="Monitor"
         description="Behavioral alerts on your identities, with an honest view of how settled the baseline is."
+      />
+
+      {/* Outside the feed's boundary on purpose. An empty feed is exactly where coverage
+          matters most — "no open alerts" over partial coverage is not all-clear, it means
+          most of the estate is unobserved — and inside the boundary this never rendered
+          in the empty or error states. */}
+      <BaselineStrip
+        baseline={baseline.data}
+        loading={baseline.isPending}
+        failed={baseline.isError}
+        affectedAlerts={learningCount}
+        onShowAffected={showLearningOnly}
+        onRetry={() => void baseline.refetch()}
       />
 
       <QueryBoundary
@@ -234,15 +179,16 @@ export function MonitorScreen() {
         }
       >
         {(alerts) => {
-          const filtered = severity ? alerts.filter((a) => a.severity === severity) : alerts;
+          const bySeverity = severity ? alerts.filter((a) => a.severity === severity) : alerts;
+          const filtered = learningOnly
+            ? bySeverity.filter((a) => a.baseline === 'learning')
+            : bySeverity;
           const { active, acknowledged } = splitAcknowledged(filtered);
           const buckets = bucketByTime(active);
           return (
             <div>
-              <BaselineStrip baseline={baseline.data} failed={baseline.isError} />
-
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                <FilterPill label="All" count={alerts.length} selected={severity === null} onClick={() => setSeverity(null)} />
+                <FilterPill label="All" count={alerts.length} selected={severity === null && !learningOnly} onClick={() => { setSeverity(null); clearLearningOnly(); }} />
                 {SEVERITY_ORDER.map((s) => (
                   <FilterPill
                     key={s}
@@ -253,11 +199,30 @@ export function MonitorScreen() {
                     icon={<span className={cn('inline-block h-2 w-2 rounded-full')} style={{ backgroundColor: `var(--risk-${s})` }} aria-hidden="true" />}
                   />
                 ))}
+                {/* Only while active — the strip's link is what turns it on, so an
+                    always-present pill would advertise a dimension most tenants never use. */}
+                {learningOnly && (
+                  <FilterPill
+                    label={
+                      <span className="inline-flex items-center gap-1.5">
+                        Still learning
+                        <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      </span>
+                    }
+                    count={learningCount}
+                    selected
+                    onClick={clearLearningOnly}
+                  />
+                )}
               </div>
 
               <Card>
                 {filtered.length === 0 ? (
-                  <EmptyState icon={<Activity className="h-5 w-5" />} headline="No alerts at this severity" guidance="Clear the severity filter to see all open alerts." />
+                  <EmptyState
+                    icon={<Activity className="h-5 w-5" />}
+                    headline={learningOnly ? 'No alerts from learning identities' : 'No alerts at this severity'}
+                    guidance="Clear the filter to see all open alerts."
+                  />
                 ) : (
                   <div>
                     {buckets.map((bucket) => (
