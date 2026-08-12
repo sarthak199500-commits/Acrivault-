@@ -47,7 +47,7 @@ import {
   useSuspendUser,
   useUsers,
 } from './queries';
-import { InviteUserDialog } from './InviteUserDialog';
+import { AddUserDialog } from './AddUserDialog';
 import { EditUserDialog } from './EditUserDialog';
 import { UsersToolbar } from './UsersToolbar';
 import { useUsersFilters } from './useUsersFilters';
@@ -67,7 +67,7 @@ export function UsersScreen() {
   const actorId = useAuthStore((s) => s.userId);
   const filters = useUsersFilters();
 
-  const canInvite = useCan('users.invite');
+  const canAdd = useCan('users.add');
   const canEdit = useCan('users.edit');
   const canSuspend = useCan('users.suspend');
   const canDelete = useCan('users.delete');
@@ -78,7 +78,7 @@ export function UsersScreen() {
   const activate = useActivateUser();
   const del = useDeleteUser();
 
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [confirm, setConfirm] = useState<{ kind: ConfirmKind; user: User } | null>(null);
 
@@ -157,11 +157,11 @@ export function UsersScreen() {
       <EmptyState
         icon={<UsersIcon className="h-5 w-5" />}
         headline="No users yet"
-        guidance="Your organization has no users yet. Click ‘Invite User’ to get started."
+        guidance="Your organization has no users yet. Click ‘Add User’ to get started."
         action={
-          canInvite ? (
-            <Button leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setInviteOpen(true)}>
-              Invite User
+          canAdd ? (
+            <Button leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setAddOpen(true)}>
+              Add User
             </Button>
           ) : undefined
         }
@@ -327,17 +327,17 @@ export function UsersScreen() {
       <ScreenHeader
         eyebrow="Platform"
         title="Manage Users"
-        description="Everyone in your organization. Invite teammates and manage their access."
+        description="Everyone in your organization. Add teammates and manage their access."
         actions={
-          canInvite ? (
-            <Button size="sm" leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setInviteOpen(true)}>
-              Invite User
+          canAdd ? (
+            <Button size="sm" leadingIcon={<UserPlus className="h-4 w-4" />} onClick={() => setAddOpen(true)}>
+              Add User
             </Button>
           ) : undefined
         }
       />
 
-      {!showRowActions && !canInvite && (
+      {!showRowActions && !canAdd && (
         <div className="mb-4">
           <RoleRestricted note="You have read-only access to the user list." />
         </div>
@@ -357,7 +357,7 @@ export function UsersScreen() {
 
       <Card>{body}</Card>
 
-      <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <AddUserDialog open={addOpen} onOpenChange={setAddOpen} />
       <EditUserDialog open={editTarget !== null} onOpenChange={(o) => !o && setEditTarget(null)} user={editTarget} />
 
       <ConfirmDialog

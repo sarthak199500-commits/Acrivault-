@@ -1,22 +1,29 @@
 import { useEffect, useState } from 'react';
-import { Lock, ScrollText, Search } from 'lucide-react';
+import { Download, Lock, ScrollText, Search } from 'lucide-react';
 import { useAudit } from './queries';
 import type { AuditEntry } from '@/mocks/types';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Banner } from '@/components/ui/Banner';
+import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { ScrollableTable } from '@/components/ui/ScrollableTable';
+import { useCan } from '@/components/ui/Can';
+import { toast } from '@/stores/toast';
 import { dateTime } from '@/lib/format';
 
 export function AuditScreen() {
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
   const query = useAudit(search || undefined);
+  // The Auditor exports the log as their evidence package; Analyst and Security
+  // Admin read it without exporting (spec §4, Audit Log row).
+  const canExport = useCan('audit.export');
+  const exportable = query.data?.length ?? 0;
 
   // Debounce the search into the query.
   useEffect(() => {
@@ -24,13 +31,34 @@ export function AuditScreen() {
     return () => clearTimeout(t);
   }, [input]);
 
+  const exportLog = () => {
+    toast(`Exported ${exportable} audit ${exportable === 1 ? 'entry' : 'entries'}`, {
+      description: search ? `Synthetic CSV export, filtered by "${search}".` : 'Synthetic CSV export.',
+    });
+  };
+
   return (
     <div>
       <ScreenHeader
         eyebrow="Platform"
         title="Audit Log"
         description="An append-only record of who did what and when. Everyone can read it; no one can edit it."
-        actions={<Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>Immutable</Badge>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge tone="neutral" icon={<Lock className="h-3 w-3" />}>Immutable</Badge>
+            {canExport && (
+              <Button
+                size="sm"
+                variant="secondary"
+                leadingIcon={<Download className="h-4 w-4" />}
+                disabled={exportable === 0}
+                onClick={exportLog}
+              >
+                Export
+              </Button>
+            )}
+          </div>
+        }
       />
 
       <Banner tone="info" className="mb-4">

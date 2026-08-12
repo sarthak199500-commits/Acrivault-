@@ -5,6 +5,10 @@ coverage
 *.local
 .vite
 
+# TypeScript incremental build cache. Machine-local and rewritten on every
+# build, so tracking it left every worktree permanently dirty.
+*.tsbuildinfo
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

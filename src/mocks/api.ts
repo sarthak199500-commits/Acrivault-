@@ -13,6 +13,7 @@ import {
   sourceInstanceCount,
   typeBreakdown,
 } from './dataset';
+import { mulberry32 } from './generators';
 import { riskBand } from '@/lib/risk';
 import { passwordError } from '@/lib/password';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
@@ -127,17 +128,52 @@ export function getOverview(): Promise<OverviewData> {
       };
     }
     const { identities, alerts, identityById } = getDataset();
-    // Activity series: synthetic 14-day discovery + alert volume. // ASSUMPTION: derived upstream.
-    const activity = Array.from({ length: 14 }, (_, i) => {
-      const day = 13 - i;
-      const t = new Date(Date.now() - day * 86400000).toISOString();
-      const base = Math.floor(identities.length / 80);
-      return {
-        t,
-        discovered: base + ((i * 7 + 11) % 17),
-        alerts: ((i * 3 + 2) % 9) + 1,
+    /* Activity series: synthetic 14-day discovery + alert volume.
+     *
+     * Seeded, not modular. The previous form — `((i * 7 + 11) % 17)` for discovery
+     * and `((i * 3 + 2) % 9) + 1` for alerts — repeated on a strict 17- and 3-day
+     * cycle, so the Activity card drew a crisp operational rhythm (alerts ran
+     * 3, 6, 9, 3, 6, 9 … for the whole window) that is an artifact of the modulus
+     * and not something this data can support. On a security console a regular
+     * alert cycle is exactly what a reader would stop and investigate.
+     *
+     * mulberry32 keeps every run byte-identical — the chart must not reshuffle
+     * between renders — while leaving no visible period. Each series is a
+     * mean-reverting walk rather than independent draws: day-to-day persistence
+     * reads as telemetry instead of static.
+     *
+     * The jitters are sized against their bands, not picked by feel. This is an
+     * AR(1) with phi = 1 - REVERSION, so the stationary spread is
+     * (jitter/sqrt(12)) / sqrt(1 - phi^2); the values below put three standard
+     * deviations just inside each band, which is what keeps the walk off the
+     * clamp. An earlier pass used jitter 14/7 and the walk pinned to the rails —
+     * discovery sat at its ceiling five times and alerts flatlined at 1 for eight
+     * straight days, so min/max were drawing the series rather than bounding it.
+     * The seed is one of four in the first 3000 whose 14-day window touches
+     * neither rail and repeats no value more than twice in a row.
+     *
+     * Both bands are a fixed width, so this holds at any tenant size: only the
+     * discovery floor moves with the identity count.
+     * ASSUMPTION: real discovery and alert history is upstream.
+     */
+    const rand = mulberry32(0x7f6);
+    const REVERSION = 0.2;
+    const base = Math.floor(identities.length / 80);
+    const walk = (min: number, max: number, jitter: number) => {
+      const mid = (min + max) / 2;
+      let v = mid;
+      return () => {
+        v += (rand() - 0.5) * jitter + (mid - v) * REVERSION;
+        return Math.round(Math.max(min, Math.min(max, v)));
       };
-    });
+    };
+    const nextDiscovered = walk(base, base + 18, 6);
+    const nextAlerts = walk(1, 9, 2.8);
+    const activity = Array.from({ length: 14 }, (_, i) => ({
+      t: new Date(Date.now() - (13 - i) * 86400000).toISOString(),
+      discovered: nextDiscovered(),
+      alerts: nextAlerts(),
+    }));
     return {
       total: identities.length,
       sourceInstances: sourceInstanceCount(identities),
@@ -1331,7 +1367,10 @@ export interface ProvisionResult {
   user: User;
 }
 
-/** Accept the legal terms, provision the tenant, and create the first Tenant Admin. */
+/**
+ * Accept the legal terms, provision the tenant, and create its first user — who
+ * becomes the Tenant Owner (User Access Management Specification §2).
+ */
 export async function acceptLegal(
   consents: { tos: boolean; dpa: boolean },
   rawEmail: string,
@@ -1361,7 +1400,7 @@ export async function acceptLegal(
     tenantId: tenant.id,
     name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
     email,
-    role: 'tenant-admin',
+    role: 'tenant-owner',
     status: 'pending',
     authMethod: 'sso',
     invitedAt: new Date().toISOString(),
@@ -1545,14 +1584,18 @@ export async function createPassword(
   return { ok: true };
 }
 
-/** The synthetic Tenant Admin created by registration, for login() to return. */
+/**
+ * The synthetic Tenant Owner created by registration, for login() to return.
+ * The first user created at tenant creation becomes the Tenant Owner
+ * (User Access Management Specification §2).
+ */
 function ownerUser(email: string): User {
   return {
     id: `usr_owner_${email.replace(/\W/g, '').slice(0, 8)}`,
     tenantId: 'tnt_registered',
     name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
     email,
-    role: 'tenant-admin',
+    role: 'tenant-owner',
     status: 'active',
     authMethod: 'password',
   };
@@ -1608,13 +1651,13 @@ export function getUser(id: string): Promise<User | null> {
   });
 }
 
-export interface InvitePayload {
+export interface AddUserPayload {
   email: string;
   role: Role;
   validity?: ValidityWindow;
 }
 
-export interface InviteResult {
+export interface AddUserResult {
   user: User;
   /** True when the user was created but the invitation email could not be sent. */
   emailFailed: boolean;
@@ -1630,7 +1673,11 @@ function assertActorCanAssign(role: Role): void {
   }
 }
 
-export async function inviteUser(payload: InvitePayload): Promise<InviteResult> {
+/**
+ * Add a user to the tenant. They are created in `invited` status and receive an
+ * invitation email carrying the setup link; `acceptInvite` completes the account.
+ */
+export async function addUser(payload: AddUserPayload): Promise<AddUserResult> {
   await settle();
   if (authScenario() === 'api-failure') {
     throw new MockApiError('Could not create user. Please try again later.', 'API_FAILURE');
@@ -1660,7 +1707,7 @@ export async function inviteUser(payload: InvitePayload): Promise<InviteResult> 
     );
   }
   // The mock enforces capability + rank server-side (UI gating is UX only).
-  assertActorCan('users.invite');
+  assertActorCan('users.add');
   assertActorCanAssign(payload.role);
 
   const now = new Date().toISOString();
@@ -1688,7 +1735,7 @@ export async function inviteUser(payload: InvitePayload): Promise<InviteResult> 
     sentAt: now,
     expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
   });
-  appendAudit('invited user', email, `Invited as ${ROLE_LABELS[payload.role]}.`);
+  appendAudit('added user', email, `Added as ${ROLE_LABELS[payload.role]}.`);
 
   const emailFailed = authScenario() === 'invite-email-failed';
   return { user: { ...user }, emailFailed };
@@ -1742,6 +1789,19 @@ function assertNotLastActiveTenantAdmin(user: User, action: 'suspend' | 'remove'
   }
 }
 
+/**
+ * Guard: the Tenant Owner cannot be suspended, removed, or demoted by anyone —
+ * including themselves. A tenant has exactly one Owner, and the role moves only
+ * through Transfer Ownership.
+ */
+function assertNotTenantOwner(user: User, action: 'suspend' | 'remove' | 'change the role of'): void {
+  if (user.role !== 'tenant-owner') return;
+  throw new MockApiError(
+    `You cannot ${action} the Tenant Owner. Transfer ownership to another user first.`,
+    'TENANT_OWNER_PROTECTED',
+  );
+}
+
 /** Count of Tenant Admins who can still sign in — used by the UI to mirror the guard. */
 export function activeTenantAdminCount(users: User[]): number {
   return users.filter((u) => u.role === 'tenant-admin' && u.status === 'active').length;
@@ -1757,6 +1817,7 @@ export async function editUser(id: string, patch: UserPatch): Promise<User> {
   assertActorCan('users.edit');
   assertActorCanActOn(user);
   if (patch.role && patch.role !== user.role) {
+    assertNotTenantOwner(user, 'change the role of');
     assertActorCanAssign(patch.role);
     if (user.role === 'tenant-admin' && patch.role !== 'tenant-admin') {
       assertNotLastActiveTenantAdmin(user, 'change the role of');
@@ -1786,7 +1847,10 @@ async function setUserStatus(id: string, status: UserStatus, action: string): Pr
   const user = getDataset().users.find((u) => u.id === id);
   if (!user) throw new MockApiError('User not found.', 'NOT_FOUND');
   assertActorCanActOn(user);
-  if (status === 'suspended') assertNotLastActiveTenantAdmin(user, 'suspend');
+  if (status === 'suspended') {
+    assertNotTenantOwner(user, 'suspend');
+    assertNotLastActiveTenantAdmin(user, 'suspend');
+  }
   user.status = status;
   appendAudit(action, user.email);
   return { ...user };
@@ -1802,6 +1866,7 @@ export async function deleteUser(id: string): Promise<{ ok: true }> {
   if (!user) throw new MockApiError('User not found.', 'NOT_FOUND');
   assertActorCan('users.delete');
   assertActorCanActOn(user);
+  assertNotTenantOwner(user, 'remove');
   assertNotLastActiveTenantAdmin(user, 'remove');
   user.status = 'deleted';
   appendAudit('deleted user', user.email, 'Activity logs retained in the audit trail.');

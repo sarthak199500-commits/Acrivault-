@@ -82,20 +82,23 @@ function build(): Dataset {
   const identities = generateIdentities(SEED, size, NOW);
   const identityById = new Map(identities.map((i) => [i.id, i]));
   const users = generateUsers(NOW);
+  // Audit targets name real entities, so the things it names are built first.
+  const policies = generatePolicies(identities, SEED, NOW);
+  const tenant = generateTenant(NOW);
   return {
     size,
     identities,
     identityById,
     alerts: generateAlerts(identities, SEED, NOW),
     sessions: generateSessions(identities, SEED, NOW),
-    policies: generatePolicies(identities, SEED, NOW),
+    policies,
     rotations: generateRotations(identities, SEED, NOW),
-    audit: generateAudit(SEED, NOW),
+    audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
     notifications: generateNotifications(SEED, NOW),
     connections: generateConnections(identities),
     rehearsals: generateRehearsals(SEED, NOW),
     copilot: generateCopilotSuggestions(identities, SEED),
-    tenant: generateTenant(NOW),
+    tenant,
     users,
     invitations: generateInvitations(NOW),
   };
