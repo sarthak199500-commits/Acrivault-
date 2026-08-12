@@ -72,7 +72,7 @@ describe('monitoring baseline', () => {
 
 describe('blast radius', () => {
   it('reports true reach in the summary, not just the drawn nodes', async () => {
-    const origins = await listBlastOrigins(5);
+    const { origins } = await listBlastOrigins({ limit: 5 });
     expect(origins.length).toBeGreaterThan(0);
     const radius = await getBlastRadius(origins[0].id);
     expect(radius).not.toBeNull();
@@ -92,7 +92,7 @@ describe('blast radius', () => {
   });
 
   it('orders origins by reach so the default graph is worth reading', async () => {
-    const origins = await listBlastOrigins(40);
+    const { origins } = await listBlastOrigins({ limit: 40 });
     const reaches = origins.map((o) => o.reach);
     expect(reaches).toEqual([...reaches].sort((a, b) => b - a));
   });
@@ -100,7 +100,7 @@ describe('blast radius', () => {
   // Guards the FRS 3.9 acceptance criterion: a high-reach identity has to exist for
   // "the summary makes the scale clear" to be demonstrable at all.
   it('contains a high-reach identity whose reach exceeds what the graph draws', async () => {
-    const [top] = await listBlastOrigins(1);
+    const { origins: [top] } = await listBlastOrigins({ limit: 1 });
     expect(top.reach).toBeGreaterThan(10);
     const radius = await getBlastRadius(top.id);
     expect(radius).not.toBeNull();
@@ -110,9 +110,56 @@ describe('blast radius', () => {
   });
 
   it('excludes the origin from its own reachable set', async () => {
-    const [top] = await listBlastOrigins(1);
+    const { origins: [top] } = await listBlastOrigins({ limit: 1 });
     const radius = await getBlastRadius(top.id);
     const reached = radius?.nodes.filter((n) => n.kind !== 'origin') ?? [];
     expect(reached.some((n) => n.identityId === top.id)).toBe(false);
+  });
+});
+
+// A ranked top-40 can only answer "where is my worst exposure". Reaching a particular
+// identity needs search, or the picker silently hides all but a fraction of the estate.
+describe('blast radius origin search', () => {
+  it('reaches identities far outside the suggestion set', async () => {
+    const { origins: suggested, searchable } = await listBlastOrigins({ limit: 40 });
+    expect(searchable).toBeGreaterThan(suggested.length);
+
+    // Pick a mappable identity the suggestions do not contain.
+    const suggestedIds = new Set(suggested.map((o) => o.id));
+    const { origins: all } = await listBlastOrigins({ query: '-', limit: 5000 });
+    const outsider = all.find((o) => o.reach > 0 && !suggestedIds.has(o.id));
+    expect(outsider).toBeDefined();
+    if (!outsider) return;
+
+    const { origins: found } = await listBlastOrigins({ query: outsider.name });
+    expect(found.some((o) => o.id === outsider.id)).toBe(true);
+    expect(await getBlastRadius(outsider.id)).not.toBeNull();
+  });
+
+  it('marks results as search results rather than suggestions', async () => {
+    expect((await listBlastOrigins({})).suggestions).toBe(true);
+    expect((await listBlastOrigins({ query: 'svc' })).suggestions).toBe(false);
+  });
+
+  it('matches on any part of the name, case-insensitively', async () => {
+    const { origins } = await listBlastOrigins({ query: 'WEBHOOK' });
+    expect(origins.length).toBeGreaterThan(0);
+    expect(origins.every((o) => o.name.toLowerCase().includes('webhook'))).toBe(true);
+  });
+
+  // Omitting unmappable identities would make "no such identity" and "nothing to map"
+  // look identical to the user.
+  it('returns unmappable identities with zero reach instead of hiding them', async () => {
+    const { origins } = await listBlastOrigins({ query: '-', limit: 5000 });
+    const unmappable = origins.filter((o) => o.reach === 0);
+    expect(unmappable.length).toBeGreaterThan(0);
+    // Mappable ones sort first so the useful results are never buried.
+    const firstUnmappable = origins.findIndex((o) => o.reach === 0);
+    expect(origins.slice(firstUnmappable).every((o) => o.reach === 0)).toBe(true);
+  });
+
+  it('returns nothing for a name that does not exist', async () => {
+    const { origins } = await listBlastOrigins({ query: 'no-such-identity-zzz' });
+    expect(origins).toEqual([]);
   });
 });

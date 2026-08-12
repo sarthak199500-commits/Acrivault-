@@ -1,8 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { getBlastRadius, listBlastOrigins, listCopilotSuggestions, listRehearsals } from '@/mocks/api';
 
-export function useBlastOrigins() {
-  return useQuery({ queryKey: ['blast-origins'], queryFn: () => listBlastOrigins(40) });
+/**
+ * Picker candidates. An empty query returns the highest-reach suggestions; a query
+ * searches the whole estate. Keyed by query so each result set is cached separately and
+ * retyping a previous search is instant.
+ */
+export function useBlastOrigins(query: string) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: ['blast-origins', q],
+    queryFn: () => listBlastOrigins({ query: q, limit: 40 }),
+    placeholderData: (previous) => previous,
+  });
 }
 
 export function useBlastRadius(originId: string | undefined) {

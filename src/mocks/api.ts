@@ -817,20 +817,64 @@ export interface BlastOrigin {
   reach: number;
 }
 
+export interface BlastOriginList {
+  origins: BlastOrigin[];
+  /** How many identities a search covers, so the field can say what it searches. */
+  searchable: number;
+  /** True when these are the curated highest-reach set rather than search results. */
+  suggestions: boolean;
+}
+
+const toOrigin = (i: Identity): BlastOrigin => ({
+  id: i.id,
+  name: i.name,
+  type: i.type,
+  riskScore: i.riskScore,
+  reach: i.relationships.length,
+});
+
 /**
- * Identities that have relationships, for the blast-radius picker — ordered by reach,
- * then risk. Reach leads because this screen is about scale: sorting by risk alone put
- * a high-risk identity with one connection at the top, and the graph opened near-empty.
+ * Candidates for the blast-radius picker.
+ *
+ * With no query this returns the highest-reach identities — a suggestion set answering
+ * "where is my worst exposure", which is the only question a ranked list can answer.
+ * Finding a *particular* identity needs search, because at tenant scale the curated set
+ * is a fraction of a percent of the estate and a ranked list silently hides the rest.
+ *
+ * Search deliberately includes identities with no relationships. They cannot be mapped,
+ * but omitting them makes "not found" and "nothing to map" indistinguishable; returned
+ * with reach 0, the caller can say which it is.
  */
-export function listBlastOrigins(limit = 40): Promise<BlastOrigin[]> {
+export function listBlastOrigins(
+  opts: { query?: string; limit?: number } = {},
+): Promise<BlastOriginList> {
+  const { query, limit = 40 } = opts;
   return respond(() => {
-    if (isEmptyForced()) return [];
+    if (isEmptyForced()) return { origins: [], searchable: 0, suggestions: !query };
     const { identities } = getDataset();
-    return identities
-      .filter((i) => i.relationships.length > 0)
-      .sort((a, b) => b.relationships.length - a.relationships.length || b.riskScore - a.riskScore)
+    const q = query?.trim().toLowerCase();
+
+    if (!q) {
+      const origins = identities
+        .filter((i) => i.relationships.length > 0)
+        .sort((a, b) => b.relationships.length - a.relationships.length || b.riskScore - a.riskScore)
+        .slice(0, limit)
+        .map(toOrigin);
+      return { origins, searchable: identities.length, suggestions: true };
+    }
+
+    const origins = identities
+      .filter((i) => i.name.toLowerCase().includes(q))
+      // Mappable identities first; within each, the widest reach leads.
+      .sort(
+        (a, b) =>
+          Number(b.relationships.length > 0) - Number(a.relationships.length > 0) ||
+          b.relationships.length - a.relationships.length ||
+          a.name.localeCompare(b.name),
+      )
       .slice(0, limit)
-      .map((i) => ({ id: i.id, name: i.name, type: i.type, riskScore: i.riskScore, reach: i.relationships.length }));
+      .map(toOrigin);
+    return { origins, searchable: identities.length, suggestions: false };
   });
 }
 
