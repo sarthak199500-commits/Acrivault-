@@ -1,0 +1,74 @@
+/* Brand webfonts for the Acrivault design system.
+ *
+ * The token contract in src/styles/tokens.css declares:
+ *   --font-ui:   'Inter', system-ui, -apple-system, sans-serif
+ *   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace
+ *
+ * ...but the app itself ships no @font-face and no font files, so it renders in
+ * system fallback today. These faces are shipped with the design system so that
+ * designs built from it render in the typefaces the tokens actually name.
+ *
+ * Files are the latin subsets from the @fontsource packages (npm registry).
+ * Both families are SIL Open Font License 1.1 — redistribution is permitted.
+ *   Inter          © The Inter Project Authors — https://github.com/rsms/inter
+ *   JetBrains Mono © The JetBrains Mono Project Authors
+ *
+ * Weights shipped match what the components actually use: Inter 400/500/600/700
+ * (font-medium / font-semibold / font-bold utilities), JetBrains Mono 400/500/700.
+ */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./inter-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./inter-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./inter-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./inter-latin-700-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./jetbrains-mono-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./jetbrains-mono-latin-700-normal.woff2') format('woff2');
+}

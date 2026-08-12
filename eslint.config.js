@@ -27,6 +27,12 @@ export default tseslint.config(
         'error',
         { controlComponents: ['Checkbox', 'Switch', 'Select'], assert: 'either', depth: 3 },
       ],
+      // `role` is one of our own prop names — a user's permission role, not an ARIA
+      // role — and this rule validates any JSX attribute called `role` against the
+      // ARIA vocabulary. It stayed quiet only because every call site passed a
+      // variable, which the rule cannot evaluate; a literal like role="analyst"
+      // fails. Limiting it to DOM elements keeps the check where ARIA applies.
+      'jsx-a11y/aria-role': ['error', { ignoreNonDOM: true }],
     },
   },
 );
