@@ -954,7 +954,12 @@ export function getBlastRadius(originId: string): Promise<BlastRadius | null> {
       for (const rel of hop.relationships) {
         const hop2 = identityById.get(rel.identityId);
         if (!hop2 || hop2.id === origin.id || reached.has(hop2.id)) continue;
-        // Cascade: reaching it would force a revocation or reissue of its own.
+        // Cascade stands in for "would need replacing in its own right", approximated
+        // here by the identity being unowned or high-risk. It is a property of the node,
+        // not of a proven dependency on the origin, and only second-hop nodes are ever
+        // considered — so a dangerous direct neighbour is never marked cascade. The UI
+        // states the classification rather than inferring consequence from it.
+        // ASSUMPTION: what makes a path cascading is Architect-owned.
         reached.set(hop2.id, hop2.orphaned || hop2.riskScore > 70 ? 'cascade' : 'transitive');
         onward.push(hop2);
       }

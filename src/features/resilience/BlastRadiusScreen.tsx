@@ -274,9 +274,17 @@ export function BlastRadiusScreen() {
                     </CardBody>
                   </Card>
 
+                  {/* Says what the classification is, not what it implies. The previous
+                      copy claimed a compromise here "could force their revocation or
+                      reissue" — a causal conclusion nothing computes. Cascade marks a
+                      reached identity that is unowned or scoring above 70; no dependency
+                      between it and the origin has been established. */}
                   {data.summary.cascade > 0 && (
                     <Banner tone="warning">
-                      {pluralize(data.summary.cascade, 'identity', 'identities')} {data.summary.cascade === 1 ? 'sits' : 'sit'} on a cascade path — compromising the origin could force {data.summary.cascade === 1 ? 'its' : 'their'} revocation or reissue.
+                      {pluralize(data.summary.cascade, 'reachable identity', 'reachable identities')}{' '}
+                      {data.summary.cascade === 1 ? 'is' : 'are'} unowned or high-risk. Replacing the origin
+                      alone may not contain {data.summary.cascade === 1 ? 'it' : 'them'} — check{' '}
+                      {data.summary.cascade === 1 ? 'it' : 'each'} before planning containment.
                     </Banner>
                   )}
 
