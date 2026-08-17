@@ -22,12 +22,16 @@ import {
   type PolicyToken,
   type RotationHistoryEntry,
   type RotationJob,
+  type SessionReviewState,
+  type SessionSpawnKind,
   type SessionStep,
   type SourceInstance,
   type Tenant,
+  type ToolScope,
   type User,
 } from './types';
 import { riskBand } from '@/lib/risk';
+import { sessionRisk } from '@/lib/sessionRisk';
 import { generatedCode, matchesPolicy, plainEnglish } from './policy';
 
 /* ----------------------------------------------------------------- seeded RNG */
@@ -350,10 +354,31 @@ export function generateAlerts(identities: Identity[], seed: number, now: Date):
 
 /* -------------------------------------------------------------- sessions */
 
-const STEP_SUMMARIES: Record<SessionStep['kind'], string[]> = {
-  prompt: ['User asked to reconcile invoices', 'Scheduled trigger fired', 'Upstream agent delegated task'],
-  'tool-call': ['list_objects(bucket)', 'assume_role(target)', 'query_db(customers)', 'send_email(...)', 'delete_object(...)'],
+/**
+ * Tool calls carry the privilege they ran with. Scope is a property of the call, not
+ * an independent roll: `delete_object` is never a read, and session risk keys off the
+ * highest scope reached, so a mismatch here would score the session wrong.
+ */
+const TOOL_CALLS: { summary: string; scope: ToolScope }[] = [
+  { summary: 'list_objects(bucket)', scope: 'read' },
+  { summary: 'query_db(customers)', scope: 'read' },
+  { summary: 'fetch_secret(ref)', scope: 'read' },
+  { summary: 'send_email(...)', scope: 'write' },
+  { summary: 'update_record(invoice)', scope: 'write' },
+  { summary: 'assume_role(target)', scope: 'admin' },
+  { summary: 'delete_object(...)', scope: 'admin' },
+];
+
+const OTHER_SUMMARIES: Record<'prompt' | 'model-response', string[]> = {
+  prompt: ['Follow-up instruction received', 'Clarification requested by caller', 'Retry after tool error'],
   'model-response': ['Planned 3-step workflow', 'Summarized findings', 'Requested confirmation', 'Returned final answer'],
+};
+
+/** The opening prompt states how the session began, so it agrees with `spawnedBy`. */
+const SPAWN_PROMPT: Record<SessionSpawnKind, string> = {
+  human: 'User asked to reconcile invoices',
+  schedule: 'Scheduled trigger fired',
+  agent: 'Upstream agent delegated task',
 };
 
 export function generateSessions(identities: Identity[], seed: number, now: Date): AgentSession[] {
@@ -372,40 +397,70 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
     const stepCount = rng.int(5, 14);
     const steps: SessionStep[] = [];
     const start = new Date(now.getTime() - rng.int(0, 7) * 86400000 - rng.int(0, 86400000));
+    const spawnKind = rng.weighted<SessionSpawnKind>(['human', 'schedule', 'agent'], [4, 4, 3]);
+    // A burst session fires its calls seconds apart; a routine one paces them over
+    // minutes. Both are normal shapes — the risk score is what tells them apart.
+    const bursty = rng.bool(0.25);
     let anomalyCount = 0;
+    // Monotonic cursor. This was `start + s * rng.int(2000, 45000)`, which redrew the
+    // interval every step and let step 4 land before step 3 — the timeline claimed an
+    // order its own timestamps contradicted.
+    let cursor = start.getTime();
     for (let s = 0; s < stepCount; s++) {
-      const kind = rng.weighted<SessionStep['kind']>(
-        ['prompt', 'tool-call', 'model-response'],
-        [2, 5, 4],
-      );
+      // The first step is always the prompt that opened the session.
+      const kind =
+        s === 0
+          ? ('prompt' as const)
+          : rng.weighted<SessionStep['kind']>(['prompt', 'tool-call', 'model-response'], [1, 6, 4]);
       const anomaly = rng.bool(0.12);
       if (anomaly) anomalyCount++;
+      const call = kind === 'tool-call' ? rng.pick(TOOL_CALLS) : null;
       steps.push({
         id: `stp_${i}_${s}`,
         kind,
-        at: new Date(start.getTime() + s * rng.int(2000, 45000)).toISOString(),
-        summary: rng.pick(STEP_SUMMARIES[kind]),
-        detail:
-          kind === 'tool-call'
-            ? `Invoked with scope ${rng.pick(['read', 'write', 'admin'])}; latency ${rng.int(20, 900)}ms.`
-            : 'Captured payload available in the full trace (synthetic).',
+        at: new Date(cursor).toISOString(),
+        summary: s === 0 ? SPAWN_PROMPT[spawnKind] : call ? call.summary : rng.pick(OTHER_SUMMARIES[kind as 'prompt' | 'model-response']),
+        detail: call
+          ? `Invoked with scope ${call.scope}; latency ${rng.int(20, 900)}ms.`
+          : 'Captured payload available in the full trace (synthetic).',
         anomaly,
+        ...(call ? { scope: call.scope } : {}),
       });
+      cursor += bursty ? rng.int(700, 6000) : rng.int(4000, 90000);
     }
+
+    const otherAgents = agents.filter((a) => a.id !== agent.id);
+    const spawnedBy = {
+      kind: spawnKind,
+      label:
+        spawnKind === 'agent'
+          ? (otherAgents.length > 0 ? rng.pick(otherAgents) : agent).name
+          : spawnKind === 'human'
+            ? `${rng.pick(['j.okafor', 'r.mehta', 's.novak', 'a.lindqvist'])}@tenant.example`
+            : `cron: ${rng.pick(['hourly-reconcile', 'nightly-sweep', '15m-poll'])}`,
+    };
+
+    // Derived from the session's own evidence, with the agent's score as a bounded
+    // prior. Was `agent.riskScore` verbatim, which made every session of an agent
+    // score identically and ranked clean sessions above anomalous ones.
+    const risk = sessionRisk(steps, agent.riskScore);
+
     sessions.push({
       id: `ses_${i.toString(36).padStart(5, '0')}`,
       identityId: agent.id,
       startedAt: start.toISOString(),
-      endedAt: new Date(start.getTime() + stepCount * 30000).toISOString(),
-      riskScore: agent.riskScore,
+      endedAt: new Date(cursor).toISOString(),
+      riskScore: risk.score,
+      riskFactors: risk.factors,
       anomalyCount,
       steps,
       provenance: {
         model: rng.pick(MODELS),
-        origin: rng.pick(REGIONS),
-        credentialRef: agent.sources[0]?.externalId ?? 'unknown',
+        region: rng.pick(REGIONS),
+        spawnedBy,
+        credentials: agent.sources.length > 0 ? agent.sources.map((src) => src.externalId) : ['unknown'],
       },
-      status: rng.weighted(['open', 'reviewed', 'quarantined'] as const, [6, 3, 1]),
+      reviewState: rng.weighted<SessionReviewState>(['open', 'reviewed'], [7, 3]),
     });
   }
   return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
@@ -561,8 +616,11 @@ export function generateAudit(
     ['activated policy', () => rng.pick(policies).name],
     ['requested rotation', () => rng.pick(identities).name],
     ['executed emergency rotation', () => rng.pick(identities).name],
-    ['marked session reviewed', () => rng.pick(sessionSubjects).name],
-    ['quarantined session', () => rng.pick(sessionSubjects).name],
+    // Same verbs the live mutations write (api.ts), so seeded history and new entries
+    // read as one trail. "quarantined session" was the old wording from when quarantine
+    // was a session-level flag; it now contains the agent.
+    ['reviewed agent session', () => rng.pick(sessionSubjects).name],
+    ['quarantined agent', () => rng.pick(sessionSubjects).name],
     ['connected cloud', () => CLOUD_LABELS[rng.pick(CLOUDS)]],
     ['updated SSO config', () => ssoTarget],
     ['changed user role', () => rng.pick(users).email],

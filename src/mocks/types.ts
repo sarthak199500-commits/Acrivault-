@@ -131,27 +131,74 @@ export interface Policy {
 
 export type SessionStepKind = 'prompt' | 'tool-call' | 'model-response';
 
+/** Privilege a tool call ran with. Drives the privilege term of session risk. */
+export type ToolScope = 'read' | 'write' | 'admin';
+export const TOOL_SCOPES: ToolScope[] = ['read', 'write', 'admin'];
+
 export interface SessionStep {
   id: string;
   kind: SessionStepKind;
+  /** Steps are chronological: `at` never moves backwards across the array. */
   at: string;
   summary: string;
   detail: string;
   anomaly: boolean;
+  /** Tool calls only — the scope the call was invoked with. */
+  scope?: ToolScope;
 }
 
-export type SessionStatus = 'open' | 'reviewed' | 'quarantined';
+/**
+ * Whether a human has looked at this session. Deliberately NOT the place quarantine
+ * lives: quarantine blocks the *agent*, so it belongs on the identity
+ * (`Identity.status`). The two used to share one field, which made a
+ * quarantined-but-unreviewed session unrepresentable and left an agent's other
+ * sessions reading "open" after it had been contained.
+ */
+export type SessionReviewState = 'open' | 'reviewed';
+
+/** What spawned a session — the lineage FRS 3.5 asks provenance to answer. */
+export type SessionSpawnKind = 'human' | 'schedule' | 'agent';
+export const SPAWN_KIND_LABELS: Record<SessionSpawnKind, string> = {
+  human: 'Human user',
+  schedule: 'Scheduled trigger',
+  agent: 'Upstream agent',
+};
+
+export interface SessionProvenance {
+  model: string;
+  /** Where it ran. */
+  region: string;
+  /** What started it. */
+  spawnedBy: { kind: SessionSpawnKind; label: string };
+  /** Every credential the session authenticated with, not just the first. */
+  credentials: string[];
+}
+
+/** One weighted contribution to a session's risk score. See lib/sessionRisk.ts. */
+export interface SessionRiskFactor {
+  label: string;
+  /** Points contributed to the 0..100 score. Factors sum to the score. */
+  points: number;
+  /** Plain-English reason, shown so an analyst can explain the number. */
+  detail: string;
+}
 
 export interface AgentSession {
   id: string;
   identityId: string;
   startedAt: string;
-  endedAt?: string;
+  endedAt: string;
+  /** Derived from this session's own evidence — see lib/sessionRisk.ts. */
   riskScore: number;
+  /** The breakdown behind `riskScore`, so the UI can show why, not just how much. */
+  riskFactors: SessionRiskFactor[];
   anomalyCount: number;
   steps: SessionStep[];
-  provenance: { model: string; origin: string; credentialRef: string };
-  status: SessionStatus;
+  provenance: SessionProvenance;
+  reviewState: SessionReviewState;
+  reviewedAt?: string;
+  /** Set when an Analyst proposes a quarantine for an admin to carry out. */
+  quarantineRecommendedAt?: string;
 }
 
 // ASSUMPTION: 6-phase lifecycle naming (Rotation and cascade-revocation mechanics).

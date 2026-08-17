@@ -804,13 +804,24 @@ export function archivePolicy(id: string): Promise<Policy> {
 
 /* ------------------------------------------------------------------- sessions */
 
-/** Session joined with its agent identity's display name (raw ids are not UI labels). */
-export type AgentSessionWithIdentity = AgentSession & { identityName: string };
+/**
+ * Session joined with its agent's display name and enforcement state.
+ *
+ * `identityStatus` rides along because review and enforcement are separate axes: a
+ * session can be unreviewed while its agent is already contained, and containing an
+ * agent from one session has to show on every other session it ran.
+ */
+export type AgentSessionWithIdentity = AgentSession & {
+  identityName: string;
+  identityStatus: IdentityStatus;
+};
 
 function withIdentityName(session: AgentSession): AgentSessionWithIdentity {
+  const identity = getDataset().identityById.get(session.identityId);
   return {
     ...session,
-    identityName: getDataset().identityById.get(session.identityId)?.name ?? session.identityId,
+    identityName: identity?.name ?? session.identityId,
+    identityStatus: identity?.status ?? 'active',
   };
 }
 
@@ -825,21 +836,87 @@ export function getSession(id: string): Promise<AgentSessionWithIdentity | null>
   });
 }
 
-export function markSessionReviewed(id: string): Promise<AgentSession> {
+function findSession(id: string): AgentSession {
+  const session = getDataset().sessions.find((s) => s.id === id);
+  if (!session) throw new MockApiError('Session not found.');
+  return session;
+}
+
+function findAgent(identityId: string): Identity {
+  const identity = getDataset().identityById.get(identityId);
+  if (!identity) throw new MockApiError('Identity not found.');
+  return identity;
+}
+
+export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentity> {
   return respond(() => {
-    const session = getDataset().sessions.find((s) => s.id === id);
-    if (!session) throw new MockApiError('Session not found.');
-    session.status = 'reviewed';
-    return { ...session };
+    const session = findSession(id);
+    session.reviewState = 'reviewed';
+    session.reviewedAt = new Date().toISOString();
+    // FRS 3.5: session actions are role-gated AND logged. Marking reviewed is the
+    // record that a human looked; without an audit line there is nothing to show that.
+    appendAudit(
+      'reviewed agent session',
+      identityLabel(session.identityId),
+      `Session ${session.id} — ${session.anomalyCount} anomalous ${session.anomalyCount === 1 ? 'step' : 'steps'}.`,
+    );
+    return withIdentityName(session);
   });
 }
 
-export function quarantineSession(id: string): Promise<AgentSession> {
+/**
+ * Quarantine the agent, not the session.
+ *
+ * FRS 3.5 acceptance: the action is "recorded and reflected on the identity". This used
+ * to set a session-level status, so the agent stayed active, `Identity.status` never
+ * reached its existing 'quarantined' member, and the agent's other sessions still read
+ * "open" after it had supposedly been contained.
+ */
+export function quarantineAgent(identityId: string): Promise<Identity> {
   return respond(() => {
-    const session = getDataset().sessions.find((s) => s.id === id);
-    if (!session) throw new MockApiError('Session not found.');
-    session.status = 'quarantined';
-    return { ...session };
+    const identity = findAgent(identityId);
+    identity.status = 'quarantined';
+    appendAudit(
+      'quarantined agent',
+      identity.name,
+      'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
+    );
+    return { ...identity };
+  });
+}
+
+/**
+ * Analyst path: propose a quarantine for an admin to carry out (spec §5).
+ *
+ * The proposal is against the agent; `fromSessionId` records which session evidenced
+ * it, when the analyst raised it from a replay. The audit trail is the system of record
+ * either way — that is what an admin reviews before deciding.
+ */
+export function recommendQuarantine(identityId: string, fromSessionId?: string): Promise<Identity> {
+  return respond(() => {
+    const identity = findAgent(identityId);
+    if (fromSessionId) findSession(fromSessionId).quarantineRecommendedAt = new Date().toISOString();
+    appendAudit(
+      'recommended agent quarantine',
+      identity.name,
+      fromSessionId
+        ? `Proposed from session ${fromSessionId}. Awaiting an admin decision.`
+        : 'Awaiting an admin decision.',
+    );
+    return { ...identity };
+  });
+}
+
+/** Release from quarantine — Tenant Owner / Tenant Admin only (spec §5). */
+export function releaseQuarantine(identityId: string): Promise<Identity> {
+  return respond(() => {
+    const identity = findAgent(identityId);
+    if (identity.status !== 'quarantined') {
+      throw new MockApiError('This identity is not quarantined.');
+    }
+    identity.status = 'active';
+    appendAudit('released agent from quarantine', identity.name, 'The agent can act again.');
+    return { ...identity };
   });
 }
 

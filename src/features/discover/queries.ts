@@ -1,5 +1,15 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { assignOwner, getIdentity, listIdentities, requestRotation, type IdentityFilter, type IdentitySort } from '@/mocks/api';
+import {
+  assignOwner,
+  getIdentity,
+  listIdentities,
+  quarantineAgent,
+  recommendQuarantine,
+  releaseQuarantine,
+  requestRotation,
+  type IdentityFilter,
+  type IdentitySort,
+} from '@/mocks/api';
 
 // The mock dataset is in-memory, so we fetch the whole filtered/sorted result set
 // (references, not copies) and virtualize it client-side. Filtering and sorting
@@ -46,4 +56,37 @@ export function useAssignOwner() {
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
   });
+}
+
+/**
+ * Enforcement lives on the identity, so quarantine and release are identity mutations
+ * even when raised from a session replay. Both invalidate the session caches too: an
+ * agent's containment shows on every session it ever ran, not just the one in view.
+ */
+function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string }>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (updated) => {
+      qc.setQueryData(['identity', updated.id], updated);
+      qc.invalidateQueries({ queryKey: ['inventory'] });
+      qc.invalidateQueries({ queryKey: ['sessions'] });
+      qc.invalidateQueries({ queryKey: ['session'] });
+      qc.invalidateQueries({ queryKey: ['audit'] });
+    },
+  });
+}
+
+export function useQuarantineAgent() {
+  return useEnforcement((identityId: string) => quarantineAgent(identityId));
+}
+
+export function useReleaseQuarantine() {
+  return useEnforcement((identityId: string) => releaseQuarantine(identityId));
+}
+
+export function useRecommendQuarantine() {
+  return useEnforcement(({ identityId, fromSessionId }: { identityId: string; fromSessionId?: string }) =>
+    recommendQuarantine(identityId, fromSessionId),
+  );
 }
