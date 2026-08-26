@@ -159,8 +159,12 @@ export function PolicyActivityPanel() {
               </p>
             )}
 
+            {/* An outcome nothing produced gets no pill. Hiding on the count rather
+                than naming one outcome keeps the rule general — Released will be
+                empty on a well-behaved policy too — and the pill reappears of its
+                own accord the first time that outcome occurs. */}
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
-              {OUTCOME_FILTERS.map((f) => (
+              {OUTCOME_FILTERS.filter((f) => f === 'all' || counts[f] > 0).map((f) => (
                 <Button
                   key={f}
                   size="sm"
