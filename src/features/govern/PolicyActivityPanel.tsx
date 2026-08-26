@@ -1,16 +1,17 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ListChecks } from 'lucide-react';
 import { usePolicyActions } from './queries';
+import { usePolicyFilters } from './usePolicyFilters';
 import {
   OUTCOME_FILTERS,
   OUTCOME_LABELS,
   SWEEP_LABELS,
   failureSummary,
   filterByOutcome,
+  filterByPolicy,
   groupIntoSweeps,
   outcomeCounts,
-  type OutcomeFilter,
+  policyFacets,
 } from './policyActivity';
 import { POLICY_ACTION_REASON_LABELS, type PolicyActionOutcome } from '@/mocks/types';
 import type { PolicyActionWithIdentity } from '@/mocks/api';
@@ -110,7 +111,7 @@ function ActionRow({ action }: { action: PolicyActionWithIdentity }) {
  * alert mark rather than act, so they leave nothing with an outcome to report.
  */
 export function PolicyActivityPanel() {
-  const [filter, setFilter] = useState<OutcomeFilter>('all');
+  const { policyId, setPolicyId, outcome, setOutcome } = usePolicyFilters();
   const query = usePolicyActions();
 
   return (
@@ -133,10 +134,17 @@ export function PolicyActivityPanel() {
       }
     >
       {(rows: PolicyActionWithIdentity[]) => {
-        const counts = outcomeCounts(rows);
-        const summary = failureSummary(rows);
-        const visible = filterByOutcome(rows, filter);
+        // Policy facets count the whole log, so a pill's number does not move as
+        // you narrow by outcome. Outcome counts are scoped to the chosen policy,
+        // because "5 failed" across every rule answers a question nobody asked
+        // once you have already said which rule you care about.
+        const facets = policyFacets(rows);
+        const scoped = filterByPolicy(rows, policyId);
+        const counts = outcomeCounts(scoped);
+        const summary = failureSummary(scoped);
+        const visible = filterByOutcome(scoped, outcome);
         const groups = groupIntoSweeps(visible);
+        const chosen = facets.find((f) => f.id === policyId);
 
         return (
           <div>
@@ -159,20 +167,48 @@ export function PolicyActivityPanel() {
               </p>
             )}
 
-            {/* An outcome nothing produced gets no pill. Hiding on the count rather
-                than naming one outcome keeps the rule general — Released will be
-                empty on a well-behaved policy too — and the pill reappears of its
-                own accord the first time that outcome occurs. */}
+            {/* One rule needs no chooser — the pills would be a single button
+                that changes nothing, and every row already names its policy. */}
+            {facets.length > 1 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <span className="eyebrow mr-1">Policy</span>
+                <Button
+                  size="sm"
+                  variant={policyId === null ? 'secondary' : 'ghost'}
+                  aria-pressed={policyId === null}
+                  onClick={() => setPolicyId(null)}
+                >
+                  All {count(rows.length)}
+                </Button>
+                {facets.map((f) => (
+                  <Button
+                    key={f.id}
+                    size="sm"
+                    variant={policyId === f.id ? 'secondary' : 'ghost'}
+                    aria-pressed={policyId === f.id}
+                    onClick={() => setPolicyId(f.id)}
+                  >
+                    {f.name} {count(f.count)}
+                  </Button>
+                ))}
+              </div>
+            )}
+
+            {/* An outcome nothing produced gets no pill. Hiding on the count
+                rather than naming one outcome keeps the rule general — Released
+                is empty on a well-behaved policy too — and the pill reappears of
+                its own accord the first time that outcome occurs. */}
             <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <span className="eyebrow mr-1">Outcome</span>
               {OUTCOME_FILTERS.filter((f) => f === 'all' || counts[f] > 0).map((f) => (
                 <Button
                   key={f}
                   size="sm"
-                  variant={filter === f ? 'secondary' : 'ghost'}
-                  aria-pressed={filter === f}
-                  onClick={() => setFilter(f)}
+                  variant={outcome === f ? 'secondary' : 'ghost'}
+                  aria-pressed={outcome === f}
+                  onClick={() => setOutcome(f)}
                 >
-                  {f === 'all' ? `All ${count(rows.length)}` : `${OUTCOME_LABELS[f]} ${count(counts[f])}`}
+                  {f === 'all' ? `All ${count(scoped.length)}` : `${OUTCOME_LABELS[f]} ${count(counts[f])}`}
                 </Button>
               ))}
             </div>
@@ -181,11 +217,22 @@ export function PolicyActivityPanel() {
               <Card>
                 <EmptyState
                   icon={<ListChecks className="h-5 w-5" />}
-                  headline="No actions with that outcome"
-                  guidance="Clear the filter to see the whole log."
+                  headline="No actions match these filters"
+                  guidance={
+                    chosen && outcome !== 'all'
+                      ? `${chosen.name} has recorded no ${OUTCOME_LABELS[outcome].toLowerCase()} actions.`
+                      : 'Clear the filters to see the whole log.'
+                  }
                   action={
-                    <Button size="sm" variant="secondary" onClick={() => setFilter('all')}>
-                      Clear filter
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setPolicyId(null);
+                        setOutcome('all');
+                      }}
+                    >
+                      Clear filters
                     </Button>
                   }
                 />
@@ -194,19 +241,26 @@ export function PolicyActivityPanel() {
               <div className="space-y-3">
                 {groups.map((group) => (
                   <Card key={group.id}>
-                    {/* A release is one person's act, not a run — it gets no
-                        sweep header, because there is no sweep to describe. */}
-                    {group.reason !== 'manual' && (
-                      <div className="border-b border-border bg-surface-2 px-3 py-2">
-                        <span className="eyebrow">{SWEEP_LABELS[group.reason]}</span>
-                        <span className="ml-2 text-[length:var(--fs-small)] text-text-secondary">
-                          {group.policyName} · <span className="tnum">{count(group.actions.length)}</span>{' '}
-                          {group.actions.length === 1 ? 'action' : 'actions'} ·{' '}
-                          <span className="tnum">{count(group.counts.failed)}</span> failed ·{' '}
-                          {relativeTime(group.at)}
-                        </span>
-                      </div>
-                    )}
+                    {/* Every group gets a header, manual runs included. Without
+                        one the newest rows — always releases, since a person
+                        acts after the sweep — open the page with no context. */}
+                    <div className="border-b border-border bg-surface-2 px-3 py-2">
+                      <span className="eyebrow">{SWEEP_LABELS[group.reason]}</span>
+                      <span className="ml-2 text-[length:var(--fs-small)] text-text-secondary">
+                        {group.policyName && `${group.policyName} · `}
+                        <span className="tnum">{count(group.actions.length)}</span>{' '}
+                        {group.actions.length === 1 ? 'action' : 'actions'}
+                        {/* "0 failed" is noise on a clean sweep. */}
+                        {group.counts.failed > 0 && (
+                          <>
+                            {' · '}
+                            <span className="tnum">{count(group.counts.failed)}</span> failed
+                          </>
+                        )}
+                        {' · '}
+                        {relativeTime(group.at)}
+                      </span>
+                    </div>
                     <ul>
                       {group.actions.map((a) => (
                         <ActionRow key={a.id} action={a} />

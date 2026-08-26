@@ -24,8 +24,8 @@ const OUTCOMES: PolicyActionOutcome[] = ['quarantined', 'failed', 'skipped', 're
 
 /**
  * A sweep is one run of a policy against the estate. `manual` is not a sweep —
- * it is a single human act (a release) belonging to no run, given a group of its
- * own so the timeline stays one ordered list rather than two interleaved ones.
+ * it is what a person did — but it still gets a group, so that no row on the
+ * page sits without a header explaining where it came from.
  */
 export type SweepGroupReason = 'activation' | 're-evaluation' | 'manual';
 
@@ -38,7 +38,11 @@ export const SWEEP_LABELS: Record<SweepGroupReason, string> = {
 export interface SweepGroup<T extends PolicyAction> {
   id: string;
   reason: SweepGroupReason;
-  policyName: string;
+  /**
+   * The policy every row in the group belongs to, or null when they disagree —
+   * which only a manual group can, since a sweep is one run of one policy.
+   */
+  policyName: string | null;
   /** The newest action in the group — what the group is sorted and labelled by. */
   at: string;
   counts: Record<PolicyActionOutcome, number>;
@@ -58,6 +62,39 @@ export function filterByOutcome<T extends Pick<PolicyAction, 'outcome'>>(
   filter: OutcomeFilter,
 ): T[] {
   return filter === 'all' ? actions : actions.filter((a) => a.outcome === filter);
+}
+
+export function filterByPolicy<T extends Pick<PolicyAction, 'policyId'>>(
+  actions: T[],
+  policyId: string | null,
+): T[] {
+  return policyId ? actions.filter((a) => a.policyId === policyId) : actions;
+}
+
+export interface PolicyFacet {
+  id: string;
+  name: string;
+  count: number;
+}
+
+/**
+ * The policies that have actually acted, derived from the rows rather than from
+ * the policy list. A rule that has done nothing has nothing to filter to, and
+ * offering it would be a pill that only ever empties the screen.
+ *
+ * Names come from the stamped `policyName`, so a renamed policy reads here as it
+ * read when it acted — the whole point of stamping it.
+ */
+export function policyFacets(
+  actions: Pick<PolicyAction, 'policyId' | 'policyName'>[],
+): PolicyFacet[] {
+  const byId = new Map<string, PolicyFacet>();
+  for (const a of actions) {
+    const held = byId.get(a.policyId);
+    if (held) held.count += 1;
+    else byId.set(a.policyId, { id: a.policyId, name: a.policyName, count: 1 });
+  }
+  return [...byId.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 /**
@@ -96,23 +133,41 @@ function orderWithinGroup<T extends PolicyAction>(actions: T[]): T[] {
  * Grouping is load-bearing rather than decorative: activating a rule that matches
  * forty identities writes forty rows stamped the same second, and a flat
  * chronological list of those is unreadable.
+ *
+ * Actions with no sweep — a person's release — are grouped by RUN rather than
+ * individually: adjacent ones in the timeline share a group, and a sweep between
+ * them starts a new one. One card per release padded the top of the page and
+ * pushed the next policy's sweep below the fold.
  */
 export function groupIntoSweeps<T extends PolicyAction>(actions: T[]): SweepGroup<T>[] {
+  // Sorted here rather than trusted from the caller, so a run of manual actions
+  // is defined by the timeline and not by whatever order the rows arrived in.
+  const ordered = [...actions].sort((a, b) => b.at.localeCompare(a.at));
+
   const groups = new Map<string, T[]>();
-  for (const a of actions) {
-    const key = a.sweepId ?? `manual:${a.id}`;
+  let run = 0;
+  let previousWasManual = false;
+  for (const a of ordered) {
+    const isManual = !a.sweepId;
+    if (isManual && !previousWasManual) run += 1;
+    previousWasManual = isManual;
+    const key = a.sweepId ?? `manual:${run}`;
     const list = groups.get(key) ?? [];
     list.push(a);
     groups.set(key, list);
   }
+
   return [...groups.entries()]
-    .map(([id, rows]) => ({
-      id,
-      reason: (rows[0].sweepReason ?? 'manual') as SweepGroupReason,
-      policyName: rows[0].policyName,
-      at: rows.reduce((newest, r) => (r.at.localeCompare(newest) > 0 ? r.at : newest), rows[0].at),
-      counts: outcomeCounts(rows),
-      actions: orderWithinGroup(rows),
-    }))
+    .map(([id, rows]) => {
+      const names = new Set(rows.map((r) => r.policyName));
+      return {
+        id,
+        reason: (rows[0].sweepReason ?? 'manual') as SweepGroupReason,
+        policyName: names.size === 1 ? rows[0].policyName : null,
+        at: rows.reduce((newest, r) => (r.at.localeCompare(newest) > 0 ? r.at : newest), rows[0].at),
+        counts: outcomeCounts(rows),
+        actions: orderWithinGroup(rows),
+      };
+    })
     .sort((a, b) => b.at.localeCompare(a.at));
 }

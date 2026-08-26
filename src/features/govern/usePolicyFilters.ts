@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { PolicyStatus } from '@/mocks/types';
 import type { PolicyListFilter, PolicySort, PolicyTab } from './policyList';
+import { OUTCOME_FILTERS, type OutcomeFilter } from './policyActivity';
 
 const SORTS: PolicySort[] = ['modified', 'activated', 'name', 'affected'];
 
@@ -19,8 +20,14 @@ function parseList<T extends string>(raw: string | null): T[] {
 export function usePolicyFilters() {
   const [params, setParams] = useSearchParams();
 
-  const { tab, filter } = useMemo<{ tab: PolicyTab; filter: PolicyListFilter }>(() => {
+  const { tab, filter, policyId, outcome } = useMemo<{
+    tab: PolicyTab;
+    filter: PolicyListFilter;
+    policyId: string | null;
+    outcome: OutcomeFilter;
+  }>(() => {
     const sort = params.get('sort') as PolicySort | null;
+    const outcomeParam = params.get('outcome') as OutcomeFilter | null;
     const parsed = parseList<PolicyStatus>(params.get('status'));
     // Before the archive became its own tab, it was reached with ?status=archived.
     // Translate those links instead of leaving them on an empty live list.
@@ -40,6 +47,10 @@ export function usePolicyFilters() {
         statuses: tab === 'archive' ? [] : parsed.filter((s) => s !== 'archived'),
         sort: sort && SORTS.includes(sort) ? sort : 'modified',
       },
+      // Activity-tab narrowing. Kept in the URL like the rest so a policy row's
+      // "View actions" link can land pre-filtered on the rule you came from.
+      policyId: params.get('policy'),
+      outcome: outcomeParam && OUTCOME_FILTERS.includes(outcomeParam) ? outcomeParam : 'all',
     };
   }, [params]);
 
@@ -80,6 +91,17 @@ export function usePolicyFilters() {
     [update],
   );
 
+  const setPolicyId = useCallback(
+    (value: string | null) => update((n) => (value ? n.set('policy', value) : n.delete('policy'))),
+    [update],
+  );
+
+  const setOutcome = useCallback(
+    (value: OutcomeFilter) =>
+      update((n) => (value === 'all' ? n.delete('outcome') : n.set('outcome', value))),
+    [update],
+  );
+
   const clearAll = useCallback(
     () => update((n) => ['q', 'status', 'sort'].forEach((k) => n.delete(k))),
     [update],
@@ -93,12 +115,25 @@ export function usePolicyFilters() {
         // link keeps working and the URL stays clean.
         if (next === 'live') n.delete('tab');
         else n.set('tab', next);
-        ['q', 'status'].forEach((k) => n.delete(k));
+        ['q', 'status', 'policy', 'outcome'].forEach((k) => n.delete(k));
       }),
     [update],
   );
 
   const activeCount = (filter.search ? 1 : 0) + filter.statuses.length;
 
-  return { tab, setTab, filter, setSearch, setSort, toggleStatus, clearAll, activeCount };
+  return {
+    tab,
+    setTab,
+    filter,
+    setSearch,
+    setSort,
+    toggleStatus,
+    clearAll,
+    activeCount,
+    policyId,
+    setPolicyId,
+    outcome,
+    setOutcome,
+  };
 }
