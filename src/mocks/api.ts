@@ -33,6 +33,8 @@ import type {
   NhiType,
   NotificationItem,
   Policy,
+  PolicyAction,
+  PolicyActionOutcome,
   PolicyToken,
   ReachEdge,
   ReachNode,
@@ -572,6 +574,52 @@ function evaluationOf(matched: Identity[], total: number): PolicyEvalResult {
  * Evaluate a rule's WHEN/AND tokens against the dataset and report how many
  * identities match, plus a small sample. Display only — the UI never enforces.
  */
+/**
+ * An action joined to the identity fields its row renders. Raw ids are not UI
+ * labels, and the row reuses the builder's TestResult vocabulary — type glyph,
+ * cloud marks, risk pill, orphan flag — so it carries the same fields.
+ */
+export type PolicyActionWithIdentity = PolicyAction & {
+  identityName: string;
+  identityType: NhiType;
+  identityClouds: Cloud[];
+  identityRiskScore: number;
+  identityOrphaned: boolean;
+};
+
+function withActionIdentity(action: PolicyAction): PolicyActionWithIdentity {
+  const identity = getDataset().identityById.get(action.identityId);
+  return {
+    ...action,
+    identityName: identity?.name ?? action.identityId,
+    identityType: identity?.type ?? 'service-account',
+    // Deduped: a correlated identity often reports the same cloud twice.
+    identityClouds: identity ? [...new Set(identity.sources.map((s) => s.cloud))] : [],
+    identityRiskScore: identity?.riskScore ?? 0,
+    identityOrphaned: identity?.orphaned ?? false,
+  };
+}
+
+export interface PolicyActionQuery {
+  policyId?: string;
+  outcome?: PolicyActionOutcome;
+}
+
+/**
+ * The append-only record of what active policies have done. Read-only by design:
+ * an entry is never edited, because a release is a new entry pointing back at
+ * what it reverses.
+ */
+export function listPolicyActions(query: PolicyActionQuery = {}): Promise<PolicyActionWithIdentity[]> {
+  return respond(() => {
+    if (isEmptyForced()) return [];
+    let rows = getDataset().policyActions;
+    if (query.policyId) rows = rows.filter((a) => a.policyId === query.policyId);
+    if (query.outcome) rows = rows.filter((a) => a.outcome === query.outcome);
+    return rows.map(withActionIdentity);
+  });
+}
+
 export function evaluatePolicy(tokens: PolicyToken[]): Promise<PolicyEvalResult> {
   return respond(() => {
     const { identities } = getDataset();

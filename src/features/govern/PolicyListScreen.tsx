@@ -23,6 +23,7 @@ import {
   type PolicySort,
 } from './policyList';
 import { usePolicyFilters } from './usePolicyFilters';
+import { PolicyActivityPanel } from './PolicyActivityPanel';
 import { type Policy, type PolicyStatus } from '@/mocks/types';
 import { Tabs, TabPanel } from '@/components/ui/Tabs';
 import { IconButton } from '@/components/ui/IconButton';
@@ -135,6 +136,19 @@ function PolicyRow({
       <div className="hidden w-16 shrink-0 text-right sm:block">
         <div className="tnum text-[length:var(--fs-body)] text-text">{count(policy.affectedCount)}</div>
         <div className="text-[length:var(--fs-micro)] text-text-tertiary">affected</div>
+        {/* Two different denominators: "affected" is who matches NOW, the action
+            log is what was done OVER TIME. Labelled rather than a second bare
+            number, which would read as more of the same count.
+            stopPropagation because the row itself navigates to the builder. */}
+        {policy.activatedAt && (
+          <Link
+            to="/govern?tab=activity"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[length:var(--fs-micro)] text-accent-text hover:underline"
+          >
+            View actions
+          </Link>
+        )}
       </div>
       <div className="hidden w-36 shrink-0 text-right md:block">
         <div className="text-[length:var(--fs-small)] text-text-tertiary">{relativeTime(policy.updatedAt)}</div>
@@ -336,6 +350,9 @@ export function PolicyListScreen() {
               tabs={[
                 { value: 'live', label: `Policies (${count(live.length)})` },
                 { value: 'archive', label: `Archive (${count(retired.length)})` },
+                // No count: the other two count policies, and a third number in
+                // the same bar counting a different entity would read as one too.
+                { value: 'activity', label: 'Activity' },
               ]}
             >
               <TabPanel value="live">
@@ -457,6 +474,10 @@ export function PolicyListScreen() {
                     </div>
                   )}
                 </Card>
+              </TabPanel>
+
+              <TabPanel value="activity">
+                <PolicyActivityPanel />
               </TabPanel>
             </Tabs>
           );

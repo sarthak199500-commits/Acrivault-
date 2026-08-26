@@ -11,7 +11,12 @@ export type PolicySort = 'modified' | 'activated' | 'name' | 'affected';
  * work with, and the archive. Archived rows are immutable and unrestorable, so
  * they are not a peer of the live statuses and don't belong in the status facet.
  */
-export type PolicyTab = 'live' | 'archive';
+/**
+ * Two populations of policies, plus the record of what the active ones have
+ * actually done. Activity is not a filtered view of the same rows — it is a
+ * different entity — but it is a view of Govern, so it belongs in the same bar.
+ */
+export type PolicyTab = 'live' | 'archive' | 'activity';
 
 /** Facet vocabulary — the four states a live policy can hold. */
 export const LIVE_POLICY_STATUSES: PolicyStatus[] = POLICY_STATUSES.filter((s) => s !== 'archived');
