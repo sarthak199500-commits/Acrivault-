@@ -12,6 +12,7 @@ import {
   generateInvitations,
   generateNotifications,
   generatePolicies,
+  generatePolicyActions,
   generateRehearsals,
   generateRotations,
   generateSessions,
@@ -65,6 +66,7 @@ export interface Dataset {
   alerts: ReturnType<typeof generateAlerts>;
   sessions: ReturnType<typeof generateSessions>;
   policies: ReturnType<typeof generatePolicies>;
+  policyActions: ReturnType<typeof generatePolicyActions>;
   rotations: ReturnType<typeof generateRotations>;
   audit: ReturnType<typeof generateAudit>;
   notifications: ReturnType<typeof generateNotifications>;
@@ -92,6 +94,7 @@ function build(): Dataset {
     alerts: generateAlerts(identities, SEED, NOW),
     sessions: generateSessions(identities, SEED, NOW),
     policies,
+    policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
     rotations: generateRotations(identities, SEED, NOW),
     audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
     notifications: generateNotifications(SEED, NOW),

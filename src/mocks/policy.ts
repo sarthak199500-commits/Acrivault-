@@ -178,7 +178,6 @@ export const ACTIONS: ActionDef[] = [
       { value: 'quarantine', label: 'quarantine' },
       { value: 'review', label: 'flag for review' },
       { value: 'alert', label: 'raise an alert' },
-      { value: 'block', label: 'block' },
     ],
     defaultOperator: 'set',
     defaultValue: 'quarantine',
@@ -248,8 +247,6 @@ function actionPhrase(token: PolicyToken): string {
       return 'flag it for review';
     case 'alert':
       return 'raise an alert';
-    case 'block':
-      return 'block it';
     default:
       return token.value;
   }

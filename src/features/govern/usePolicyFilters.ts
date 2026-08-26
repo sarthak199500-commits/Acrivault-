@@ -24,8 +24,13 @@ export function usePolicyFilters() {
     const parsed = parseList<PolicyStatus>(params.get('status'));
     // Before the archive became its own tab, it was reached with ?status=archived.
     // Translate those links instead of leaving them on an empty live list.
+    const raw = params.get('tab');
     const tab: PolicyTab =
-      params.get('tab') === 'archive' || parsed.includes('archived') ? 'archive' : 'live';
+      raw === 'archive' || parsed.includes('archived')
+        ? 'archive'
+        : raw === 'activity'
+          ? 'activity'
+          : 'live';
     return {
       tab,
       filter: {
@@ -84,8 +89,10 @@ export function usePolicyFilters() {
   const setTab = useCallback(
     (next: string) =>
       update((n) => {
-        if (next === 'archive') n.set('tab', 'archive');
-        else n.delete('tab');
+        // 'live' is the default view and carries no param, so a bare /govern
+        // link keeps working and the URL stays clean.
+        if (next === 'live') n.delete('tab');
+        else n.set('tab', next);
         ['q', 'status'].forEach((k) => n.delete(k));
       }),
     [update],

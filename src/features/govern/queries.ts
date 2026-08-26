@@ -5,6 +5,7 @@ import {
   getPolicy,
   listAudit,
   listPolicies,
+  listPolicyActions,
   savePolicy,
   suspendPolicy,
   testPolicy,
@@ -36,6 +37,18 @@ export function usePolicy(id: string | undefined) {
  */
 export function usePolicyAudit() {
   return useQuery({ queryKey: ['audit', ''], queryFn: () => listAudit() });
+}
+
+/**
+ * The action log. `enabled` keeps it off the wire until the Activity tab is
+ * actually open — the policy list is the default view and should not pay for it.
+ */
+export function usePolicyActions(opts: { policyId?: string; enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['policy-actions', opts.policyId ?? null],
+    queryFn: () => listPolicyActions({ policyId: opts.policyId }),
+    enabled: opts.enabled ?? true,
+  });
 }
 
 /** Evaluate a draft rule's tokens for the live affected-count. Persists nothing. */

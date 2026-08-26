@@ -129,6 +129,69 @@ export interface Policy {
   testedTokens?: PolicyToken[];
 }
 
+/**
+ * What an active policy did to one identity, once.
+ *
+ * Only `quarantine` produces these. `review` and `alert` mark rather than act —
+ * a flag is derived from the current match set, an alert is an Alert — and a
+ * rotate policy proposes a rotation rather than running one. None of those three
+ * leave a discrete cloud-side outcome, so none of them appear here.
+ */
+export type PolicyActionOutcome = 'quarantined' | 'failed' | 'skipped' | 'released';
+
+/**
+ * Typed causes rather than free text, so identical failures can be counted and
+ * fixed once — "12 failures, all the same missing permission" is the useful
+ * reading, and a sentence per row makes it ungreppable.
+ */
+export type PolicyActionReason =
+  | 'connector-permission'
+  | 'identity-gone'
+  | 'already-quarantined'
+  | 'self-protection'
+  | 'provider-error';
+
+export const POLICY_ACTION_REASON_LABELS: Record<PolicyActionReason, string> = {
+  'connector-permission': 'Connector lacks permission for this action',
+  'identity-gone': 'Identity no longer exists at the provider',
+  'already-quarantined': 'Already quarantined — nothing to do',
+  'self-protection': "Self-protection — Acrivault's own connector is never acted on",
+  'provider-error': 'Provider rejected the call',
+};
+
+/** Why a sweep ran. A release is a person's doing, so it belongs to no sweep. */
+export type SweepReason = 'activation' | 're-evaluation';
+
+export interface PolicyAction {
+  id: string;
+  policyId: string;
+  /**
+   * The policy's name AT THE TIME. Stamped rather than resolved on read, so
+   * renaming a policy cannot rewrite what the log says happened.
+   */
+  policyName: string;
+  identityId: string;
+  outcome: PolicyActionOutcome;
+  /** Set on `failed` and `skipped`; absent otherwise. */
+  reason?: PolicyActionReason;
+  /** A person's own words, and only ever theirs — carried on a release. */
+  note?: string;
+  /**
+   * Who is answerable: whoever ACTIVATED the rule, not whoever drafted it.
+   * Activation is the separately-permissioned decision (`policy.activate`), and
+   * an Analyst who drafts a rule cannot authorize it to enforce. Stamped for the
+   * same reason as `policyName` — a policy reactivated by someone else must not
+   * retroactively reassign responsibility for what already happened.
+   */
+  accountable: string;
+  /** Groups the rows one sweep produced. Absent on a release. */
+  sweepId?: string;
+  sweepReason?: SweepReason;
+  /** The action a release reverses. */
+  reversesId?: string;
+  at: string;
+} // append-only
+
 export type SessionStepKind = 'prompt' | 'tool-call' | 'model-response';
 
 export interface SessionStep {

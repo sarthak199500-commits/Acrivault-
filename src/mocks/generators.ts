@@ -19,6 +19,8 @@ import {
   type NhiType,
   type NotificationItem,
   type Policy,
+  type PolicyAction,
+  type PolicyActionReason,
   type PolicyToken,
   type RotationHistoryEntry,
   type RotationJob,
@@ -443,12 +445,15 @@ export function generatePolicies(identities: Identity[], seed: number, now: Date
       ],
     },
     {
-      name: 'Block dormant OAuth tokens',
+      // Was 'block' until that action left the vocabulary — it had no target state
+      // and nothing distinguished it from quarantine. Kept Suspended: it is the
+      // only seed exercising that status in the list's facet counts.
+      name: 'Quarantine dormant OAuth tokens',
       status: 'suspended',
       tokens: [
         { kind: 'when', subject: 'type', operator: 'is', value: 'oauth-token' },
         { kind: 'and', subject: 'governanceStatus', operator: 'is', value: 'ungoverned' },
-        { kind: 'then', subject: 'action', operator: 'set', value: 'block' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'quarantine' },
       ],
     },
     {
@@ -479,6 +484,122 @@ export function generatePolicies(identities: Identity[], seed: number, now: Date
       ...(d.status === 'active' || d.status === 'suspended' ? { activatedAt: updatedAt } : {}),
     };
   });
+}
+
+/* --------------------------------------------------------- policy actions */
+
+/**
+ * How many rows one seeded sweep produces. A real sweep acts on every match, but
+ * the fixture scales to 50k identities and a row per match would swamp the tab.
+ * The sweep header counts the rows that exist rather than the live match count,
+ * so what the summary says and what the list shows always agree.
+ */
+const SWEEP_ROWS = 18;
+
+/**
+ * A failure cause that is a property of the cloud rather than of the identity, so
+ * failures cluster the way real ones do and "N share the same cause" is true.
+ */
+function failureFor(cloud: Cloud): PolicyActionReason {
+  if (cloud === 'gcp') return 'connector-permission';
+  if (cloud === 'aws') return 'identity-gone';
+  return 'provider-error';
+}
+
+/**
+ * Actions left behind by policies that have enforced. Only a quarantine policy
+ * produces any: review and alert mark rather than act, and rotate is out of scope.
+ * A Suspended policy keeps its history — it enforced before it was stopped.
+ */
+export function generatePolicyActions(
+  identities: Identity[],
+  policies: Policy[],
+  users: User[],
+  seed: number,
+  now: Date,
+): PolicyAction[] {
+  const rng = new Rng(seed ^ 0xac7104);
+  const accountable = users[0]?.email ?? 'system';
+  const releaser = users[1]?.email ?? accountable;
+  const out: PolicyAction[] = [];
+  let seq = 0;
+  const nextId = () => `pac_${(seq++).toString(36).padStart(5, '0')}`;
+
+  const enforcing = policies.filter(
+    (p) =>
+      (p.status === 'active' || p.status === 'suspended') &&
+      p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'quarantine'),
+  );
+
+  for (const policy of enforcing) {
+    const matched = identities.filter((i) => matchesPolicy(i, policy.tokens));
+    if (matched.length === 0) continue;
+
+    const activatedMs = new Date(policy.activatedAt ?? policy.updatedAt).getTime();
+    const sweepId = `swp_${policy.id}_a`;
+    const quarantined: PolicyAction[] = [];
+
+    // The activation sweep: everything matching the moment the rule went live.
+    for (const identity of matched.slice(0, SWEEP_ROWS)) {
+      const base = {
+        id: nextId(),
+        policyId: policy.id,
+        policyName: policy.name,
+        identityId: identity.id,
+        accountable,
+        sweepId,
+        sweepReason: 'activation' as const,
+        at: new Date(activatedMs + rng.int(0, 90) * 1000).toISOString(),
+      };
+      // An identity already in that state is a skip, not a failure — the guard
+      // worked. Derived from the seeded status so the log reconciles with the
+      // inventory rather than asserting something the identity contradicts.
+      if (identity.status === 'quarantined') {
+        out.push({ ...base, outcome: 'skipped', reason: 'already-quarantined' });
+        continue;
+      }
+      if (rng.bool(0.12)) {
+        out.push({ ...base, outcome: 'failed', reason: failureFor(identity.sources[0]?.cloud ?? 'aws') });
+        continue;
+      }
+      const action: PolicyAction = { ...base, outcome: 'quarantined' };
+      out.push(action);
+      quarantined.push(action);
+    }
+
+    // One later re-evaluation, for policies still enforcing.
+    if (policy.status === 'active' && matched.length > SWEEP_ROWS) {
+      out.push({
+        id: nextId(),
+        policyId: policy.id,
+        policyName: policy.name,
+        identityId: matched[SWEEP_ROWS].id,
+        outcome: 'quarantined',
+        accountable,
+        sweepId: `swp_${policy.id}_r`,
+        sweepReason: 're-evaluation',
+        at: new Date(now.getTime() - rng.int(5, 240) * 60000).toISOString(),
+      });
+    }
+
+    // A reversal or two. These are the most useful rows on the screen — a
+    // quarantine a person undid is the signal that the rule itself is wrong.
+    for (const reversed of quarantined.slice(0, rng.int(1, 2))) {
+      out.push({
+        id: nextId(),
+        policyId: policy.id,
+        policyName: policy.name,
+        identityId: reversed.identityId,
+        outcome: 'released',
+        note: 'Still in active use — released pending a rule change.',
+        accountable: releaser,
+        reversesId: reversed.id,
+        at: new Date(new Date(reversed.at).getTime() + rng.int(20, 180) * 60000).toISOString(),
+      });
+    }
+  }
+
+  return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /* ------------------------------------------------------ rotation jobs */
