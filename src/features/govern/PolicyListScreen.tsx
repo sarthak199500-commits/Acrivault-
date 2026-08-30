@@ -142,7 +142,7 @@ function PolicyRow({
             stopPropagation because the row itself navigates to the builder. */}
         {policy.activatedAt && (
           <Link
-            to="/govern?tab=activity"
+            to={`/govern?tab=activity&policy=${policy.id}`}
             onClick={(e) => e.stopPropagation()}
             className="text-[length:var(--fs-micro)] text-accent-text hover:underline"
           >
