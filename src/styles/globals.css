@@ -251,6 +251,31 @@
   }
 }
 
+/* Radix measures the panel and exposes its height as a custom property, which is
+   what makes an auto-height section animatable at all. Opacity trails the height so
+   the text does not appear to slide out from under the trigger. */
+@keyframes accordion-open {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes accordion-close {
+  from {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
 @keyframes acv-indeterminate {
   0% {
     transform: translateX(-100%);
