@@ -6,35 +6,40 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
+  GitBranch,
+  Ban,
+  Loader,
   MessageSquare,
   ShieldCheck,
   ShieldX,
+  Sparkles,
   TriangleAlert,
   Wrench,
   CheckCheck,
 } from 'lucide-react';
-import { useMarkReviewed, useSession, useSessionIdentity } from './queries';
+import { useDecideBlockedStep, useMarkReviewed, useSession, useSessionIdentity } from './queries';
 import {
   useQuarantineAgent,
   useRecommendQuarantine,
   useReleaseQuarantine,
 } from '@/features/discover/queries';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
-import { SPAWN_KIND_LABELS, type SessionStep } from '@/mocks/types';
+import { SPAWN_KIND_LABELS, isFlaggedStep, type SessionStep, type StepStatus } from '@/mocks/types';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { RiskPill } from '@/components/ui/RiskPill';
+import { Button, buttonClasses } from '@/components/ui/Button';
 import { Timeline, type TimelineItem } from '@/components/ui/Timeline';
 import { KeyValueList } from '@/components/ui/KeyValueList';
 import { Banner } from '@/components/ui/Banner';
+import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Textarea } from '@/components/ui/Textarea';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
-import { Tooltip } from '@/components/ui/Tooltip';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { useCan } from '@/components/ui/Can';
 import { dateTime, duration, pluralize, relativeTime } from '@/lib/format';
 import { toast } from '@/stores/toast';
@@ -61,6 +66,22 @@ function elapsed(step: SessionStep, startedAt: string): string {
   return ms < 1000 ? '0s' : `+${duration(ms)}`;
 }
 
+/** One place decides how a step's verdict reads, so timeline and detail cannot drift. */
+function stepVerdict(step: SessionStep): { label: string; tone: 'critical' | 'warning'; icon: ReactNode } | null {
+  if (step.status === 'blocked') {
+    return step.holdEnforced === false
+      ? { label: 'Observed, not blocked', tone: 'warning', icon: <Ban className="h-3 w-3" aria-hidden="true" /> }
+      : { label: 'Held', tone: 'critical', icon: <Ban className="h-3 w-3" aria-hidden="true" /> };
+  }
+  if (step.status === 'anomaly') {
+    return { label: 'Anomaly', tone: 'critical', icon: <TriangleAlert className="h-3 w-3" aria-hidden="true" /> };
+  }
+  if (step.status === 'scoring') {
+    return { label: 'Scoring', tone: 'warning', icon: <Loader className="h-3 w-3" aria-hidden="true" /> };
+  }
+  return null;
+}
+
 function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
@@ -71,23 +92,38 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /**
- * The verdict, as one full-width strip above the trace.
+ * The verdict strip, full width above the trace.
  *
- * Everything an analyst needs before reading a single step — how bad, whether anyone
- * has looked, whether the agent is still acting — used to be scattered down a rail
- * beside the timeline, so the page opened with three columns of equal weight and no
- * entry point. One strip gives the screen a top line to read first.
+ * A session carries no score — spec 10.2 asks for `Flagged (Yes/No)` and 11.3 puts
+ * RISK_SCORE on the identity. What used to sit here was a derived 0..100 computed in the
+ * UI; ranking on the raw counts turned out to triage identically, so the number was pure
+ * audit liability. Actions live here too: as the last card in the rail they sat under
+ * the fold, and they are the point of the screen.
  */
 function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
   const quarantined = session.identityStatus === 'quarantined';
+  const scoringPending = session.steps.some((s) => s.status === 'scoring');
   return (
     <Card>
       <CardBody className="space-y-4 pt-5">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
-          <div className="min-w-0">
-            <div className="eyebrow mb-1">Session risk</div>
-            <RiskPill score={session.riskScore} />
-          </div>
+          <Stat label="Flagged">
+            {session.flagged ? (
+              <Badge tone="critical" icon={<TriangleAlert className="h-3 w-3" />}>Yes</Badge>
+            ) : (
+              <Badge tone="neutral">No</Badge>
+            )}
+          </Stat>
+          <Stat label="Anomalies">
+            <span className={'tnum ' + (session.anomalyCount > 0 ? 'font-medium text-crit-fg' : '')}>
+              {session.anomalyCount}
+            </span>
+          </Stat>
+          <Stat label="Held steps">
+            <span className={'tnum ' + (session.blockedCount > 0 ? 'font-medium text-crit-fg' : '')}>
+              {session.blockedCount}
+            </span>
+          </Stat>
           <Stat label="Review">
             <Badge tone={session.reviewState === 'reviewed' ? 'info' : 'warning'} className="capitalize">
               {session.reviewState}
@@ -100,11 +136,6 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
               <Badge tone="neutral">Acting</Badge>
             )}
           </Stat>
-          <Stat label="Anomalies">
-            <span className={'tnum ' + (session.anomalyCount > 0 ? 'font-medium text-crit-fg' : '')}>
-              {session.anomalyCount}
-            </span>
-          </Stat>
           <Stat label="Steps">
             <span className="tnum">{session.steps.length}</span>
           </Stat>
@@ -113,14 +144,16 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
           </Stat>
           <Stat label="Started">{relativeTime(session.startedAt)}</Stat>
 
-          {/* Beside the verdict, not below the rail. As the last card in a 780px stack
-              these sat under the fold, so the two most consequential controls on the
-              screen were the only things you had to go looking for. */}
           <div className="ml-auto">
             <Actions session={session} />
           </div>
         </div>
 
+        {scoringPending && (
+          <Banner tone="warning">
+            Some steps have not been scored yet. Treat this session as incomplete rather than clean.
+          </Banner>
+        )}
         {session.quarantineRecommendedAt && !quarantined && (
           <Banner tone="warning">
             An analyst has recommended quarantining this agent. Awaiting an admin decision.
@@ -131,21 +164,113 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
   );
 }
 
-/** The right-hand pane of the trace card: the step you selected, and how to move. */
+/** FR-006: an analyst confirms a hold or overrides it with a written justification. */
+function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; step: SessionStep }) {
+  const canAct = useCan('session.quarantine');
+  const decide = useDecideBlockedStep(session.id);
+  const [overriding, setOverriding] = useState(false);
+  const [justification, setJustification] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  if (step.blockDecision) {
+    return (
+      <Banner tone={step.blockDecision.outcome === 'confirmed' ? 'info' : 'warning'}>
+        {step.blockDecision.outcome === 'confirmed'
+          ? `Block confirmed ${relativeTime(step.blockDecision.at)}.`
+          : `Overridden ${relativeTime(step.blockDecision.at)} — “${step.blockDecision.justification}”`}
+      </Banner>
+    );
+  }
+
+  if (!canAct) return <RoleRestricted inline note="Your role can review this hold but not decide it." />;
+
+  const submitOverride = () => {
+    if (!justification.trim()) {
+      setError('Enter a justification before overriding.');
+      return;
+    }
+    decide.mutate(
+      { stepId: step.id, outcome: 'overridden', justification },
+      {
+        onSuccess: () => {
+          setOverriding(false);
+          setJustification('');
+          toast('Hold overridden', { tone: 'critical', description: 'Recorded in the audit trail.' });
+        },
+        onError: (err) => setError(errorInfo(err).message),
+      },
+    );
+  };
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        size="sm"
+        variant="danger"
+        loading={decide.isPending && !overriding}
+        onClick={() =>
+          decide.mutate(
+            { stepId: step.id, outcome: 'confirmed' },
+            { onSuccess: () => toast('Block confirmed', { tone: 'success' }) },
+          )
+        }
+      >
+        Confirm block
+      </Button>
+      <Button size="sm" variant="secondary" onClick={() => setOverriding(true)}>
+        Override…
+      </Button>
+
+      <Dialog
+        open={overriding}
+        onOpenChange={(o) => {
+          setOverriding(o);
+          if (!o) setError(null);
+        }}
+        size="sm"
+        title="Override this hold?"
+        description="The action this rule stopped will be allowed to proceed. A written justification is required and is recorded in the audit trail."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOverriding(false)} disabled={decide.isPending}>
+              Cancel
+            </Button>
+            <Button variant="danger" loading={decide.isPending} onClick={submitOverride}>
+              Override
+            </Button>
+          </>
+        }
+      >
+        <Textarea
+          label="Justification"
+          value={justification}
+          onChange={(e) => {
+            setJustification(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder="Why this action should be allowed to proceed"
+          error={error ?? undefined}
+          rows={3}
+        />
+      </Dialog>
+    </div>
+  );
+}
+
 function StepDetail({
+  session,
   step,
   index,
-  total,
-  startedAt,
   onStep,
 }: {
+  session: AgentSessionWithIdentity;
   step: SessionStep;
   index: number;
-  total: number;
-  startedAt: string;
   onStep: (delta: 1 | -1) => void;
 }) {
   const Icon = STEP_ICON[step.kind];
+  const verdict = stepVerdict(step);
+  const total = session.steps.length;
   return (
     <div className="flex min-w-0 flex-col">
       <CardHeader
@@ -155,7 +280,7 @@ function StepDetail({
             {STEP_LABEL[step.kind]}
           </span>
         }
-        description={`${dateTime(step.at)} · ${elapsed(step, startedAt)} into the session`}
+        description={`${dateTime(step.at)} · ${elapsed(step, session.startedAt)} into the session`}
         action={
           <span className="flex items-center gap-2">
             {step.scope && (
@@ -163,16 +288,28 @@ function StepDetail({
                 {step.scope}
               </Badge>
             )}
-            {step.anomaly && (
-              <Badge tone="critical" icon={<TriangleAlert className="h-3 w-3" />}>Anomaly</Badge>
-            )}
+            {verdict && <Badge tone={verdict.tone} icon={verdict.icon}>{verdict.label}</Badge>}
           </span>
         }
       />
       <CardBody className="flex-1 space-y-4">
-        {step.anomaly && (
-          <Banner tone="critical">
-            This step deviates from the agent's established behavior and was flagged for review.
+        {step.status === 'blocked' && (
+          <>
+            <Banner tone={step.holdEnforced === false ? 'warning' : 'critical'}>
+              {step.holdEnforced === false
+                ? `Matched ${step.blockedByRule ?? 'a hard-deny rule'}, but the source has no hold primitive — the action completed and was only observed.`
+                : `Held by ${step.blockedByRule ?? 'a hard-deny rule'}. The action did not complete.`}
+            </Banner>
+            <BlockDecision session={session} step={step} />
+          </>
+        )}
+        {step.status === 'anomaly' && (
+          // FR-005 wants the reason inline, not just a mark.
+          <Banner tone="critical">{step.anomalyReason ?? 'Outside baseline for this identity.'}</Banner>
+        )}
+        {step.status === 'scoring' && (
+          <Banner tone="warning">
+            The engine has not scored this step yet. It is not confirmed clean.
           </Banner>
         )}
         <div>
@@ -184,8 +321,6 @@ function StepDetail({
           <p className="text-[length:var(--fs-small)] text-text-secondary">{step.detail}</p>
         </div>
       </CardBody>
-      {/* "Step through the session timeline" is the FRS verb for this screen, and it had
-          no control — only clicking rows in the index beside it. */}
       <CardFooter className="mt-auto justify-between">
         <Button
           variant="ghost"
@@ -197,7 +332,7 @@ function StepDetail({
           Previous
         </Button>
         <span className="tnum text-[length:var(--fs-small)] text-text-tertiary">
-          Step {index + 1} of {total}
+          Step {step.stepNo} of {total}
         </span>
         <Button
           variant="ghost"
@@ -213,104 +348,13 @@ function StepDetail({
   );
 }
 
-/**
- * How many steps were flagged, and a way to reach them.
- *
- * This was two bare chevrons flanking the word "anomaly" in the card header — nothing
- * said they jumped between flagged steps, and with a single anomaly a *previous* and a
- * *next* both cycled to the same step. Now it states the count, and the affordance
- * matches the set: one anomaly gets one destination, several get a position and arrows.
- */
-function AnomalyJump({
-  anomalyIds,
-  selectedId,
-  onJump,
-}: {
-  anomalyIds: string[];
-  selectedId: string;
-  onJump: (dir: 1 | -1) => void;
-}) {
-  if (anomalyIds.length === 0) return null;
-  const position = anomalyIds.indexOf(selectedId) + 1;
-  const single = anomalyIds.length === 1;
-
-  return (
-    <div className="flex items-center justify-between gap-2 border-y border-border bg-surface-2 px-5 py-2">
-      <span className="inline-flex items-center gap-1.5 text-[length:var(--fs-micro)] font-medium text-crit-fg">
-        <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        {pluralize(anomalyIds.length, 'anomaly', 'anomalies')}
-      </span>
-
-      {single ? (
-        <button
-          type="button"
-          onClick={() => onJump(1)}
-          disabled={position === 1}
-          className="rounded px-1.5 py-0.5 text-[length:var(--fs-micro)] font-medium text-accent-text hover:bg-surface-hover disabled:cursor-default disabled:text-text-tertiary disabled:hover:bg-transparent"
-        >
-          {position === 1 ? 'Showing it' : 'Go to step'}
-        </button>
-      ) : (
-        <span className="flex items-center gap-1">
-          <span className="tnum text-[length:var(--fs-micro)] text-text-tertiary">
-            {position > 0 ? `${position} of ${anomalyIds.length}` : 'Jump to'}
-          </span>
-          {/* 24px minimum target (WCAG 2.2 SC 2.5.8) — these were 22px. */}
-          <Tooltip content="Previous anomalous step">
-            <button
-              type="button"
-              aria-label="Previous anomalous step"
-              onClick={() => onJump(-1)}
-              className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text"
-            >
-              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <Tooltip content="Next anomalous step">
-            <button
-              type="button"
-              aria-label="Next anomalous step"
-              onClick={() => onJump(1)}
-              className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text"
-            >
-              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </Tooltip>
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** Why the score is what it is. The number itself lives in the summary strip. */
-function RiskBreakdown({ session }: { session: AgentSessionWithIdentity }) {
-  return (
-    <Card>
-      <CardHeader title="Why this score" description="Scored from this session's own evidence." />
-      <CardBody>
-        <dl className="space-y-2.5">
-          {session.riskFactors.map((factor) => (
-            <div key={factor.label} className="grid grid-cols-[1fr_auto] items-baseline gap-2">
-              <dt className="text-[length:var(--fs-small)] text-text-secondary">{factor.label}</dt>
-              <dd className="tnum text-[length:var(--fs-small)] font-medium text-text">
-                +{Math.round(factor.points)}
-              </dd>
-              <p className="col-span-2 text-[length:var(--fs-micro)] text-text-tertiary">{factor.detail}</p>
-            </div>
-          ))}
-        </dl>
-      </CardBody>
-    </Card>
-  );
-}
-
 function Provenance({ session }: { session: AgentSessionWithIdentity }) {
   const identityQuery = useSessionIdentity(session.identityId);
   const spawn = session.provenance.spawnedBy;
   return (
     <Card>
       <CardHeader title="Provenance" description="What started this session, and what it ran as." />
-      <CardBody>
+      <CardBody className="space-y-4">
         <KeyValueList
           items={[
             { label: 'Spawned by', value: `${SPAWN_KIND_LABELS[spawn.kind]} — ${spawn.label}`, mono: true },
@@ -328,13 +372,9 @@ function Provenance({ session }: { session: AgentSessionWithIdentity }) {
               mono: true,
             },
             {
-              // Was its own card for a single link — a whole boundary around one line.
               label: 'Identity',
               value: identityQuery.data ? (
-                <Link
-                  to={`/discover/${identityQuery.data.id}`}
-                  className="text-accent-text hover:underline"
-                >
+                <Link to={`/discover/${identityQuery.data.id}`} className="text-accent-text hover:underline">
                   {identityQuery.data.name}
                 </Link>
               ) : (
@@ -342,16 +382,41 @@ function Provenance({ session }: { session: AgentSessionWithIdentity }) {
               ),
               mono: true,
             },
+            { label: 'Owner', value: session.identityOwner ?? 'Unassigned', mono: !!session.identityOwner },
           ]}
         />
+
+        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+          {/* FR-007: behaviour context straight through to reach context, no lookup. */}
+          <Link
+            to={`/resilience/blast-radius?origin=${encodeURIComponent(session.identityId)}`}
+            className={buttonClasses('secondary', 'sm')}
+          >
+            <GitBranch className="h-3.5 w-3.5" aria-hidden="true" />
+            Check reach
+          </Link>
+          <Tooltip content="Defender Copilot is a Wave 2 concept — advisory suggestions, never autonomous.">
+            <Link to="/resilience/copilot" className={buttonClasses('ghost', 'sm')}>
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              Ask Copilot
+              <span className="ml-1 rounded-[var(--r-xs)] border border-border px-1 text-[length:var(--fs-micro)] text-text-tertiary">
+                Concept
+              </span>
+            </Link>
+          </Tooltip>
+        </div>
       </CardBody>
     </Card>
   );
 }
 
 /**
- * Actions, gated per spec §5. Every role that can do *something* gets its own path:
- * an Analyst proposes, a Security Admin carries out, a Tenant Admin can undo.
+ * Actions, gated per spec §5. Every role that can do something gets its own path: an
+ * Analyst proposes, a Security Admin carries out, a Tenant Admin can undo.
+ *
+ * OPEN — spec conflict: the Intelligence FRS (AR-01, RBAC matrix 15.3) puts quarantine
+ * on the Security Analyst and makes the config admin view-only, which inverts this.
+ * Left as-is pending a decision; changing it touches lib/permissions across the product.
  */
 function Actions({ session }: { session: AgentSessionWithIdentity }) {
   const canReview = useCan('session.markReviewed');
@@ -365,6 +430,7 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
   const recommend = useRecommendQuarantine();
   const release = useReleaseQuarantine();
   const [confirm, setConfirm] = useState<null | 'review' | 'quarantine' | 'recommend' | 'release'>(null);
+  const [note, setNote] = useState('');
 
   const showReview = canReview && session.reviewState === 'open';
   const showQuarantine = canQuarantine && !quarantined;
@@ -372,10 +438,10 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
   const showRelease = canRelease && quarantined;
   const anyAction = showReview || showQuarantine || showRecommend || showRelease;
 
-  /** Same close-and-report handling for every action, so none can drift. */
   const settle = (message: string, tone: 'success' | 'critical') => ({
     onSuccess: () => {
       setConfirm(null);
+      setNote('');
       toast(message, { tone });
     },
     onError: (err: unknown) => toast(errorInfo(err).message, { tone: 'critical' }),
@@ -419,18 +485,43 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
         pending={markReviewed.isPending}
         onConfirm={() => markReviewed.mutate(session.id, settle('Session marked reviewed', 'success'))}
       />
-      <ConfirmDialog
+
+      {/* UC-04 takes an optional note at confirmation and notifies the agent's owner. */}
+      <Dialog
         open={confirm === 'quarantine'}
         onOpenChange={(o) => !o && setConfirm(null)}
+        size="sm"
         title={`Quarantine ${session.identityName}?`}
-        description="The agent keeps existing but is blocked from acting until released. This applies to the agent, so it affects every session it runs. Synthetic — no upstream state changes."
-        confirmLabel="Quarantine"
-        confirmVariant="danger"
-        pending={quarantine.isPending}
-        onConfirm={() =>
-          quarantine.mutate(session.identityId, settle(`${session.identityName} quarantined`, 'critical'))
+        description={`The agent keeps existing but is blocked from acting until released. This applies to the agent, so it affects every session it runs. ${session.identityOwner ? `${session.identityOwner} will be notified.` : 'This agent has no owner to notify.'} Synthetic — no upstream state changes.`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirm(null)} disabled={quarantine.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={quarantine.isPending}
+              onClick={() =>
+                quarantine.mutate(
+                  { identityId: session.identityId, note },
+                  settle(`${session.identityName} quarantined`, 'critical'),
+                )
+              }
+            >
+              Quarantine
+            </Button>
+          </>
         }
-      />
+      >
+        <Textarea
+          label="Note (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="What prompted this containment"
+          rows={2}
+        />
+      </Dialog>
+
       <ConfirmDialog
         open={confirm === 'recommend'}
         onOpenChange={(o) => !o && setConfirm(null)}
@@ -460,103 +551,145 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
   );
 }
 
+const TONE_FOR_STATUS: Record<StepStatus, 'default' | 'anomaly' | 'active'> = {
+  normal: 'default',
+  anomaly: 'anomaly',
+  blocked: 'anomaly',
+  scoring: 'default',
+};
+
 function Replay({ session }: { session: AgentSessionWithIdentity }) {
   const [selectedId, setSelectedId] = useState(session.steps[0]?.id ?? '');
   const selectedIndex = Math.max(0, session.steps.findIndex((s) => s.id === selectedId));
   const selected = session.steps[selectedIndex];
-  const anomalyIds = useMemo(() => session.steps.filter((s) => s.anomaly).map((s) => s.id), [session.steps]);
+  const flaggedIds = useMemo(
+    () => session.steps.filter(isFlaggedStep).map((s) => s.id),
+    [session.steps],
+  );
 
   const stepBy = (delta: 1 | -1) => {
     const next = session.steps[selectedIndex + delta];
     if (next) setSelectedId(next.id);
   };
 
-  const jumpAnomaly = (dir: 1 | -1) => {
-    if (anomalyIds.length === 0) return;
-    const curIndex = anomalyIds.indexOf(selectedId);
+  const jumpFlagged = (dir: 1 | -1) => {
+    if (flaggedIds.length === 0) return;
+    const curIndex = flaggedIds.indexOf(selectedId);
     const next =
       curIndex === -1
         ? dir === 1
-          ? anomalyIds[0]
-          : anomalyIds[anomalyIds.length - 1]
-        : anomalyIds[(curIndex + dir + anomalyIds.length) % anomalyIds.length];
+          ? flaggedIds[0]
+          : flaggedIds[flaggedIds.length - 1]
+        : flaggedIds[(curIndex + dir + flaggedIds.length) % flaggedIds.length];
     setSelectedId(next);
-    const position = anomalyIds.indexOf(next) + 1;
     const step = session.steps.find((s) => s.id === next);
-    // Say which anomaly, not just that one was picked — "selected" alone told a
-    // screen-reader user nothing about where they had landed.
     announce(
-      `Anomaly ${position} of ${anomalyIds.length}. ${step ? STEP_LABEL[step.kind] : 'Step'}: ${step?.summary ?? ''}. Step ${session.steps.findIndex((s) => s.id === next) + 1} of ${session.steps.length}.`,
+      `Flagged step ${flaggedIds.indexOf(next) + 1} of ${flaggedIds.length}. ${
+        step ? `${stepVerdict(step)?.label ?? ''} ${STEP_LABEL[step.kind]}: ${step.summary}. Step ${step.stepNo} of ${session.steps.length}.` : ''
+      }`,
     );
   };
 
   const items: TimelineItem[] = session.steps.map((step) => {
     const Icon = STEP_ICON[step.kind];
+    const verdict = stepVerdict(step);
     return {
       id: step.id,
       icon: <Icon className="h-3.5 w-3.5" aria-hidden="true" />,
-      // The summary is what the step DID — `assume_role(target)`, `delete_object(...)`.
-      // The row used to show only the kind, so five identical "Tool call" rows meant
-      // reading a session took one click per step.
       title: step.summary,
       subtitle: (
         <>
           {STEP_LABEL[step.kind]}
           {step.scope && <span className="text-text-secondary"> · {step.scope}</span>}
+          {step.anomalyReason && <span className="text-crit-fg"> · {step.anomalyReason}</span>}
         </>
       ),
-      flag: step.anomaly ? (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-[var(--r-xs)] bg-crit-bg px-1 font-medium text-crit-fg">
-          <TriangleAlert className="h-3 w-3" aria-hidden="true" />
-          Anomaly
+      flag: verdict ? (
+        <span
+          className={
+            'inline-flex shrink-0 items-center gap-1 rounded-[var(--r-xs)] px-1 font-medium ' +
+            (verdict.tone === 'critical' ? 'bg-crit-bg text-crit-fg' : 'bg-warn-bg text-warn-fg')
+          }
+        >
+          {verdict.icon}
+          {verdict.label}
         </span>
       ) : undefined,
       meta: elapsed(step, session.startedAt),
-      tone: step.anomaly ? 'anomaly' : step.id === selectedId ? 'active' : 'default',
+      tone: step.id === selectedId && step.status === 'normal' ? 'active' : TONE_FOR_STATUS[step.status],
       selected: step.id === selectedId,
       onSelect: () => setSelectedId(step.id),
     };
   });
 
   return (
-    // Source order is the mobile order: verdict, then the trace, then why and actions.
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_var(--rail-w)] xl:items-start">
       <div className="xl:col-span-2">
         <SessionSummary session={session} />
       </div>
 
-      {/* Index and content in one card, sharing one height. As two cards the index ran
-          676px beside a 186px detail pane with 490px of dead space under it — the
-          smallest thing on the page was the one you were meant to be reading. */}
       <Card className="overflow-hidden">
         <div className="grid md:grid-cols-[18rem_minmax(0,1fr)]">
           <div className="flex min-w-0 flex-col border-b border-border md:border-b-0 md:border-r">
             <CardHeader title="Timeline" />
-            <AnomalyJump anomalyIds={anomalyIds} selectedId={selectedId} onJump={jumpAnomaly} />
-            {/* Capped so the card has a definite height for the detail pane to match,
-                and short on mobile so that pane stays reachable without a long scroll.
-                Stable gutter: a 6-step session needs no scrollbar and a 12-step one
-                does, so without it the elapsed-time column jumped 10px between
-                sessions and whenever a filter changed the list. */}
+            {flaggedIds.length > 0 && (
+              <div className="flex items-center justify-between gap-2 border-y border-border bg-surface-2 px-5 py-2">
+                <span className="inline-flex items-center gap-1.5 text-[length:var(--fs-micro)] font-medium text-crit-fg">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  {pluralize(flaggedIds.length, 'flagged step')}
+                </span>
+                {flaggedIds.length === 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => jumpFlagged(1)}
+                    disabled={flaggedIds.indexOf(selectedId) === 0}
+                    className="rounded px-1.5 py-0.5 text-[length:var(--fs-micro)] font-medium text-accent-text hover:bg-surface-hover disabled:cursor-default disabled:text-text-tertiary disabled:hover:bg-transparent"
+                  >
+                    {flaggedIds.indexOf(selectedId) === 0 ? 'Showing it' : 'Go to step'}
+                  </button>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <span className="tnum text-[length:var(--fs-micro)] text-text-tertiary">
+                      {flaggedIds.indexOf(selectedId) >= 0
+                        ? `${flaggedIds.indexOf(selectedId) + 1} of ${flaggedIds.length}`
+                        : 'Jump to'}
+                    </span>
+                    <Tooltip content="Previous flagged step">
+                      <button
+                        type="button"
+                        aria-label="Previous flagged step"
+                        onClick={() => jumpFlagged(-1)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Next flagged step">
+                      <button
+                        type="button"
+                        aria-label="Next flagged step"
+                        onClick={() => jumpFlagged(1)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </Tooltip>
+                  </span>
+                )}
+              </div>
+            )}
             <div className="max-h-[16rem] overflow-y-auto px-5 pb-5 pt-3 [scrollbar-gutter:stable] md:max-h-[34rem]">
               <Timeline items={items} ariaLabel="Session steps" />
             </div>
           </div>
 
           {selected && (
-            <StepDetail
-              step={selected}
-              index={selectedIndex}
-              total={session.steps.length}
-              startedAt={session.startedAt}
-              onStep={stepBy}
-            />
+            <StepDetail session={session} step={selected} index={selectedIndex} onStep={stepBy} />
           )}
         </div>
       </Card>
 
       <aside className="space-y-4">
-        <RiskBreakdown session={session} />
         <Provenance session={session} />
       </aside>
     </div>
@@ -574,8 +707,6 @@ export function SessionReplayScreen() {
       <ScreenHeader
         eyebrow="Know · Intelligence · Session Replay"
         title={session ? session.identityName : 'Session Replay'}
-        // The time range only; step count, anomalies and duration read better as
-        // labelled figures in the summary strip than as a run-on of dot-separated text.
         description={session ? `${dateTime(session.startedAt)} – ${dateTime(session.endedAt)}` : undefined}
         actions={
           <Button variant="ghost" size="sm" leadingIcon={<ChevronLeft className="h-4 w-4" />} onClick={() => navigate('/intelligence')}>

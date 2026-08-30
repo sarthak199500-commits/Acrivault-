@@ -31,7 +31,6 @@ import {
   type User,
 } from './types';
 import { riskBand } from '@/lib/risk';
-import { sessionRisk } from '@/lib/sessionRisk';
 import { generatedCode, matchesPolicy, plainEnglish } from './policy';
 
 /* ----------------------------------------------------------------- seeded RNG */
@@ -381,6 +380,25 @@ const SPAWN_PROMPT: Record<SessionSpawnKind, string> = {
   agent: 'Upstream agent delegated task',
 };
 
+/**
+ * FR-005 requires the *reason* inline, not just a mark. Reasons are drawn to match the
+ * step: a privilege reason only lands on an admin-scoped call.
+ * // ASSUMPTION: the reason strings. The anomaly taxonomy is Architect-owned and still
+ * // open — see the Monitor conformance notes — so these are illustrative wording, not
+ * // a committed enum.
+ */
+const ANOMALY_REASONS = {
+  any: ['Never accessed before', 'Outside baseline for this identity', 'First use from this region'],
+  privileged: ['Privilege escalation not seen in baseline', 'Volume 40x the established baseline'],
+};
+
+/** Hard-deny rules that can hold a step (FR-006). */
+const DENY_RULES = [
+  'POL-14 — deny destructive calls on production storage',
+  'POL-07 — deny role assumption outside the agent’s home account',
+  'POL-22 — deny outbound mail from unattended agents',
+];
+
 export function generateSessions(identities: Identity[], seed: number, now: Date): AgentSession[] {
   const rng = new Rng(seed ^ 0x55aa55);
   const agents = identities.filter((i) => i.type === 'ai-agent');
@@ -399,9 +417,10 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
     const start = new Date(now.getTime() - rng.int(0, 7) * 86400000 - rng.int(0, 86400000));
     const spawnKind = rng.weighted<SessionSpawnKind>(['human', 'schedule', 'agent'], [4, 4, 3]);
     // A burst session fires its calls seconds apart; a routine one paces them over
-    // minutes. Both are normal shapes — the risk score is what tells them apart.
+    // minutes. Both are normal shapes — what the steps did is what tells them apart.
     const bursty = rng.bool(0.25);
     let anomalyCount = 0;
+    let blockedCount = 0;
     // Monotonic cursor. This was `start + s * rng.int(2000, 45000)`, which redrew the
     // interval every step and let step 4 land before step 3 — the timeline claimed an
     // order its own timestamps contradicted.
@@ -412,21 +431,45 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
         s === 0
           ? ('prompt' as const)
           : rng.weighted<SessionStep['kind']>(['prompt', 'tool-call', 'model-response'], [1, 6, 4]);
-      const anomaly = rng.bool(0.12);
-      if (anomaly) anomalyCount++;
       const call = kind === 'tool-call' ? rng.pick(TOOL_CALLS) : null;
+      const privileged = call ? call.scope !== 'read' : false;
+
+      // A hard-deny rule can only hold a state-changing call, and at most one per
+      // session — a held action is the loudest thing on the screen and loses that
+      // meaning if it is common.
+      const blocked = privileged && blockedCount === 0 && rng.bool(0.06);
+      const anomaly = !blocked && rng.bool(0.12);
+      if (anomaly) anomalyCount++;
+      if (blocked) blockedCount++;
+
+      const reasonPool = privileged
+        ? [...ANOMALY_REASONS.any, ...ANOMALY_REASONS.privileged]
+        : ANOMALY_REASONS.any;
+
       steps.push({
         id: `stp_${i}_${s}`,
+        stepNo: s + 1,
         kind,
         at: new Date(cursor).toISOString(),
         summary: s === 0 ? SPAWN_PROMPT[spawnKind] : call ? call.summary : rng.pick(OTHER_SUMMARIES[kind as 'prompt' | 'model-response']),
         detail: call
           ? `Invoked with scope ${call.scope}; latency ${rng.int(20, 900)}ms.`
           : 'Captured payload available in the full trace (synthetic).',
-        anomaly,
+        status: blocked ? 'blocked' : anomaly ? 'anomaly' : 'normal',
+        ...(anomaly ? { anomalyReason: rng.pick(reasonPool) } : {}),
+        // ~1 in 5 matched rules land on a source with no hold primitive, so the feed
+        // carries FR-006's exception case and not only its happy path.
+        ...(blocked ? { blockedByRule: rng.pick(DENY_RULES), holdEnforced: rng.bool(0.8) } : {}),
         ...(call ? { scope: call.scope } : {}),
       });
       cursor += bursty ? rng.int(700, 6000) : rng.int(4000, 90000);
+    }
+
+    // FR-005 exception: a step the engine has not scored yet must not read as clean.
+    // Only the tail of a session that ended in the last few minutes is still pending.
+    const last = steps[steps.length - 1];
+    if (last.status === 'normal' && now.getTime() - cursor < 12 * 60000) {
+      last.status = 'scoring';
     }
 
     const otherAgents = agents.filter((a) => a.id !== agent.id);
@@ -440,19 +483,13 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
             : `cron: ${rng.pick(['hourly-reconcile', 'nightly-sweep', '15m-poll'])}`,
     };
 
-    // Derived from the session's own evidence, with the agent's score as a bounded
-    // prior. Was `agent.riskScore` verbatim, which made every session of an agent
-    // score identically and ranked clean sessions above anomalous ones.
-    const risk = sessionRisk(steps, agent.riskScore);
-
     sessions.push({
       id: `ses_${i.toString(36).padStart(5, '0')}`,
       identityId: agent.id,
       startedAt: start.toISOString(),
       endedAt: new Date(cursor).toISOString(),
-      riskScore: risk.score,
-      riskFactors: risk.factors,
       anomalyCount,
+      blockedCount,
       steps,
       provenance: {
         model: rng.pick(MODELS),

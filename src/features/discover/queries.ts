@@ -77,8 +77,11 @@ function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string
   });
 }
 
+/** UC-04 takes an optional note at confirmation; it lands in the audit detail. */
 export function useQuarantineAgent() {
-  return useEnforcement((identityId: string) => quarantineAgent(identityId));
+  return useEnforcement(({ identityId, note }: { identityId: string; note?: string }) =>
+    quarantineAgent(identityId, note),
+  );
 }
 
 export function useReleaseQuarantine() {

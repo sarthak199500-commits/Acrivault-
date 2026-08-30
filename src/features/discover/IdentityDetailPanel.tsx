@@ -357,13 +357,16 @@ function DetailFooter({
         // identity never actually reached the 'quarantined' status it already models.
         onConfirm={() =>
           canQuarantine
-            ? quarantine.mutate(identity.id, {
-                onSuccess: () => {
-                  setConfirmQuarantine(false);
-                  toast(`${identity.name} quarantined`, { tone: 'critical' });
+            ? quarantine.mutate(
+                { identityId: identity.id },
+                {
+                  onSuccess: () => {
+                    setConfirmQuarantine(false);
+                    toast(`${identity.name} quarantined`, { tone: 'critical' });
+                  },
+                  onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
                 },
-                onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
-              })
+              )
             : recommend.mutate(
                 { identityId: identity.id },
                 {

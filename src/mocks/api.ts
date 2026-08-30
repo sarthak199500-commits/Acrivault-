@@ -18,6 +18,7 @@ import { riskBand } from '@/lib/risk';
 import { passwordError } from '@/lib/password';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
+import { isFlaggedStep } from './types';
 import type {
   Alert,
   AgentSession,
@@ -814,6 +815,10 @@ export function archivePolicy(id: string): Promise<Policy> {
 export type AgentSessionWithIdentity = AgentSession & {
   identityName: string;
   identityStatus: IdentityStatus;
+  /** Spec 10.2's Flagged column: does this session hold anything to weigh? */
+  flagged: boolean;
+  /** Owner of the acting agent, for the containment notice UC-04 sends. */
+  identityOwner?: string;
 };
 
 function withIdentityName(session: AgentSession): AgentSessionWithIdentity {
@@ -822,6 +827,8 @@ function withIdentityName(session: AgentSession): AgentSessionWithIdentity {
     ...session,
     identityName: identity?.name ?? session.identityId,
     identityStatus: identity?.status ?? 'active',
+    identityOwner: identity?.owner,
+    flagged: session.steps.some(isFlaggedStep),
   };
 }
 
@@ -872,16 +879,72 @@ export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentit
  * reached its existing 'quarantined' member, and the agent's other sessions still read
  * "open" after it had supposedly been contained.
  */
-export function quarantineAgent(identityId: string): Promise<Identity> {
+export function quarantineAgent(identityId: string, note?: string): Promise<Identity> {
   return respond(() => {
     const identity = findAgent(identityId);
     identity.status = 'quarantined';
+    const trimmed = note?.trim();
     appendAudit(
       'quarantined agent',
       identity.name,
-      'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
+      [
+        'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
+        trimmed ? `Note: ${trimmed}` : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
     );
+    // UC-04 main flow step 4: notify the identity's owner. An orphaned agent has no one
+    // to tell, which is itself worth surfacing rather than silently skipping.
+    pushNotification({
+      severity: 'critical',
+      title: identity.owner
+        ? `${identity.name} quarantined — ${identity.owner} notified`
+        : `${identity.name} quarantined — no owner to notify`,
+      href: `/discover/${identity.id}`,
+    });
     return { ...identity };
+  });
+}
+
+/**
+ * FR-006: an analyst resolves a held step by confirming the block or overriding it.
+ * APR-02 makes the justification mandatory on override — the override is the path that
+ * lets a hard-deny-matched action proceed, so it is the one that has to be defensible.
+ */
+export function decideBlockedStep(
+  sessionId: string,
+  stepId: string,
+  outcome: 'confirmed' | 'overridden',
+  justification?: string,
+): Promise<AgentSessionWithIdentity> {
+  return respond(() => {
+    const session = findSession(sessionId);
+    const step = session.steps.find((s) => s.id === stepId);
+    if (!step) throw new MockApiError('Step not found.');
+    if (step.status !== 'blocked') throw new MockApiError('This step is not held for review.');
+
+    const trimmed = justification?.trim();
+    if (outcome === 'overridden' && !trimmed) {
+      throw new MockApiError('A written justification is required to override a hold.', 'JUSTIFICATION_REQUIRED');
+    }
+
+    step.blockDecision = {
+      outcome,
+      at: new Date().toISOString(),
+      ...(trimmed ? { justification: trimmed } : {}),
+    };
+    appendAudit(
+      outcome === 'confirmed' ? 'confirmed held step' : 'overrode held step',
+      identityLabel(session.identityId),
+      [
+        `Step ${step.stepNo} (${step.summary}) — ${step.blockedByRule ?? 'hard-deny rule'}.`,
+        trimmed ? `Justification: ${trimmed}` : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    return withIdentityName(session);
   });
 }
 
@@ -1248,6 +1311,16 @@ function isValidEmail(email: string): boolean {
 /** An identity's display name for audit detail — never its raw id. */
 function identityLabel(identityId: string): string {
   return getDataset().identityById.get(identityId)?.name ?? identityId;
+}
+
+/** Raise an in-app notification (spec 13.4). Newest first, unread. */
+function pushNotification(input: { severity: NotificationItem['severity']; title: string; href?: string }): void {
+  getDataset().notifications.unshift({
+    id: `ntf_${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+    read: false,
+    ...input,
+  });
 }
 
 /** Append an immutable audit entry attributed to the current actor. */

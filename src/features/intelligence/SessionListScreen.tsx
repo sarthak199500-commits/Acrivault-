@@ -1,54 +1,66 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, FilterX, ShieldX, Sparkles, TriangleAlert, X } from 'lucide-react';
+import { ChevronRight, FilterX, Ban, ShieldX, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSessions } from './queries';
 import { applySessionFilter, useSessionFilters } from './useSessionFilters';
+import { SESSION_SORTS } from './sessionRanking';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
-import { riskBand } from '@/lib/risk';
 import { bucketByTime } from '@/lib/timeBuckets';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { RiskPill } from '@/components/ui/RiskPill';
 import { FilterPill } from '@/components/ui/FilterPill';
 import { DebouncedSearch } from '@/components/ui/DebouncedSearch';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { count, pluralize, relativeTime } from '@/lib/format';
 
 /**
- * Above this the list virtualizes into one flat risk ranking; below it, rows render
- * plainly inside their recency buckets and every row stays in the tab order.
- *
- * Set well above any realistic tenant on purpose. Sessions scale at ~1.5 per AI agent
- * and agents are a few percent of an estate, so a 1,500-identity tenant lands near 90
- * rows — the threshold was 40, which meant the normal case silently lost its time
- * buckets and the screen's structure changed with the size of the data. Past 200 the
- * flat ranking is the deliberate trade: virtualized rows cannot carry sticky headers.
+ * Above this the list virtualizes into one flat ranking; below it, rows render plainly
+ * inside their groups and every row stays in the tab order. Set well above any realistic
+ * tenant: sessions scale at ~1.5 per AI agent and agents are a few percent of an estate,
+ * so a 1,500-identity tenant lands near 90 rows.
  */
 const VIRTUALIZE_THRESHOLD = 200;
 /** Only a first guess — rows wrap at narrow widths, so each one is measured. */
-const ROW_ESTIMATE = 64;
+const ROW_ESTIMATE = 68;
 
-/** Worst first inside a recency bucket: the score now tracks the session, so it sorts. */
-const byRisk = (a: AgentSessionWithIdentity, b: AgentSessionWithIdentity) => b.riskScore - a.riskScore;
+/**
+ * Spec 10.2's Flagged column. A session carries no score of its own — this is the
+ * binary the spec asks for, and the ordering behind it comes from sessionRanking.
+ */
+function FlaggedCell({ session }: { session: AgentSessionWithIdentity }) {
+  if (session.blockedCount > 0) {
+    return (
+      <Badge tone="critical" icon={<Ban className="h-3 w-3" />}>
+        {pluralize(session.blockedCount, 'held step')}
+      </Badge>
+    );
+  }
+  if (session.anomalyCount > 0) {
+    return (
+      <Badge tone="critical" icon={<TriangleAlert className="h-3 w-3" />}>
+        {pluralize(session.anomalyCount, 'anomaly', 'anomalies')}
+      </Badge>
+    );
+  }
+  return <span className="text-[length:var(--fs-micro)] text-text-tertiary">Not flagged</span>;
+}
 
 function SessionRow({ session, onOpen }: { session: AgentSessionWithIdentity; onOpen: () => void }) {
-  // Calm by default: only elevated-risk rows get a coloured left rail.
-  const band = riskBand(session.riskScore).band;
-  const elevated = band === 'critical' || band === 'high';
-  const hasAnomalies = session.anomalyCount > 0;
   return (
     <button
       type="button"
       onClick={onOpen}
-      style={elevated ? { borderLeftColor: `var(--risk-${band})` } : undefined}
       className={
         'group flex w-full items-start gap-3 border-b border-b-border border-l-[3px] px-4 py-3 text-left last:border-b-0 hover:bg-surface-hover ' +
-        (elevated ? '' : 'border-l-transparent')
+        // Calm by default: only a flagged row gets a coloured rail.
+        (session.flagged ? 'border-l-[var(--critical)]' : 'border-l-transparent')
       }
     >
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--r-sm)] bg-accent-tint text-accent-text">
@@ -68,24 +80,21 @@ function SessionRow({ session, onOpen }: { session: AgentSessionWithIdentity; on
               Quarantined
             </Badge>
           )}
-          {/* Inline rather than a fixed 7rem column: at 375px that column stole 30% of
-              the row and clipped the meta line on every single one. */}
           <span className="ml-auto shrink-0">
-            <RiskPill score={session.riskScore} size="sm" />
+            <FlaggedCell session={session} />
           </span>
         </span>
 
-        {/* Wraps instead of clipping — the anomaly count sits last and was the first
-            thing lost at narrow widths, which is exactly the figure being scanned for. */}
+        {/* Every field spec 10.2 lists: session id, model, start–end, step count. Wraps
+            rather than clipping — at 375px a fixed row lost the rightmost figure. */}
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[length:var(--fs-micro)] text-text-tertiary">
+          <span className="font-mono">{session.id}</span>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono">{session.provenance.model}</span>
+          <span aria-hidden="true">·</span>
           <span>{relativeTime(session.startedAt)}</span>
           <span aria-hidden="true">·</span>
           <span className="tnum">{pluralize(session.steps.length, 'step')}</span>
-          <span aria-hidden="true">·</span>
-          <span className={'tnum inline-flex items-center gap-1 ' + (hasAnomalies ? 'text-crit-fg' : '')}>
-            {hasAnomalies && <TriangleAlert className="h-3 w-3" aria-hidden="true" />}
-            {pluralize(session.anomalyCount, 'anomaly', 'anomalies')}
-          </span>
         </span>
       </span>
     </button>
@@ -123,8 +132,6 @@ function VirtualSessionList({
             <div
               key={session.id}
               role="listitem"
-              // Measured, not assumed: a row is 64px wide-screen but wraps to ~86px on a
-              // phone, and a fixed estimate mis-positioned every row past the first.
               data-index={item.index}
               ref={virtualizer.measureElement}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
@@ -158,10 +165,7 @@ function PlainSessionList({
   );
 }
 
-/**
- * Reviewed sessions, out of the inline flow but at full contrast when expanded — the
- * same treatment Monitor gives acknowledged alerts. Nothing used to leave this feed.
- */
+/** Reviewed sessions, out of the flow but at full contrast when expanded. */
 function ReviewedSection({
   sessions,
   onOpen,
@@ -190,7 +194,7 @@ function ReviewedSection({
 export function SessionListScreen() {
   const query = useSessions();
   const navigate = useNavigate();
-  const { filter, setReview, toggleAnomalies, clearAgent, setSearch, clearAll, activeCount } =
+  const { filter, setReview, toggleFlagged, clearAgent, setSearch, setSort, clearAll, activeCount } =
     useSessionFilters();
   const openSession = (s: AgentSessionWithIdentity) => navigate(`/intelligence/${s.id}`);
 
@@ -199,11 +203,10 @@ export function SessionListScreen() {
     () => ({
       open: all.filter((s) => s.reviewState === 'open').length,
       reviewed: all.filter((s) => s.reviewState === 'reviewed').length,
-      anomalous: all.filter((s) => s.anomalyCount > 0).length,
+      flagged: all.filter((s) => s.flagged).length,
     }),
     [all],
   );
-  // The agent chip names the identity the deep link scoped to, not its raw id.
   const agentName = filter.agentId
     ? (all.find((s) => s.identityId === filter.agentId)?.identityName ?? filter.agentId)
     : null;
@@ -213,7 +216,7 @@ export function SessionListScreen() {
       <ScreenHeader
         eyebrow="Know · Intelligence"
         title="Agent Sessions"
-        description="Captured AI-agent sessions. Step through prompts, tool calls, and responses; anomalies are flagged."
+        description="Captured AI-agent sessions. Step through prompts, tool calls, and responses; anomalies and held steps are flagged."
         actions={
           activeCount > 0 && all.length > 0 ? (
             <span className="hidden text-[length:var(--fs-small)] text-text-secondary sm:inline">
@@ -242,8 +245,10 @@ export function SessionListScreen() {
           const filtered = applySessionFilter(sessions, filter);
           const open = filtered.filter((s) => s.reviewState === 'open');
           const reviewed = filtered.filter((s) => s.reviewState === 'reviewed');
-          const buckets = bucketByTime(open, (s) => s.startedAt);
           const virtualize = open.length > VIRTUALIZE_THRESHOLD;
+          // Recency groups the feed the way the alert feed groups; ranked by urgency it
+          // is one ordered list, because a group boundary would break the ordering.
+          const buckets = filter.sort === 'recent' ? bucketByTime(open, (s) => s.startedAt) : null;
 
           return (
             <div className="space-y-3">
@@ -251,17 +256,12 @@ export function SessionListScreen() {
                 <div className="w-full sm:w-64">
                   <DebouncedSearch
                     label="Search agent sessions"
-                    placeholder="Search by agent…"
+                    placeholder="Identity name or session ID"
                     value={filter.search}
                     onChange={setSearch}
                   />
                 </div>
-                <FilterPill
-                  label="All"
-                  count={sessions.length}
-                  selected={activeCount === 0}
-                  onClick={clearAll}
-                />
+                <FilterPill label="All" count={sessions.length} selected={activeCount === 0} onClick={clearAll} />
                 <FilterPill
                   label="Open"
                   count={counts.open}
@@ -274,15 +274,17 @@ export function SessionListScreen() {
                   selected={filter.review === 'reviewed'}
                   onClick={() => setReview(filter.review === 'reviewed' ? null : 'reviewed')}
                 />
-                <FilterPill
-                  label="Anomalies"
-                  count={counts.anomalous}
-                  selected={filter.anomaliesOnly}
-                  onClick={toggleAnomalies}
-                  icon={<TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />}
-                />
-                {/* Only while scoped — this facet is set by arriving from an agent, not
-                    chosen here, so an always-present chip would advertise a dead control. */}
+                <Tooltip content="At least one step matched an anomaly or policy rule.">
+                  <span>
+                    <FilterPill
+                      label="Flagged"
+                      count={counts.flagged}
+                      selected={filter.flaggedOnly}
+                      onClick={toggleFlagged}
+                      icon={<TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />}
+                    />
+                  </span>
+                </Tooltip>
                 {agentName && (
                   <FilterPill
                     label={
@@ -295,14 +297,23 @@ export function SessionListScreen() {
                     onClick={clearAgent}
                   />
                 )}
+                <div className="ml-auto">
+                  <SegmentedControl
+                    ariaLabel="Sort sessions"
+                    size="sm"
+                    value={filter.sort}
+                    onChange={setSort}
+                    options={SESSION_SORTS}
+                  />
+                </div>
               </div>
 
               <Card>
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={<FilterX className="h-5 w-5" />}
-                    headline="No sessions match these filters"
-                    guidance="Try removing a filter or clearing the search."
+                    headline="No sessions match your search"
+                    guidance="Try a different identity name or session ID, or remove a filter."
                     action={
                       <Button variant="secondary" onClick={clearAll}>
                         Clear filters
@@ -311,8 +322,13 @@ export function SessionListScreen() {
                   />
                 ) : (
                   <div>
+                    {/* Virtualizing is about row count, never about sort: forcing it for
+                        the ranked view put the same list behind a nested scroller at one
+                        setting and in the page flow at the other. */}
                     {virtualize ? (
-                      <VirtualSessionList sessions={[...open].sort(byRisk)} onOpen={openSession} />
+                      <VirtualSessionList sessions={open} onOpen={openSession} />
+                    ) : !buckets ? (
+                      <PlainSessionList sessions={open} onOpen={openSession} label="Agent sessions by urgency" />
                     ) : (
                       buckets.map((bucket) => (
                         <section key={bucket.label} aria-label={bucket.label}>
@@ -321,7 +337,7 @@ export function SessionListScreen() {
                             <span className="tnum text-text-tertiary">{bucket.items.length}</span>
                           </h2>
                           <PlainSessionList
-                            sessions={[...bucket.items].sort(byRisk)}
+                            sessions={bucket.items}
                             onOpen={openSession}
                             label={`${bucket.label} sessions`}
                           />
