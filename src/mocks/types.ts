@@ -194,27 +194,110 @@ export interface PolicyAction {
 
 export type SessionStepKind = 'prompt' | 'tool-call' | 'model-response';
 
+/** Privilege a tool call ran with. */
+export type ToolScope = 'read' | 'write' | 'admin';
+export const TOOL_SCOPES: ToolScope[] = ['read', 'write', 'admin'];
+
+/**
+ * What the detection engine concluded about a step.
+ *
+ * DEVIATION FROM SPEC 11.4: the FRS models `event_type` as one enum —
+ * `prompt_received / tool_call / model_response / anomaly / blocked` — which cannot
+ * express a blocked *tool call*: picking `blocked` loses what kind of step it was, and
+ * the timeline needs both. Kind and verdict are kept as separate axes here. The spec's
+ * five values are all still representable; they are just two fields instead of one.
+ *
+ * `scoring` is FR-005's exception flow: a very recent step the engine has not scored
+ * yet must not render as confirmed-clean.
+ */
+export type StepStatus = 'normal' | 'anomaly' | 'blocked' | 'scoring';
+
+/** A step the analyst has to weigh — anomalous or held. Drives the Flagged column. */
+export const FLAGGED_STATUSES: StepStatus[] = ['anomaly', 'blocked'];
+export const isFlaggedStep = (step: SessionStep): boolean =>
+  FLAGGED_STATUSES.includes(step.status);
+
 export interface SessionStep {
   id: string;
+  /** 1-based ordinal within the session; defines display order (spec 11.4). */
+  stepNo: number;
   kind: SessionStepKind;
+  /** Steps are chronological: `at` never moves backwards across the array. */
   at: string;
   summary: string;
   detail: string;
-  anomaly: boolean;
+  status: StepStatus;
+  /** Why the engine flagged it — FR-005 requires the reason inline, not just a mark. */
+  anomalyReason?: string;
+  /** The hard-deny rule that matched this step (status `blocked`, FR-006). */
+  blockedByRule?: string;
+  /**
+   * Whether the action was actually stopped. FR-006's exception flow: when the upstream
+   * system has no hold primitive the rule still matches but the call completes, and the
+   * step must read "observed, not blocked" rather than claiming a containment that
+   * never happened.
+   */
+  holdEnforced?: boolean;
+  /** Set once an analyst confirms the block or overrides it with justification. */
+  blockDecision?: { outcome: 'confirmed' | 'overridden'; justification?: string; at: string };
+  /** Tool calls only — the scope the call was invoked with. */
+  scope?: ToolScope;
 }
 
-export type SessionStatus = 'open' | 'reviewed' | 'quarantined';
+/**
+ * Whether a human has looked at this session. Deliberately NOT the place quarantine
+ * lives: quarantine blocks the *agent*, so it belongs on the identity
+ * (`Identity.status`). The two used to share one field, which made a
+ * quarantined-but-unreviewed session unrepresentable and left an agent's other
+ * sessions reading "open" after it had been contained.
+ */
+export type SessionReviewState = 'open' | 'reviewed';
 
+/** What spawned a session — the lineage FRS 3.5 asks provenance to answer. */
+export type SessionSpawnKind = 'human' | 'schedule' | 'agent';
+export const SPAWN_KIND_LABELS: Record<SessionSpawnKind, string> = {
+  human: 'Human user',
+  schedule: 'Scheduled trigger',
+  agent: 'Upstream agent',
+};
+
+export interface SessionProvenance {
+  model: string;
+  /** Where it ran. */
+  region: string;
+  /** What started it. */
+  spawnedBy: { kind: SessionSpawnKind; label: string };
+  /** Every credential the session authenticated with, not just the first. */
+  credentials: string[];
+}
+
+/**
+ * A session is FLAGGED or not — it carries no score of its own.
+ *
+ * There was a derived 0..100 `riskScore` here, computed in the frontend from anomaly
+ * density, privilege and burst. It fixed a real defect (the previous field copied
+ * `identity.riskScore`, so every session of one agent tied and clean sessions outranked
+ * anomalous ones) but replaced it with a worse problem: a number an analyst acts on and
+ * that reaches SOC 2 / HITRUST evidence, invented in a UI bundle, unversioned and
+ * unreproducible. Spec 11.3 puts RISK_SCORE on the IDENTITY, computed by the detection
+ * engine per CR-01 (60% behavioral deviation / 40% policy match, tenant-configurable);
+ * spec 10.2 gives the session list `Flagged (Yes/No)`. Ranking now uses the raw facts
+ * the engine already produces — see features/intelligence/sessionRanking.ts.
+ */
 export interface AgentSession {
   id: string;
   identityId: string;
   startedAt: string;
-  endedAt?: string;
-  riskScore: number;
+  endedAt: string;
   anomalyCount: number;
+  /** Steps held by a hard-deny rule (FR-006), counted separately from anomalies. */
+  blockedCount: number;
   steps: SessionStep[];
-  provenance: { model: string; origin: string; credentialRef: string };
-  status: SessionStatus;
+  provenance: SessionProvenance;
+  reviewState: SessionReviewState;
+  reviewedAt?: string;
+  /** Set when an Analyst proposes a quarantine for an admin to carry out. */
+  quarantineRecommendedAt?: string;
 }
 
 // ASSUMPTION: 6-phase lifecycle naming (Rotation and cascade-revocation mechanics).

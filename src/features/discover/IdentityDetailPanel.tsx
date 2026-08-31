@@ -7,11 +7,19 @@ import {
   Link2,
   ListChecks,
   RefreshCw,
+  ShieldCheck,
   ShieldX,
   Unlink,
   UserPlus,
 } from 'lucide-react';
-import { useAssignOwner, useIdentity, useRequestRotations } from './queries';
+import {
+  useAssignOwner,
+  useIdentity,
+  useQuarantineAgent,
+  useRecommendQuarantine,
+  useReleaseQuarantine,
+  useRequestRotations,
+} from './queries';
 import { CLOUD_LABELS, NHI_TYPE_LABELS, type Identity } from '@/mocks/types';
 import { NOW } from '@/mocks/dataset';
 import { Drawer } from '@/components/ui/Drawer';
@@ -222,17 +230,24 @@ function DetailFooter({
   // Recommend: an Analyst proposes the quarantine for an admin to carry out.
   const canRecommendQuarantine = useCan('session.quarantineRecommend');
   const canGovern = useCan('policy.create');
+  const canRelease = useCan('session.quarantineRelease');
   const showSessions = identity.type === 'ai-agent';
+  const quarantined = identity.status === 'quarantined';
   const anyControl =
     canRotateStd ||
     canRequest ||
     canQuarantine ||
     canRecommendQuarantine ||
+    canRelease ||
     canAssignOwner ||
     canGovern ||
     showSessions;
   const rotate = useRequestRotations();
+  const quarantine = useQuarantineAgent();
+  const recommend = useRecommendQuarantine();
+  const release = useReleaseQuarantine();
   const [confirmQuarantine, setConfirmQuarantine] = useState(false);
+  const [confirmRelease, setConfirmRelease] = useState(false);
 
   const startRotation = (verb: 'started' | 'requested') =>
     rotate.mutate([identity.id], {
@@ -287,11 +302,22 @@ function DetailFooter({
         </Link>
       )}
       {showSessions && (
-        <Link to="/intelligence" className={buttonClasses('ghost', 'sm')}>
+        // Scoped to this agent — the unscoped link dropped you into the global feed
+        // with no way to tell which rows belonged to the agent you came from.
+        <Link to={`/intelligence?agent=${encodeURIComponent(identity.id)}`} className={buttonClasses('ghost', 'sm')}>
           View sessions
         </Link>
       )}
-      {canQuarantine ? (
+      {quarantined && canRelease ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          leadingIcon={<ShieldCheck className="h-3.5 w-3.5" />}
+          onClick={() => setConfirmRelease(true)}
+        >
+          Release from quarantine
+        </Button>
+      ) : quarantined ? null : canQuarantine ? (
         <Button
           size="sm"
           variant="ghost"
@@ -326,17 +352,52 @@ function DetailFooter({
         }
         confirmLabel={canQuarantine ? 'Quarantine' : 'Send recommendation'}
         confirmVariant={canQuarantine ? 'danger' : 'primary'}
-        onConfirm={() => {
-          setConfirmQuarantine(false);
-          if (canQuarantine) {
-            toast(`${identity.name} quarantined`, { tone: 'critical' });
-          } else {
-            toast(`Quarantine recommended for ${identity.name}`, {
-              tone: 'success',
-              description: 'Sent to an admin for approval.',
-            });
-          }
-        }}
+        pending={quarantine.isPending || recommend.isPending}
+        // Was toast-only: the button reported success without calling anything, so the
+        // identity never actually reached the 'quarantined' status it already models.
+        onConfirm={() =>
+          canQuarantine
+            ? quarantine.mutate(
+                { identityId: identity.id },
+                {
+                  onSuccess: () => {
+                    setConfirmQuarantine(false);
+                    toast(`${identity.name} quarantined`, { tone: 'critical' });
+                  },
+                  onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
+                },
+              )
+            : recommend.mutate(
+                { identityId: identity.id },
+                {
+                  onSuccess: () => {
+                    setConfirmQuarantine(false);
+                    toast(`Quarantine recommended for ${identity.name}`, {
+                      tone: 'success',
+                      description: 'Sent to an admin for approval.',
+                    });
+                  },
+                  onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
+                },
+              )
+        }
+      />
+      <ConfirmDialog
+        open={confirmRelease}
+        onOpenChange={setConfirmRelease}
+        title={`Release ${identity.name} from quarantine?`}
+        description="The identity can act again immediately. Synthetic — no upstream state changes."
+        confirmLabel="Release"
+        pending={release.isPending}
+        onConfirm={() =>
+          release.mutate(identity.id, {
+            onSuccess: () => {
+              setConfirmRelease(false);
+              toast(`${identity.name} released`, { tone: 'success' });
+            },
+            onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
+          })
+        }
       />
     </div>
   );
