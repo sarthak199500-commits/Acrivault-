@@ -38,8 +38,14 @@ export function Accordion({
           <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
         </Radix.Trigger>
       </Radix.Header>
-      <Radix.Content className="px-4 pb-3 text-[length:var(--fs-small)] text-text-secondary">
-        {item.content}
+      <Radix.Content
+        className={cn(
+          'overflow-hidden text-[length:var(--fs-small)] text-text-secondary',
+          'data-[state=open]:animate-[accordion-open_var(--dur-3)_var(--ease-standard)]',
+          'data-[state=closed]:animate-[accordion-close_var(--dur-2)_var(--ease-standard)]',
+        )}
+      >
+        <div className="px-4 pb-3">{item.content}</div>
       </Radix.Content>
     </Radix.Item>
   ));

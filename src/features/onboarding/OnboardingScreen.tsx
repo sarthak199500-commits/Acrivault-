@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, CheckCircle2, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Check, CheckCircle2, LifeBuoy, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { CLOUDS, CLOUD_LABELS, NHI_TYPES, NHI_TYPE_LABELS, type Cloud as CloudT, type NhiType } from '@/mocks/types';
-import { discoveryScanTargets } from '@/mocks/dataset';
+import { discoveryScanTargets, getDataset } from '@/mocks/dataset';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader, CardFooter } from '@/components/ui/Card';
 import { Button, buttonClasses } from '@/components/ui/Button';
@@ -18,6 +18,9 @@ import { cn } from '@/lib/cn';
 import { useUiStore } from '@/stores/ui';
 import { CONNECTION_TONE as CONN_TONE, type ConnectionState as ConnState } from '@/lib/tones';
 import { ProviderMark } from '@/components/ui/ProviderMark';
+import { CloudConnectionDialog } from './CloudConnectionDialog';
+import type { FieldValues } from './connectors';
+import { HelpRequestDialog } from './HelpRequestDialog';
 
 const STEPS = [
   { id: 'connect', label: 'Connect' },
@@ -30,6 +33,11 @@ const STEPS = [
 // dashboard total exactly. ASSUMPTION: real connection/scopes/scan are Architect-owned.
 
 const TRUST_POINTS = ['Read-only access', 'Agentless', 'Nothing installed', 'Nothing changed'];
+
+/** How long the simulated console handoff takes to report back. */
+const HANDOFF_MS = 4000;
+/** Before this, "Check now" honestly answers "not finished yet". */
+const HANDOFF_MIN_MS = 1500;
 
 /** Compact, repeatable read-only reassurance kept visible through Scan and Review. */
 function ReadOnlyNote() {
@@ -67,10 +75,12 @@ function ConnectStep({
   states,
   canConnect,
   onConnect,
+  onManage,
 }: {
   states: Record<CloudT, ConnState>;
   canConnect: boolean;
   onConnect: (cloud: CloudT) => void;
+  onManage: (cloud: CloudT) => void;
 }) {
   const anyConnected = CLOUDS.some((c) => states[c] === 'connected');
 
@@ -114,14 +124,23 @@ function ConnectStep({
               </p>
               <div className="mt-auto w-full pt-1">
                 {!canConnect ? (
-                  <RoleRestricted inline note="Only a Security Admin can connect clouds." />
+                  // `connector.manage` is Tenant Admin and above — permissions.ts
+                  // withholds it from Security Admin, so naming that role here was
+                  // telling people to ask the one person who cannot help them.
+                  <RoleRestricted inline note="Only a Tenant Admin can connect clouds." />
                 ) : state === 'connected' ? (
-                  // A freshly-connected cloud is a confirmation, not an action — no
-                  // "Reconnect" button to avoid an accidental, pointless re-auth.
-                  <div className="inline-flex w-full items-center justify-center gap-1.5 rounded-[var(--r-sm)] border border-border bg-surface-2 px-3 py-1.5 text-[length:var(--fs-small)] font-medium text-text-secondary">
-                    <Check className="h-4 w-4 shrink-0 text-ok-fg" aria-hidden="true" />
+                  // Connecting is reversible, so a connected cloud is not a dead end:
+                  // this is the way back in to check health or disconnect.
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onManage(cloud)}
+                    leadingIcon={<Check className="h-4 w-4 text-ok-fg" />}
+                    aria-label={`View ${CLOUD_LABELS[cloud]} connection details`}
+                  >
                     Connected
-                  </div>
+                  </Button>
                 ) : (
                   <Button
                     variant="primary"
@@ -240,6 +259,7 @@ export function OnboardingScreen() {
   const navigate = useNavigate();
   const canConnect = useCan('connector.manage');
   const setDiscovered = useUiStore((s) => s.setDiscovered);
+  const role = useUiStore((s) => s.role);
   const [step, setStep] = useState(0);
   const [conn, setConn] = useState<Record<CloudT, ConnState>>({
     aws: 'disconnected',
@@ -253,8 +273,14 @@ export function OnboardingScreen() {
     'oauth-token': 0,
     'workload-identity': 0,
   });
+  const [connValues, setConnValues] = useState<Partial<Record<CloudT, FieldValues>>>({});
+  /** Which cloud's dialog is open, and whether it opened to connect or to manage. */
+  const [dialog, setDialog] = useState<{ cloud: CloudT; mode: 'connect' | 'manage' } | null>(null);
   const [scanning, setScanning] = useState(false);
   const timers = useRef<number[]>([]);
+  /** When each in-flight handoff started, so "Check now" can answer honestly. */
+  const handoffs = useRef(new Map<CloudT, number>());
+  const [helpOpen, setHelpOpen] = useState(false);
   // Targets mirror the dashboard's seeded per-type counts, so the discovery total
   // and the dashboard total are identical (and both scale with `?scale=`).
   const targets = useMemo(() => discoveryScanTargets(), []);
@@ -263,16 +289,59 @@ export function OnboardingScreen() {
 
   const anyConnected = Object.values(conn).some((s) => s === 'connected');
   const total = NHI_TYPES.reduce((sum, t) => sum + counts[t], 0);
+  // Per-cloud attribution only exists once the scan has run; before that the
+  // connection dialog says so rather than showing a confident zero.
+  const scanned = total > 0 && !scanning;
+  // An identity correlated across two clouds is seen in both, so these counts
+  // overlap rather than partition — hence "seen here", not a share of the total.
+  const cloudCounts = useMemo(() => {
+    if (!scanned) return undefined;
+    const out: Record<CloudT, number> = { aws: 0, gcp: 0, azure: 0 };
+    for (const identity of getDataset().identities) {
+      const clouds = new Set(identity.sources.map((src) => src.cloud));
+      for (const cloud of clouds) out[cloud] += 1;
+    }
+    return out;
+  }, [scanned]);
 
-  const connect = useCallback((cloud: CloudT) => {
-    setConn((c) => ({ ...c, [cloud]: 'connecting' }));
-    const t = window.setTimeout(() => {
-      // Mostly succeeds; small chance of a simulated error to exercise that state.
-      const ok = Math.random() > 0.12;
-      setConn((c) => ({ ...c, [cloud]: ok ? 'connected' : 'error' }));
-      announce(ok ? `${CLOUD_LABELS[cloud]} connected` : `${CLOUD_LABELS[cloud]} connection failed`);
-    }, 1100);
-    timers.current.push(t);
+  // The handoff timer lives here, not in the dialog, so closing the dialog mid-setup
+  // genuinely keeps the connection running — which is what the dialog copy promises.
+  const finish = useCallback((cloud: CloudT) => {
+    handoffs.current.delete(cloud);
+    setConn((c) => (c[cloud] === 'connecting' ? { ...c, [cloud]: 'connected' } : c));
+  }, []);
+
+  const startHandoff = useCallback(
+    (cloud: CloudT, values: FieldValues) => {
+      setConnValues((v) => ({ ...v, [cloud]: values }));
+      setConn((c) => ({ ...c, [cloud]: 'connecting' }));
+      handoffs.current.set(cloud, Date.now());
+      const t = window.setTimeout(() => finish(cloud), HANDOFF_MS);
+      timers.current.push(t);
+    },
+    [finish],
+  );
+
+  const cancelHandoff = useCallback((cloud: CloudT) => {
+    handoffs.current.delete(cloud);
+    setConn((c) => ({ ...c, [cloud]: 'disconnected' }));
+  }, []);
+
+  /** True when the customer's console has had long enough to report back. */
+  const checkNow = useCallback(
+    (cloud: CloudT) => {
+      const started = handoffs.current.get(cloud);
+      if (started === undefined || Date.now() - started < HANDOFF_MIN_MS) return false;
+      finish(cloud);
+      return true;
+    },
+    [finish],
+  );
+
+  const disconnect = useCallback((cloud: CloudT) => {
+    handoffs.current.delete(cloud);
+    // Discovery stops; identities already found stay put, exactly as the dialog says.
+    setConn((c) => ({ ...c, [cloud]: 'disconnected' }));
   }, []);
 
   const startScan = useCallback(() => {
@@ -298,6 +367,25 @@ export function OnboardingScreen() {
     }
   }, [setDiscovered, targets]);
 
+  const helpButton = (
+    <Button variant="secondary" size="sm" leadingIcon={<LifeBuoy className="h-4 w-4" />} onClick={() => setHelpOpen(true)}>
+      Need help
+    </Button>
+  );
+
+  // Exactly what "Include my setup details" attaches — enumerated so the checkbox
+  // can show it rather than asking anyone to trust a summary.
+  const helpContext = [
+    { label: 'Screen', value: 'Onboarding & Connect' },
+    { label: 'Step', value: STEPS[step].label },
+    { label: 'Clouds', value: CLOUDS.map((c) => `${PROVIDER_LABEL[c]} ${conn[c]}`).join(', ') },
+    { label: 'Viewing as', value: role },
+  ];
+
+  const helpDialog = (
+    <HelpRequestDialog open={helpOpen} onOpenChange={setHelpOpen} context={helpContext} />
+  );
+
   // Onboarding is admin-only: a person reaches it only with the Connect capability
   // (Tenant Admin or Security Admin). Everyone else is gated out, not walked through.
   if (!canConnect) {
@@ -306,12 +394,19 @@ export function OnboardingScreen() {
         <ScreenHeader eyebrow="Get started" title="Onboarding & Connect" description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
         <Card>
           <CardBody className="space-y-4 pt-5">
-            <RoleRestricted note="Onboarding is available to administrators. Ask a Tenant Admin or Security Admin to connect your clouds." />
+            {/* This card has no stepper header to hang the action off, so the button
+                is mirrored here — this is the screen that has just told someone they
+                cannot proceed, which makes it the worst place to hide help. */}
+            <div className="flex items-start justify-between gap-4">
+              <RoleRestricted note="Onboarding is available to administrators. Ask a Tenant Admin or Security Admin to connect your clouds." />
+              <div className="shrink-0">{helpButton}</div>
+            </div>
             <a href="/" className={buttonClasses('secondary', 'sm')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
               Go to dashboard
             </a>
           </CardBody>
         </Card>
+        {helpDialog}
       </div>
     );
   }
@@ -335,9 +430,19 @@ export function OnboardingScreen() {
       <ScreenHeader eyebrow="Get started" title="Onboarding & Connect" description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
 
       <Card elevated>
-        <CardHeader title={<Stepper steps={STEPS} current={step} currentComplete={step === 1 && !scanning} />} />
+        <CardHeader
+          title={<Stepper steps={STEPS} current={step} currentComplete={step === 1 && !scanning} />}
+          action={helpButton}
+        />
         <CardBody className="pt-2">
-          {step === 0 && <ConnectStep states={conn} canConnect={canConnect} onConnect={connect} />}
+          {step === 0 && (
+            <ConnectStep
+              states={conn}
+              canConnect={canConnect}
+              onConnect={(cloud) => setDialog({ cloud, mode: 'connect' })}
+              onManage={(cloud) => setDialog({ cloud, mode: 'manage' })}
+            />
+          )}
           {step === 1 && <ScanStep counts={counts} scanning={scanning} total={total} targets={targets} />}
           {step === 2 && <ReviewStep counts={counts} total={total} />}
         </CardBody>
@@ -373,6 +478,24 @@ export function OnboardingScreen() {
           )}
         </CardFooter>
       </Card>
+
+      {helpDialog}
+
+      {dialog && (
+        <CloudConnectionDialog
+          cloud={dialog.cloud}
+          open
+          onOpenChange={(o) => !o && setDialog(null)}
+          mode={dialog.mode}
+          status={conn[dialog.cloud]}
+          values={connValues[dialog.cloud]}
+          identitiesFound={cloudCounts?.[dialog.cloud]}
+          onSubmit={(values) => startHandoff(dialog.cloud, values)}
+          onCancel={() => cancelHandoff(dialog.cloud)}
+          onCheckNow={() => checkNow(dialog.cloud)}
+          onDisconnect={() => disconnect(dialog.cloud)}
+        />
+      )}
     </div>
   );
 }
