@@ -392,7 +392,7 @@ export function UsersScreen() {
                 loading={sync.isPending}
                 onClick={() => void onSync()}
               >
-                Sync
+                Sync now
               </Button>
               <p className="mt-1 text-[length:var(--fs-micro)] text-text-tertiary">
                 {sync.data

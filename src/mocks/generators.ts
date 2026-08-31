@@ -828,11 +828,14 @@ export function generateTenant(now: Date): Tenant {
         expiresAt: new Date(now.getTime() + CERT_DAYS * DAY).toISOString(),
       },
       savedAt: iso(now, 11 * DAY),
-      lastSignInAt: iso(now, 6 * MINUTE),
+      // Minutes-old values read against real time, not the hour-floored NOW the
+      // rest of the seed uses: floored, "6 minutes ago" drifts up to an hour and
+      // a healthy connection renders as a neglected one.
+      lastSignInAt: iso(new Date(), 6 * MINUTE),
     },
     scim: {
       tokenIssuedAt: iso(now, 10 * DAY),
-      lastSyncAt: iso(now, 4 * MINUTE),
+      lastSyncAt: iso(new Date(), 4 * MINUTE),
       usersReceived: 11,
     },
     passwordFallback: true,
