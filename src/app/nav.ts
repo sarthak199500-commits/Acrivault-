@@ -74,7 +74,7 @@ export const ALL_NAV_ITEMS: (NavItem & { layer: string })[] = NAV.flatMap((g) =>
 
 export const EXTRA_TITLES: Record<string, string> = {
   '/onboarding': 'Onboarding & Connect',
-  '/settings/sso': 'Sign-in & SSO',
+  '/settings/sso': 'Single Sign-On',
   '/settings/users': 'Manage Users',
   '/resilience/rehearsals': 'Recovery Rehearsals',
   '/resilience/copilot': 'Defender Copilot',
@@ -86,7 +86,6 @@ export const EXTRA_TITLES: Record<string, string> = {
   '/register/complete': 'Welcome to Acrivault',
   '/register/password': 'Create your password',
   '/login': 'Sign in',
-  '/accept-invite': 'Accept Invitation',
   '/mfa/setup': 'Set up authentication',
   '/mfa/challenge': 'Verify it’s you',
   '/forgot-password': 'Reset your password',

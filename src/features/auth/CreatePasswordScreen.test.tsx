@@ -86,7 +86,7 @@ describe('CreatePasswordScreen', () => {
     await user.click(submitButton());
 
     expect(createPassword).toHaveBeenCalledWith('sarthak@acrivault.com', STRONG);
-    // Password first, then the second factor — the same order as AcceptInviteScreen.
+    // Password first, then the second factor — the registration order.
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/mfa/setup'));
     expect(useFlowStore.getState().passwordSet).toBe(true);
     // firstRun must survive until MFA completes, or the guard there would bounce back.

@@ -13,15 +13,15 @@ const DESCRIBED: { cap: Capability; phrase: string }[] = [
   { cap: 'rotate.request', phrase: 'Recommend a credential rotation' },
   { cap: 'rotate.emergency', phrase: 'Run emergency credential rotation' },
   { cap: 'session.quarantine', phrase: 'Quarantine agent sessions' },
-  { cap: 'users.add', phrase: 'Add teammates' },
+  { cap: 'users.edit', phrase: 'Assign roles to the people Entra provisions' },
   { cap: 'users.delete', phrase: 'Suspend and remove users' },
   { cap: 'sso.manage', phrase: 'Configure sign-in & SSO' },
   { cap: 'tenant.manage', phrase: 'Manage organization settings' },
 ];
 
 /**
- * A plain-English summary of what a role can and cannot do, for the Review
- * Invitation screen. Truthful by construction — it reads the permission matrix.
+ * A plain-English summary of what a role can and cannot do, shown before an admin
+ * commits to granting it. Truthful by construction — it reads the permission matrix.
  */
 export function PermissionsSummary({ role }: { role: Role }) {
   const cans = DESCRIBED.filter((d) => can(role, d.cap));

@@ -110,7 +110,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'settings/sso',
-        lazy: async () => ({ Component: (await import('@/features/platform/SsoScreen')).SsoScreen }),
+        lazy: async () => ({ Component: (await import('@/features/platform/sso/SsoScreen')).SsoScreen }),
       },
       // User administration (add-on). Add / Edit are modals over the list.
       {
@@ -165,10 +165,6 @@ export const router = createBrowserRouter([
       {
         path: 'login',
         lazy: async () => ({ Component: (await import('@/features/auth/LoginScreen')).LoginScreen }),
-      },
-      {
-        path: 'accept-invite/:token',
-        lazy: async () => ({ Component: (await import('@/features/auth/AcceptInviteScreen')).AcceptInviteScreen }),
       },
       {
         path: 'mfa/setup',

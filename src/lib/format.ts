@@ -72,6 +72,18 @@ export function relativeTime(iso: string | Date, now: Date = new Date()): string
 }
 
 /**
+ * Relative time for something that has already happened — "synced 4 minutes ago",
+ * "issued last week". A timestamp fractionally ahead of `now` is clock skew or a
+ * value written after this render began, never the future, so it clamps to "just
+ * now" rather than reporting "in 2 seconds".
+ */
+export function timeAgo(iso: string | Date, now: Date = new Date()): string {
+  const then = typeof iso === 'string' ? new Date(iso) : iso;
+  if (then.getTime() >= now.getTime()) return 'just now';
+  return relativeTime(then, now);
+}
+
+/**
  * Whole-day relative time, e.g. "Today", "1 day ago", "32 days ago". Unlike
  * relativeTime, which rolls up into weeks/months, this always reports in days.
  */

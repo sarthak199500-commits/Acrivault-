@@ -15,7 +15,7 @@ import { useFlowStore } from '@/stores/flow';
  * Flow A · step 5a. The tenant owner sets the password backing the email + password
  * sign-in path, then enrols in MFA.
  *
- * Password before MFA, matching AcceptInviteScreen: the first factor is established
+ * Password before MFA: the first factor is established
  * before the second is added. Both screens are step 5 ("Secure").
  */
 export function CreatePasswordScreen() {

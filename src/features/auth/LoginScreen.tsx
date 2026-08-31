@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Banner } from '@/components/ui/Banner';
 import { getTenant, login, ssoReturn, ssoStart } from '@/mocks/api';
+import { isSignInFederated } from '@/lib/sso';
 import { SSO_PROVIDER_LABELS } from '@/mocks/types';
 import { errorInfo } from '@/lib/apiError';
 import { useAuthStore } from '@/stores/auth';
@@ -45,7 +46,7 @@ export function LoginScreen() {
   const [mode, setMode] = useState<'sso' | 'password'>('sso');
 
   const provider = tenant.data?.sso.provider ?? 'entra';
-  const tenantHasIdp = tenant.data?.sso.configured ?? true;
+  const tenantHasIdp = tenant.data ? isSignInFederated(tenant.data.saml, new Date()) : true;
   // 'auto' follows the tenant; otherwise the dev toggle forces a path.
   const ssoOffered = signInPref === 'auto' ? tenantHasIdp : signInPref === 'sso';
   const showSso = ssoOffered && mode === 'sso';

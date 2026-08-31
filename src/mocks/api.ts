@@ -16,6 +16,7 @@ import {
 import { mulberry32 } from './generators';
 import { riskBand } from '@/lib/risk';
 import { passwordError } from '@/lib/password';
+import { samlStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
 import type {
@@ -28,7 +29,6 @@ import type {
   GovernanceStatus,
   Identity,
   IdentityStatus,
-  Invitation,
   MonitoringBaseline,
   NhiType,
   NotificationItem,
@@ -1445,7 +1445,12 @@ export async function acceptLegal(
     name: domain ? domain.split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : 'New organization',
     allowedDomains: domain ? [domain] : [],
     status: 'active',
-    sso: { provider: 'none', configured: false },
+    sso: { provider: 'entra' },
+    saml: { entityId: null, ssoUrl: null, certificate: null, cert: null, savedAt: null, lastSignInAt: null },
+    scim: { tokenIssuedAt: null, lastSyncAt: null, usersReceived: 0 },
+    // The Owner signs in with a password until federation is configured — and
+    // stays able to, because they are the only account Entra will not manage.
+    passwordFallback: true,
     createdAt: new Date().toISOString(),
   };
   const user: User = {
@@ -1454,9 +1459,10 @@ export async function acceptLegal(
     name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
     email,
     role: 'tenant-owner',
-    status: 'pending',
-    authMethod: 'sso',
-    invitedAt: new Date().toISOString(),
+    status: 'active',
+    source: 'local',
+    authMethod: 'password',
+    addedAt: new Date().toISOString(),
   };
   return { tenant, user };
 }
@@ -1650,70 +1656,264 @@ function ownerUser(email: string): User {
     email,
     role: 'tenant-owner',
     status: 'active',
+    source: 'local',
     authMethod: 'password',
+    addedAt: new Date().toISOString(),
   };
-}
-
-/* ------------------------------------------------------------- invitations */
-
-export async function resolveInvite(token: string): Promise<Invitation> {
-  await settle();
-  const invite = getDataset().invitations.find((i) => i.token === token);
-  if (!invite) {
-    throw new MockApiError('This invitation link is invalid.', 'INVALID_TOKEN');
-  }
-  if (invite.status === 'revoked') {
-    throw new MockApiError('This invitation has been revoked.', 'REVOKED_TOKEN');
-  }
-  if (invite.status === 'expired') {
-    throw new MockApiError('This invitation has expired.', 'EXPIRED_TOKEN');
-  }
-  if (invite.status === 'accepted') {
-    throw new MockApiError('You are already a member. Please log in.', 'ALREADY_ACCEPTED');
-  }
-  return { ...invite };
-}
-
-/** Accept an invitation: invitation → accepted, the user → active. */
-export async function acceptInvite(token: string): Promise<{ ok: true }> {
-  await settle();
-  const ds = getDataset();
-  const invite = ds.invitations.find((i) => i.token === token);
-  if (!invite || invite.status !== 'pending') {
-    throw new MockApiError('This invitation can no longer be accepted.', 'INVALID_TOKEN');
-  }
-  invite.status = 'accepted';
-  const user = ds.users.find((u) => u.email === invite.email);
-  if (user) {
-    user.status = 'active';
-    user.lastLogin = new Date().toISOString();
-  }
-  return { ok: true };
 }
 
 /* --------------------------------------------------------- administration */
 
 export function getTenant(): Promise<Tenant> {
-  return respond(() => ({ ...getDataset().tenant }));
+  return respond(() => {
+    const { tenant } = getDataset();
+    settleScim(tenant);
+    return cloneTenant(tenant);
+  });
 }
+
+/**
+ * A real backend serialises a fresh document on every read. The in-memory mock
+ * must do the same: a shallow spread would hand out the live `saml`/`scim`
+ * objects, and mutating those in place defeats React Query's structural sharing —
+ * the data changes but its identity does not, so nothing re-renders.
+ */
+function cloneTenant(t: Tenant): Tenant {
+  return {
+    ...t,
+    allowedDomains: [...t.allowedDomains],
+    sso: { ...t.sso },
+    saml: { ...t.saml, cert: t.saml.cert ? { ...t.saml.cert } : null },
+    scim: { ...t.scim },
+  };
+}
+
+/* ------------------------------------------------- single sign-on & SCIM */
+
+/** How long Entra takes to make its first provisioning call, in the simulation. */
+const ENTRA_FIRST_CALL_MS = 12000;
+
+/**
+ * Entra's first provisioning call arrives on its own — the setup screen watches
+ * for it rather than asking the admin to press "check status" for something the
+ * server already knows. Reading the tenant is what advances the simulation.
+ */
+function settleScim(t: Tenant): void {
+  if (!t.scim.tokenIssuedAt || t.scim.lastSyncAt) return;
+  if (Date.now() - new Date(t.scim.tokenIssuedAt).getTime() < ENTRA_FIRST_CALL_MS) return;
+  t.scim.lastSyncAt = new Date().toISOString();
+  t.scim.usersReceived = getDataset().users.filter(
+    (u) => u.source === 'entra' && u.status !== 'deleted',
+  ).length;
+}
+
+/** Guard: never leave the tenant with nobody able to sign in. */
+function assertNotSelfLockout(t: Tenant): void {
+  if (t.passwordFallback) return;
+  throw new MockApiError(
+    'Turn password sign-in back on before changing what Acrivault trusts. Until Entra serves the new certificate, nobody can get in.',
+    'LOCKOUT_RISK',
+  );
+}
+
+/**
+ * Save what Acrivault trusts for sign-in. Saving clears the last-sign-in proof on
+ * purpose: a changed configuration is a claim again until Entra exercises it, and
+ * the screen must not keep showing green over an untested certificate.
+ */
+export async function saveSamlConfig(draft: SamlDraft): Promise<Tenant> {
+  await settle();
+  assertActorCan('sso.manage');
+  if (authScenario() === 'api-failure') {
+    throw new MockApiError('Could not save the configuration. Please try again.', 'API_FAILURE');
+  }
+  if (validateSaml(draft).length > 0) {
+    throw new MockApiError('Check the highlighted fields before saving.', 'INVALID_SAML');
+  }
+  const ds = getDataset();
+  assertNotSelfLockout(ds.tenant);
+  ds.tenant.saml = {
+    entityId: draft.entityId.trim(),
+    ssoUrl: draft.ssoUrl.trim(),
+    certificate: draft.certificate.trim(),
+    // ASSUMPTION: x509 is decoded upstream. The UI never parses a certificate; it
+    // renders the summary it is handed so the admin can confirm what they pasted.
+    cert: {
+      subject: 'CN=Microsoft Azure Federated SSO Certificate',
+      thumbprint: '3A9F 2B41 7C08 D5E6 1F93 4A70 B2C8 6D11 5E0F 92A3',
+      expiresAt: new Date(Date.now() + 195 * 86400000).toISOString(),
+    },
+    savedAt: new Date().toISOString(),
+    lastSignInAt: null,
+  };
+  appendAudit('saved SAML configuration', ds.tenant.name, 'Sign-in must be tested before it is trusted.');
+  return cloneTenant(ds.tenant);
+}
+
+/** Run a real assertion through Entra. This — not a saved form — is what proves SAML works. */
+export async function testSamlSignIn(): Promise<Tenant> {
+  await settle();
+  assertActorCan('sso.manage');
+  const ds = getDataset();
+  if (!ds.tenant.saml.savedAt) {
+    throw new MockApiError('Save the configuration before testing sign-in.', 'NOT_CONFIGURED');
+  }
+  if (authScenario() === 'api-failure') {
+    throw new MockApiError('Entra rejected the assertion. Check the certificate in Entra.', 'SAML_REJECTED');
+  }
+  ds.tenant.saml.lastSignInAt = new Date().toISOString();
+  appendAudit('tested SAML sign-in', ds.tenant.name);
+  return cloneTenant(ds.tenant);
+}
+
+/**
+ * Issue the bearer token Entra's provisioning service authenticates with. The
+ * plaintext is returned exactly once — nothing reads it back afterwards, which is
+ * why re-issuing is the only recovery and why it revokes its predecessor.
+ */
+export async function generateScimToken(): Promise<{ token: string; tenant: Tenant }> {
+  await settle();
+  assertActorCan('sso.manage');
+  const ds = getDataset();
+  if (!scimUnlocked(ds.tenant.saml, new Date())) {
+    throw new MockApiError(
+      'Finish sign-in first. Entra cannot provision into an application it cannot sign into.',
+      'SAML_REQUIRED',
+    );
+  }
+  if (authScenario() === 'api-failure') {
+    throw new MockApiError('Could not issue a token. Please try again.', 'API_FAILURE');
+  }
+  const token = `scim_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  ds.tenant.scim.tokenIssuedAt = new Date().toISOString();
+  // A new token invalidates the credentials Entra holds, so the connection is
+  // unproven again until Entra authenticates with this one.
+  ds.tenant.scim.lastSyncAt = null;
+  appendAudit('issued SCIM token', ds.tenant.name, 'Any previous token was revoked.');
+  return { token, tenant: cloneTenant(ds.tenant) };
+}
+
+/** Turn password sign-in on or off for the accounts Entra does not manage. */
+export async function setPasswordFallback(on: boolean): Promise<Tenant> {
+  await settle();
+  assertActorCan('sso.manage');
+  const ds = getDataset();
+  if (!on && samlStatus(ds.tenant.saml, new Date()) !== 'connected') {
+    throw new MockApiError(
+      'Sign-in through Entra has not been proven yet. Test it before turning off the way back in.',
+      'LOCKOUT_RISK',
+    );
+  }
+  ds.tenant.passwordFallback = on;
+  appendAudit(on ? 'enabled password sign-in' : 'disabled password sign-in', ds.tenant.name);
+  return cloneTenant(ds.tenant);
+}
+
+export interface SyncResult {
+  added: number;
+  updated: number;
+  suspended: number;
+  at: string;
+}
+
+/**
+ * Pull from Entra now rather than waiting for its schedule. Entra stays the source
+ * of truth for who exists: this adds the people it has assigned and suspends —
+ * never deletes — the ones it has deactivated, so the audit trail survives.
+ */
+export async function syncUsers(): Promise<SyncResult> {
+  await settle();
+  assertActorCan('users.edit');
+  if (authScenario() === 'api-failure') {
+    throw new MockApiError('Could not reach Entra. Please try again.', 'API_FAILURE');
+  }
+  const ds = getDataset();
+  const now = new Date().toISOString();
+  let added = 0;
+  let updated = 0;
+  let suspended = 0;
+
+  // A deterministic slice of pending Entra changes, applied on the first sync so
+  // the result summary has something true to report; later syncs find nothing.
+  const incoming = [
+    { id: 'usr_12', name: 'Nina Oduya', email: 'nina.oduya@acme.com' },
+    { id: 'usr_13', name: 'Tomas Berg', email: 'tomas.berg@acme.com' },
+  ];
+  for (const person of incoming) {
+    if (ds.users.some((u) => u.email === person.email)) continue;
+    ds.users.push({
+      ...person,
+      tenantId: ds.tenant.id,
+      role: null,
+      status: 'active',
+      source: 'entra',
+      authMethod: 'sso',
+      addedAt: now,
+    });
+    added += 1;
+  }
+
+  const deactivated = ds.users.find((u) => u.email === 'taylor.quinn@acme.com');
+  if (deactivated && deactivated.status === 'suspended') {
+    deactivated.status = 'suspended-idp';
+    suspended += 1;
+  }
+  const renamed = ds.users.find((u) => u.email === 'chris.vaughn@acme.com');
+  if (renamed && renamed.name === 'Chris Vaughn') {
+    renamed.name = 'Chris Vaughn-Reid';
+    updated += 1;
+  }
+
+  ds.tenant.scim.lastSyncAt = now;
+  ds.tenant.scim.usersReceived = ds.users.filter(
+    (u) => u.source === 'entra' && u.status !== 'deleted',
+  ).length;
+  if (added || updated || suspended) {
+    appendAudit(
+      'synced users from Entra',
+      ds.tenant.name,
+      `${added} added, ${updated} updated, ${suspended} suspended.`,
+    );
+  }
+  return { added, updated, suspended, at: now };
+}
+
+/** Give a role to people Entra provisioned without one, one or many at a time. */
+export async function assignRole(ids: string[], role: Role): Promise<User[]> {
+  await settle();
+  assertActorCan('users.edit');
+  assertActorCanAssign(role);
+  if (authScenario() === 'api-failure') {
+    throw new MockApiError('Could not save the roles. Please try again.', 'API_FAILURE');
+  }
+  const ds = getDataset();
+  const changed: User[] = [];
+  for (const id of ids) {
+    const user = ds.users.find((u) => u.id === id);
+    if (!user) throw new MockApiError('User not found.', 'NOT_FOUND');
+    assertActorCanActOn(user);
+    assertNotTenantOwner(user, 'change the role of');
+    if (user.role === 'tenant-admin' && role !== 'tenant-admin') {
+      assertNotLastActiveTenantAdmin(user, 'change the role of');
+    }
+    user.role = role;
+    changed.push({ ...user });
+  }
+  appendAudit(
+    'assigned role',
+    changed.length === 1 ? changed[0].email : `${changed.length} users`,
+    `Set to ${ROLE_LABELS[role]}.`,
+  );
+  return changed;
+}
+
+/* --------------------------------------------------------------- lookups */
 
 export function getUser(id: string): Promise<User | null> {
   return respond(() => {
     const u = getDataset().users.find((x) => x.id === id && x.status !== 'deleted');
     return u ? { ...u } : null;
   });
-}
-
-export interface AddUserPayload {
-  email: string;
-  role: Role;
-  validity?: ValidityWindow;
-}
-
-export interface AddUserResult {
-  user: User;
-  /** True when the user was created but the invitation email could not be sent. */
-  emailFailed: boolean;
 }
 
 function assertActorCanAssign(role: Role): void {
@@ -1724,88 +1924,6 @@ function assertActorCanAssign(role: Role): void {
       'RANK_VIOLATION',
     );
   }
-}
-
-/**
- * Add a user to the tenant. They are created in `invited` status and receive an
- * invitation email carrying the setup link; `acceptInvite` completes the account.
- */
-export async function addUser(payload: AddUserPayload): Promise<AddUserResult> {
-  await settle();
-  if (authScenario() === 'api-failure') {
-    throw new MockApiError('Could not create user. Please try again later.', 'API_FAILURE');
-  }
-  const { email, domain } = emailOf(payload.email);
-  if (!isValidEmail(email)) {
-    throw new MockApiError('Please enter a valid email address.', 'INVALID_EMAIL');
-  }
-  if (PERSONAL_DOMAINS.includes(domain)) {
-    throw new MockApiError(
-      'Please use a work email address. Personal email domains are not accepted.',
-      'PERSONAL_DOMAIN',
-    );
-  }
-  const ds = getDataset();
-  if (!ds.tenant.allowedDomains.includes(domain)) {
-    throw new MockApiError(
-      `This email domain is not configured for your organization's SSO. Please use a domain like @${ds.tenant.allowedDomains[0] ?? 'yourcompany.com'}.`,
-      'DOMAIN_MISMATCH',
-    );
-  }
-  const existing = ds.users.find((u) => u.email === email && u.status !== 'deleted');
-  if (existing) {
-    throw new MockApiError(
-      'A user with this email already exists in your organization.',
-      existing.status === 'pending' || existing.status === 'invited' ? 'DUPLICATE_PENDING' : 'DUPLICATE_USER',
-    );
-  }
-  // The mock enforces capability + rank server-side (UI gating is UX only).
-  assertActorCan('users.add');
-  assertActorCanAssign(payload.role);
-
-  const now = new Date().toISOString();
-  const user: User = {
-    id: `usr_${Math.random().toString(36).slice(2, 8)}`,
-    tenantId: ds.tenant.id,
-    name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-    email,
-    role: payload.role,
-    status: 'invited',
-    authMethod: ds.tenant.sso.configured ? 'sso' : 'password',
-    validity: payload.validity,
-    invitedAt: now,
-    invitedBy: currentActor().id,
-  };
-  ds.users.push(user);
-  ds.invitations.push({
-    token: `inv-${Math.random().toString(36).slice(2, 8)}`,
-    tenantId: ds.tenant.id,
-    email,
-    role: payload.role,
-    validity: payload.validity,
-    authMethod: user.authMethod,
-    status: 'pending',
-    sentAt: now,
-    expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-  });
-  appendAudit('added user', email, `Added as ${ROLE_LABELS[payload.role]}.`);
-
-  const emailFailed = authScenario() === 'invite-email-failed';
-  return { user: { ...user }, emailFailed };
-}
-
-export async function resendInvite(id: string): Promise<{ ok: true }> {
-  await settle();
-  const user = getDataset().users.find((u) => u.id === id);
-  if (!user) throw new MockApiError('User not found.', 'NOT_FOUND');
-  if (user.status !== 'pending' && user.status !== 'invited') {
-    throw new MockApiError('This user has already accepted their invitation.', 'NOT_PENDING');
-  }
-  if (authScenario() === 'email-outage' || authScenario() === 'invite-email-failed') {
-    throw new MockApiError('Could not resend invitation. Please try again.', 'EMAIL_FAILED');
-  }
-  appendAudit('resent invitation', user.email);
-  return { ok: true };
 }
 
 export interface UserPatch {

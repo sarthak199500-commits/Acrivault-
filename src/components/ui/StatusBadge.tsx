@@ -1,19 +1,26 @@
 import type { UserStatus } from '@/mocks/types';
 import { Badge, type BadgeTone } from './Badge';
 
-// User status is NOT risk: keep it calm. Pending/Invited are quiet, Active is a
-// soft positive, Suspended a muted warning, Expired neutral-muted. The critical
-// color stays reserved for risk elsewhere. Never color-only — the label carries it.
+// User status is NOT risk: keep it calm. Active is a soft positive, both suspended
+// states a muted warning, Deleted neutral. The critical color stays reserved for
+// risk elsewhere. Never color-only — the label carries it.
+//
+// `suspended-idp` is separated from `suspended` because only Entra can lift it:
+// an admin who tries to reactivate that person needs to go to Entra, not here.
 const MAP: Record<UserStatus, { tone: BadgeTone; label: string }> = {
-  invited: { tone: 'neutral', label: 'Invited' },
-  pending: { tone: 'neutral', label: 'Pending' },
   active: { tone: 'success', label: 'Active' },
   suspended: { tone: 'warning', label: 'Suspended' },
+  'suspended-idp': { tone: 'neutral', label: 'Suspended in Entra' },
   deleted: { tone: 'neutral', label: 'Deleted' },
 };
 
-export function StatusBadge({ status }: { status: UserStatus }) {
-  const { tone, label } = MAP[status];
+/**
+ * `needsRole` outranks an otherwise-active status: someone Entra provisioned who
+ * has no role can sign in and see nothing, which is the more useful thing to say.
+ */
+export function StatusBadge({ status, needsRole = false }: { status: UserStatus; needsRole?: boolean }) {
+  const { tone, label } =
+    needsRole && status === 'active' ? { tone: 'warning' as BadgeTone, label: 'Needs role' } : MAP[status];
   return (
     <Badge tone={tone}>
       <span

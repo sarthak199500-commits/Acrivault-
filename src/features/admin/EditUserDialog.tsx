@@ -10,7 +10,7 @@ import { KeyValueList } from '@/components/ui/KeyValueList';
 import { InlineAlert } from '@/components/ui/InlineAlert';
 import { ValidityWindowField, validityWindowError } from '@/components/ui/ValidityWindowField';
 import { assignableRoles, ROLE_LABELS, type Role } from '@/lib/permissions';
-import { displayName, isProfilePending } from '@/lib/user';
+import { displayName, isIdpManaged } from '@/lib/user';
 import type { User, ValidityWindow } from '@/mocks/types';
 import { useUiStore } from '@/stores/ui';
 import { toast } from '@/stores/toast';
@@ -43,7 +43,7 @@ export function EditUserDialog({
 
   useEffect(() => {
     if (open && user) {
-      reset({ role: user.role });
+      reset({ role: user.role ?? '' });
       setValidity(user.validity);
       setBanner(undefined);
     }
@@ -53,7 +53,7 @@ export function EditUserDialog({
   // still appear so the current value renders correctly.
   const roleOptions = useMemo(() => {
     const set = new Set(assignable);
-    if (user) set.add(user.role);
+    if (user?.role) set.add(user.role);
     return assignableRoles('tenant-admin')
       .filter((r) => set.has(r))
       .map((r) => ({ value: r, label: ROLE_LABELS[r] }));
@@ -84,7 +84,7 @@ export function EditUserDialog({
       onOpenChange={onOpenChange}
       size="md"
       title={`Edit ${displayName(user)}`}
-      description="Change role and access window. Email and name come from the identity provider."
+      description="Change role and access window. Name and email come from Microsoft Entra ID."
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
@@ -102,18 +102,14 @@ export function EditUserDialog({
         <KeyValueList
           boxed
           items={[
-            {
-              label: 'Name',
-              value: isProfilePending(user) ? (
-                <span className="italic text-text-secondary">
-                  {displayName(user)}{' '}
-                  <span className="not-italic text-text-tertiary">· set on first sign-in</span>
-                </span>
-              ) : (
-                <span className="font-medium">{user.name}</span>
-              ),
-            },
+            { label: 'Name', value: <span className="font-medium">{displayName(user)}</span> },
             { label: 'Email', value: user.email, mono: true },
+            {
+              label: 'Managed by',
+              value: isIdpManaged(user)
+                ? 'Microsoft Entra ID'
+                : 'Acrivault — this account signs in with a password',
+            },
           ]}
         />
 
@@ -139,9 +135,22 @@ export function EditUserDialog({
           )}
         </div>
 
+        {user.role === null && (
+          <InlineAlert tone="warning" title="No role yet.">
+            Entra provisioned this account. Until a role is set they can sign in but see nothing.
+          </InlineAlert>
+        )}
+
         {user.status === 'suspended' && (
           <InlineAlert tone="info">
             This user is suspended — role changes take effect when they’re reactivated.
+          </InlineAlert>
+        )}
+
+        {user.status === 'suspended-idp' && (
+          <InlineAlert tone="info" title="Suspended in Entra.">
+            Entra deactivated this account, so only Entra can restore it. Changes here apply if it
+            comes back.
           </InlineAlert>
         )}
 

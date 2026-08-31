@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compact, count, duration, percent, pluralize, relativeDays } from './format';
+import { compact, count, duration, percent, pluralize, relativeDays, timeAgo } from './format';
 
 describe('format', () => {
   it('groups counts with separators', () => {
@@ -44,5 +44,24 @@ describe('format', () => {
     it('uses grouped counts', () => {
       expect(pluralize(1500, 'identity', 'identities')).toBe('1,500 identities');
     });
+  });
+});
+
+describe('timeAgo', () => {
+  const now = new Date('2026-08-31T12:00:00.000Z');
+
+  it('reads like relativeTime for anything in the past', () => {
+    expect(timeAgo('2026-08-31T11:56:00.000Z', now)).toBe('4 minutes ago');
+  });
+
+  // These displays describe events that already happened, so a timestamp ahead of
+  // `now` is clock skew or a value written mid-render — never the future.
+  it('clamps a future timestamp instead of reporting "in 2 seconds"', () => {
+    expect(timeAgo('2026-08-31T12:00:02.000Z', now)).toBe('just now');
+    expect(timeAgo('2026-08-31T12:05:00.000Z', now)).toBe('just now');
+  });
+
+  it('treats the exact present as just now', () => {
+    expect(timeAgo(now, now)).toBe('just now');
   });
 });

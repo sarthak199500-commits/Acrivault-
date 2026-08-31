@@ -3,6 +3,7 @@ import { KeyRound, Users as UsersIcon } from 'lucide-react';
 import { useConnections } from './queries';
 import { useTenant, useUsers } from '@/features/admin/queries';
 import { CLOUD_LABELS, SSO_PROVIDER_LABELS } from '@/mocks/types';
+import { isSignInFederated } from '@/lib/sso';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -59,7 +60,7 @@ function UsersCard() {
         <QueryBoundary query={users} loadingFallback={<SkeletonTableRows rows={2} cols={2} />} isEmpty={() => false}>
           {(list) => {
             const active = list.filter((u) => u.status === 'active').length;
-            const pending = list.filter((u) => u.status === 'pending' || u.status === 'invited').length;
+            const waiting = list.filter((u) => u.role === null && u.status !== 'deleted').length;
             return (
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[length:var(--fs-small)] text-text-secondary">
                 <span className="inline-flex items-center gap-2">
@@ -67,7 +68,7 @@ function UsersCard() {
                   <span className="tnum text-text">{count(list.length)}</span> users
                 </span>
                 <span><span className="tnum text-text">{count(active)}</span> active</span>
-                <span><span className="tnum text-text">{count(pending)}</span> pending</span>
+                <span><span className="tnum text-text">{count(waiting)}</span> awaiting a role</span>
               </div>
             );
           }}
@@ -92,7 +93,7 @@ export function SettingsScreen() {
         <Card>
           <CardHeader
             title="Sign-in & SSO"
-            description="SAML / OIDC configuration and allowed domains."
+            description="Federate sign-in with Microsoft Entra ID and let it provision your users."
             action={<Link to="/settings/sso" className={buttonClasses('secondary', 'sm')}>Configure</Link>}
           />
           <CardBody>
@@ -100,9 +101,9 @@ export function SettingsScreen() {
               {(t) => (
                 <p className="inline-flex items-center gap-2 text-[length:var(--fs-small)] text-text-secondary">
                   <KeyRound className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
-                  {t.sso.configured
-                    ? `Single sign-on is configured via ${SSO_PROVIDER_LABELS[t.sso.provider]}.`
-                    : 'Single sign-on is not yet enabled.'}
+                  {isSignInFederated(t.saml, new Date())
+                    ? `Sign-in is federated with ${SSO_PROVIDER_LABELS[t.sso.provider]}.`
+                    : 'Single sign-on is not set up yet.'}
                 </p>
               )}
             </QueryBoundary>

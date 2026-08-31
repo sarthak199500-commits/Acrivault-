@@ -1,19 +1,23 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  acceptInvite,
   activateUser,
-  addUser,
+  assignRole,
   createPassword,
   deleteUser,
   editUser,
+  generateScimToken,
   getDomainChallenge,
+  getTenant,
   listAudit,
   listUsers,
   login,
   requestAccess,
   resetPassword,
-  resolveInvite,
+  saveSamlConfig,
+  setPasswordFallback,
   suspendUser,
+  syncUsers,
+  testSamlSignIn,
   verifyCode,
   verifyDomain,
   verifyPasswordOtp,
@@ -125,48 +129,125 @@ describe('password recovery', () => {
   });
 });
 
-describe('adding users', () => {
-  it('rejects out-of-domain and duplicate emails', async () => {
+const ENTITY_ID = 'https://sts.windows.net/818437a1-5008-44d7-bb45-1da663f1308d/';
+const SSO_URL = 'https://login.microsoftonline.com/818437a1-5008-44d7-bb45-1da663f1308d/saml2';
+const PEM = '-----BEGIN CERTIFICATE-----\nMIIC8DCCAdigAwIBAgIQRJGmR4o4Pp\n-----END CERTIFICATE-----';
+const DRAFT = { entityId: ENTITY_ID, ssoUrl: SSO_URL, certificate: PEM };
+
+describe('federating sign-in with Entra', () => {
+  it('refuses a draft the form would have rejected', async () => {
     await expect(
-      addUser({ email: 'x@globex.com', role: 'analyst' }),
-    ).rejects.toMatchObject({ code: 'DOMAIN_MISMATCH' });
+      saveSamlConfig({ ...DRAFT, entityId: SSO_URL, ssoUrl: ENTITY_ID }),
+    ).rejects.toMatchObject({ code: 'INVALID_SAML' });
     await expect(
-      addUser({ email: 'jordan.rivera@acme.com', role: 'analyst' }),
-    ).rejects.toMatchObject({ code: 'DUPLICATE_USER' });
+      saveSamlConfig({ ...DRAFT, certificate: '<?xml version="1.0"?>' }),
+    ).rejects.toMatchObject({ code: 'INVALID_SAML' });
   });
 
-  it('creates a pending user, writes audit, and reports email failure under scenario', async () => {
-    const before = (await listUsers()).length;
-    const { user, emailFailed } = await addUser({
-      email: 'brand.new@acme.com',
-      role: 'analyst',
-    });
-    expect(user.status).toBe('invited');
-    expect(emailFailed).toBe(false);
-    expect((await listUsers()).length).toBe(before + 1);
+  // The whole point of the redesign: a saved form is a claim, an assertion is proof.
+  it('saving clears the sign-in proof, and testing restores it', async () => {
+    const saved = await saveSamlConfig(DRAFT);
+    expect(saved.saml.savedAt).not.toBeNull();
+    expect(saved.saml.lastSignInAt).toBeNull();
+    expect(saved.saml.cert?.expiresAt).toBeTruthy();
+
+    const tested = await testSamlSignIn();
+    expect(tested.saml.lastSignInAt).not.toBeNull();
+
     const audit = await listAudit();
-    expect(audit.some((a) => a.action === 'added user' && a.target === 'brand.new@acme.com')).toBe(true);
+    expect(audit.some((a) => a.action === 'saved SAML configuration')).toBe(true);
   });
 
-  it('only a tenant admin can add users: an analyst is forbidden even for a lower role', async () => {
+  it('will not turn off the way back in until sign-in is proven', async () => {
+    await saveSamlConfig(DRAFT);
+    await expect(setPasswordFallback(false)).rejects.toMatchObject({ code: 'LOCKOUT_RISK' });
+    await testSamlSignIn();
+    await expect(setPasswordFallback(false)).resolves.toMatchObject({ passwordFallback: false });
+    // Restore it — later cases assume the tenant still has a way back in.
+    await setPasswordFallback(true);
+  });
+
+  it('refuses to change what is trusted while password sign-in is off', async () => {
+    await saveSamlConfig(DRAFT);
+    await testSamlSignIn();
+    await setPasswordFallback(false);
+    await expect(saveSamlConfig(DRAFT)).rejects.toMatchObject({ code: 'LOCKOUT_RISK' });
+    await setPasswordFallback(true);
+  });
+
+  it('is Tenant Admin and above: a security admin is forbidden', async () => {
+    useUiStore.getState().setRole('security-admin');
+    await expect(saveSamlConfig(DRAFT)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(generateScimToken()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+describe('provisioning users from Entra', () => {
+  it('issuing a token leaves the connection unproven until Entra authenticates', async () => {
+    await saveSamlConfig(DRAFT);
+    await testSamlSignIn();
+    const { token, tenant } = await generateScimToken();
+    expect(token).toMatch(/^scim_/);
+    expect(tenant.scim.tokenIssuedAt).not.toBeNull();
+    // A new token revokes the credentials Entra holds, so the sync is stale again.
+    expect(tenant.scim.lastSyncAt).toBeNull();
+  });
+
+  it('cannot issue a token before sign-in works', async () => {
+    await saveSamlConfig(DRAFT); // clears lastSignInAt
+    await expect(generateScimToken()).rejects.toMatchObject({ code: 'SAML_REQUIRED' });
+  });
+
+  it('reports what a sync changed, and finds nothing the second time', async () => {
+    const first = await syncUsers();
+    expect(first.added).toBe(2);
+    expect(first.updated + first.suspended).toBeGreaterThan(0);
+
+    const second = await syncUsers();
+    expect(second).toMatchObject({ added: 0, updated: 0, suspended: 0 });
+
+    const tenant = await getTenant();
+    expect(tenant.scim.lastSyncAt).toBe(second.at);
+  });
+
+  it('gives new arrivals no role, so they surface as work to do', async () => {
+    await syncUsers();
+    const nina = (await listUsers()).find((u) => u.email === 'nina.oduya@acme.com');
+    expect(nina).toMatchObject({ role: null, status: 'active', source: 'entra' });
+  });
+
+  // Auto-suspend, never auto-delete: the row and its audit history survive.
+  it('suspends rather than removes the people Entra deactivated', async () => {
+    await syncUsers();
+    const taylor = (await listUsers()).find((u) => u.email === 'taylor.quinn@acme.com');
+    expect(taylor?.status).toBe('suspended-idp');
+  });
+
+  it('assigns a role to several people at once and writes audit', async () => {
+    await syncUsers();
+    const waiting = (await listUsers()).filter((u) => u.role === null);
+    expect(waiting.length).toBeGreaterThan(1);
+
+    const changed = await assignRole(
+      waiting.map((u) => u.id),
+      'viewer',
+    );
+    expect(changed.every((u) => u.role === 'viewer')).toBe(true);
+    expect((await listUsers()).filter((u) => u.role === null)).toHaveLength(0);
+    expect((await listAudit()).some((a) => a.action === 'assigned role')).toBe(true);
+  });
+
+  it('will not let an analyst assign roles, or sync', async () => {
     useUiStore.getState().setRole('analyst');
-    await expect(
-      addUser({ email: 'someone@acme.com', role: 'viewer' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(assignRole(['usr_8'], 'viewer')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(syncUsers()).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('resolves seeded invitation tokens to their states', async () => {
-    await expect(resolveInvite('acme-demo-001')).resolves.toMatchObject({ status: 'pending' });
-    await expect(resolveInvite('acme-expired-002')).rejects.toMatchObject({ code: 'EXPIRED_TOKEN' });
-    await expect(resolveInvite('acme-accepted-003')).rejects.toMatchObject({ code: 'ALREADY_ACCEPTED' });
-    await expect(resolveInvite('acme-revoked-004')).rejects.toMatchObject({ code: 'REVOKED_TOKEN' });
-    await expect(resolveInvite('nope')).rejects.toMatchObject({ code: 'INVALID_TOKEN' });
-  });
-
-  it('accepting an invitation moves the pending user to active', async () => {
-    await acceptInvite('inv-robin');
-    const robin = (await listUsers()).find((u) => u.email === 'robin.park@acme.com');
-    expect(robin?.status).toBe('active');
+  it('cannot assign a role above the actor\'s own rank', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    await expect(assignRole(['usr_8'], 'tenant-owner')).rejects.toMatchObject({
+      code: 'RANK_VIOLATION',
+    });
   });
 });
 

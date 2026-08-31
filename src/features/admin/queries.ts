@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   activateUser,
-  addUser,
+  assignRole,
   deleteUser,
   editUser,
   getTenant,
   listUsers,
-  resendInvite,
   suspendUser,
-  type AddUserPayload,
+  syncUsers,
   type UserPatch,
 } from '@/mocks/api';
+import type { Role } from '@/lib/permissions';
 
 export function useUsers() {
   return useQuery({ queryKey: ['users'], queryFn: listUsers });
@@ -20,7 +20,7 @@ export function useTenant() {
   return useQuery({ queryKey: ['tenant'], queryFn: getTenant });
 }
 
-/** Invalidate the user list (and groups, whose member counts may change). */
+/** Invalidate the user list (and the audit trail, which every mutation writes to). */
 function useUserInvalidation() {
   const qc = useQueryClient();
   return () => {
@@ -29,16 +29,28 @@ function useUserInvalidation() {
   };
 }
 
-export function useAddUser() {
+/**
+ * Pull from Entra now. Also invalidates the tenant, because a sync moves the
+ * last-synced timestamp the SSO screen reports.
+ */
+export function useSyncUsers() {
+  const qc = useQueryClient();
   const invalidate = useUserInvalidation();
   return useMutation({
-    mutationFn: (payload: AddUserPayload) => addUser(payload),
-    onSuccess: invalidate,
+    mutationFn: syncUsers,
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ['tenant'] });
+    },
   });
 }
 
-export function useResendInvite() {
-  return useMutation({ mutationFn: (id: string) => resendInvite(id) });
+export function useAssignRole() {
+  const invalidate = useUserInvalidation();
+  return useMutation({
+    mutationFn: ({ ids, role }: { ids: string[]; role: Role }) => assignRole(ids, role),
+    onSuccess: invalidate,
+  });
 }
 
 export function useEditUser() {

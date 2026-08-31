@@ -9,7 +9,6 @@ import {
   generateConnections,
   generateCopilotSuggestions,
   generateIdentities,
-  generateInvitations,
   generateNotifications,
   generatePolicies,
   generatePolicyActions,
@@ -22,7 +21,6 @@ import {
 import {
   NHI_TYPES,
   type Identity,
-  type Invitation,
   type NhiType,
   type RiskBand,
   type Tenant,
@@ -76,7 +74,6 @@ export interface Dataset {
   // Add-on: organization registration & administration (mutable in-memory store).
   tenant: Tenant;
   users: User[];
-  invitations: Invitation[];
 }
 
 function build(): Dataset {
@@ -103,7 +100,6 @@ function build(): Dataset {
     copilot: generateCopilotSuggestions(identities, SEED),
     tenant,
     users,
-    invitations: generateInvitations(NOW),
   };
 }
 

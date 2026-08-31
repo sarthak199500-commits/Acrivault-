@@ -20,7 +20,22 @@ const ssoReturn = vi.fn();
 // instance-checks against) keep working; only the calls this screen makes are stubbed.
 vi.mock('@/mocks/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/mocks/api')>()),
-  getTenant: () => Promise.resolve({ sso: { provider: 'entra', configured: true } }),
+  // Federation is derived from the SAML config, so the stub carries a proven one:
+  // saved, and with an assertion already landed.
+  getTenant: () =>
+    Promise.resolve({
+      sso: { provider: 'entra' },
+      saml: {
+        entityId: 'https://sts.windows.net/818437a1/',
+        ssoUrl: 'https://login.microsoftonline.com/818437a1/saml2',
+        certificate: null,
+        cert: null,
+        savedAt: '2026-08-20T00:00:00.000Z',
+        lastSignInAt: '2026-08-31T11:00:00.000Z',
+      },
+      scim: { tokenIssuedAt: null, lastSyncAt: null, usersReceived: 0 },
+      passwordFallback: true,
+    }),
   login: (email: string, password: string) => login(email, password),
   ssoStart: () => Promise.resolve(),
   ssoReturn: () => ssoReturn(),
