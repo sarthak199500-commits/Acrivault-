@@ -40,7 +40,7 @@ import { activeTenantAdminCount } from '@/mocks/api';
 import type { User } from '@/mocks/types';
 import { relativeTime, timeAgo } from '@/lib/format';
 import { displayName, isIdpManaged, needsRole } from '@/lib/user';
-import { isSignInFederated } from '@/lib/sso';
+import { isSignInFederated, scimStatus } from '@/lib/sso';
 import { useUiStore } from '@/stores/ui';
 import { useAuthStore } from '@/stores/auth';
 import { toast } from '@/stores/toast';
@@ -142,7 +142,14 @@ export function UsersScreen() {
   // it reads against real time or a fresh sync would render in the future.
   const realNow = new Date();
   const federated = tenant.data ? isSignInFederated(tenant.data.saml, realNow) : false;
+  // Entra holds a token, so a sync can mean something. Before that, there is
+  // nothing on the other end of the button.
+  const provisioned = tenant.data ? scimStatus(tenant.data.scim) !== 'not-started' : false;
   const lastSync = tenant.data?.scim.lastSyncAt;
+  // First run: the tenant exists but Entra has never sent anyone. The list is
+  // never truly empty — registration always leaves the Tenant Owner in it — so
+  // this, not `empty`, is the state a new tenant actually lands in.
+  const firstRun = !loading && !errored && list.length > 0 && list.every((u) => !isIdpManaged(u));
   // The work the screen exists to surface: Entra let these people in, but until
   // someone gives them a role they sign in and see nothing.
   const roleless = list.filter(needsRole);
@@ -381,7 +388,7 @@ export function UsersScreen() {
         title="Manage Users"
         description="Microsoft Entra ID decides who’s here. You decide what they can do."
         actions={
-          canEdit ? (
+          canEdit && provisioned ? (
             // Sync is maintenance, not the job. It reports what it did rather than
             // leaving the admin to diff the table themselves.
             <div className="text-right">
@@ -410,6 +417,49 @@ export function UsersScreen() {
         <div className="mb-4">
           <RoleRestricted note="You have read-only access to the user list." />
         </div>
+      )}
+
+      {firstRun && (
+        // Three different reasons nobody is here, three different next actions.
+        // A single "no users" message would send the admin to the wrong place.
+        <Banner
+          tone="info"
+          className="mb-4"
+          action={
+            !federated ? (
+              <Link to="/settings/sso" className="shrink-0">
+                <Button size="sm" variant="secondary" leadingIcon={<KeyRound className="h-4 w-4" />}>
+                  Set up single sign-on
+                </Button>
+              </Link>
+            ) : !provisioned ? (
+              <Link to="/settings/sso" className="shrink-0">
+                <Button size="sm" variant="secondary">
+                  Finish provisioning
+                </Button>
+              </Link>
+            ) : canEdit ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                leadingIcon={<RefreshCw className="h-4 w-4" />}
+                loading={sync.isPending}
+                onClick={() => void onSync()}
+              >
+                Sync now
+              </Button>
+            ) : undefined
+          }
+        >
+          <span className="font-medium">
+            {list.length === 1 ? 'It’s just you so far' : 'Nobody has arrived from Entra yet'}
+          </span>{' '}
+          {!federated
+            ? 'Connect Microsoft Entra ID and your team arrives on its own — you’ll give them roles from here.'
+            : !provisioned
+              ? 'Sign-in works, but Entra isn’t provisioning yet. Finish step 2 and your team appears without invitations.'
+              : 'Entra is connected but hasn’t sent anyone. Assign people to the Acrivault application in Entra, then sync.'}
+        </Banner>
       )}
 
       {roleless.length > 0 && canEdit && (

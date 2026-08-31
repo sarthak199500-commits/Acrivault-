@@ -23,6 +23,7 @@ import {
   verifyPasswordOtp,
 } from './api';
 import { useUiStore } from '@/stores/ui';
+import { getDataset } from './dataset';
 
 beforeEach(() => {
   const s = useUiStore.getState();
@@ -196,6 +197,20 @@ describe('provisioning users from Entra', () => {
   it('cannot issue a token before sign-in works', async () => {
     await saveSamlConfig(DRAFT); // clears lastSignInAt
     await expect(generateScimToken()).rejects.toMatchObject({ code: 'SAML_REQUIRED' });
+  });
+
+  // First run: registration leaves the Tenant Owner behind, so the user list is
+  // never empty — but there is nothing to sync with until Entra holds a token.
+  it('refuses to sync before provisioning is set up', async () => {
+    const ds = getDataset();
+    // The dataset is shared across this file, so put it back before leaving.
+    const restore = { ...ds.tenant.scim };
+    ds.tenant.scim = { tokenIssuedAt: null, lastSyncAt: null, usersReceived: 0 };
+    try {
+      await expect(syncUsers()).rejects.toMatchObject({ code: 'NOT_PROVISIONED' });
+    } finally {
+      ds.tenant.scim = restore;
+    }
   });
 
   it('reports what a sync changed, and finds nothing the second time', async () => {

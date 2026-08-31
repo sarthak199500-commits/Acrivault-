@@ -16,7 +16,7 @@ import {
 import { mulberry32 } from './generators';
 import { riskBand } from '@/lib/risk';
 import { passwordError } from '@/lib/password';
-import { samlStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
+import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
 import type {
@@ -1824,10 +1824,18 @@ export interface SyncResult {
 export async function syncUsers(): Promise<SyncResult> {
   await settle();
   assertActorCan('users.edit');
+  const ds = getDataset();
+  // There is nothing to sync with until Entra holds a token. Without this the
+  // first-run screen offers an action that cannot mean anything.
+  if (scimStatus(ds.tenant.scim) === 'not-started') {
+    throw new MockApiError(
+      'Provisioning is not set up yet. Finish single sign-on before syncing.',
+      'NOT_PROVISIONED',
+    );
+  }
   if (authScenario() === 'api-failure') {
     throw new MockApiError('Could not reach Entra. Please try again.', 'API_FAILURE');
   }
-  const ds = getDataset();
   const now = new Date().toISOString();
   let added = 0;
   let updated = 0;

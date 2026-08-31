@@ -115,10 +115,24 @@ export function AssignRolesDialog({
 
         {!single && (
           <div>
-            <span className="mb-1.5 block text-[length:var(--fs-small)] font-medium text-text-secondary">
-              Who
-            </span>
-            <ul className="divide-y divide-border rounded-[var(--r-md)] border border-border">
+            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+              <span className="text-[length:var(--fs-small)] font-medium text-text-secondary">
+                Who — <span className="tnum">{count}</span> of{' '}
+                <span className="tnum">{candidates.length}</span> selected
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setSelected(count === candidates.length ? new Set() : new Set(candidates.map((u) => u.id)))
+                }
+                className="text-[length:var(--fs-small)] text-accent-text underline"
+              >
+                {count === candidates.length ? 'Clear all' : 'Select all'}
+              </button>
+            </div>
+            {/* A first sync can bring in an entire directory, so the list scrolls
+                rather than pushing the role picker off the dialog. */}
+            <ul className="max-h-52 divide-y divide-border overflow-y-auto rounded-[var(--r-md)] border border-border">
               {candidates.map((u) => (
                 <li key={u.id}>
                   <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-surface-hover">
@@ -166,6 +180,12 @@ export function AssignRolesDialog({
         ) : (
           <InlineAlert tone="info">
             Pick a role to see exactly what it lets these people do.
+          </InlineAlert>
+        )}
+
+        {!single && (
+          <InlineAlert tone="info" title="Least privilege first.">
+            Start everyone at the lowest role that works, then promote the few who need more.
           </InlineAlert>
         )}
       </div>
