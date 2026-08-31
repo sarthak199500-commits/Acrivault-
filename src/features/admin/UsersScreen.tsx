@@ -40,7 +40,7 @@ import { activeTenantAdminCount } from '@/mocks/api';
 import type { User } from '@/mocks/types';
 import { relativeTime, timeAgo } from '@/lib/format';
 import { displayName, isIdpManaged, needsRole } from '@/lib/user';
-import { isSignInFederated, scimStatus } from '@/lib/sso';
+import { isSignInFederated, samlStatus, scimStatus } from '@/lib/sso';
 import { useUiStore } from '@/stores/ui';
 import { useAuthStore } from '@/stores/auth';
 import { toast } from '@/stores/toast';
@@ -101,7 +101,10 @@ export function UsersScreen() {
   const onSync = async () => {
     try {
       const result = await sync.mutateAsync();
-      toast('Synced with Microsoft Entra ID', { tone: 'success', description: syncSummary(result) });
+      toast('Synced with Microsoft Entra ID', {
+        tone: 'success',
+        description: syncSummary(result),
+      });
     } catch (err) {
       toast(errorInfo(err).message, { tone: 'critical' });
     }
@@ -145,6 +148,10 @@ export function UsersScreen() {
   // Entra holds a token, so a sync can mean something. Before that, there is
   // nothing on the other end of the button.
   const provisioned = tenant.data ? scimStatus(tenant.data.scim) !== 'not-started' : false;
+  // When the certificate lapses, every Entra account is locked out — and this is
+  // the screen an admin comes to asking why nobody can sign in. Saying it here is
+  // the most useful route into the SSO screen there is.
+  const signInBroken = tenant.data ? samlStatus(tenant.data.saml, realNow) === 'failing' : false;
   const lastSync = tenant.data?.scim.lastSyncAt;
   // First run: the tenant exists but Entra has never sent anyone. The list is
   // never truly empty — registration always leaves the Tenant Owner in it — so
@@ -232,11 +239,21 @@ export function UsersScreen() {
         <table className="w-full text-left text-[length:var(--fs-small)]">
           <thead>
             <tr className="border-b border-border text-text-tertiary">
-              <th scope="col" className="px-4 py-2.5 font-medium">Name</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">Email</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">Role</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">Last login</th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Name
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Email
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Role
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Status
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Last login
+              </th>
               {showRowActions && (
                 <th scope="col" className="px-4 py-2.5 text-right font-medium">
                   <span className="sr-only">Actions</span>
@@ -249,7 +266,8 @@ export function UsersScreen() {
               const isSelf = u.id === actorId;
               const canAct = canActOnUser(actorRole, actorId, u.role, u.id);
               // Cannot suspend/delete the last active Tenant Admin (incl. yourself).
-              const lastTa = u.role === 'tenant-admin' && u.status === 'active' && activeTaCount <= 1;
+              const lastTa =
+                u.role === 'tenant-admin' && u.status === 'active' && activeTaCount <= 1;
               const unassigned = needsRole(u);
               // Entra owns deactivation, so an admin cannot reactivate what Entra suspended.
               const idpSuspended = u.status === 'suspended-idp';
@@ -262,13 +280,19 @@ export function UsersScreen() {
                   onClick={
                     canAct
                       ? (e) => {
-                          if ((e.target as HTMLElement).closest('button, a, input, [role="menu"], [role="menuitem"]')) return;
+                          if (
+                            (e.target as HTMLElement).closest(
+                              'button, a, input, [role="menu"], [role="menuitem"]',
+                            )
+                          )
+                            return;
                           setEditTarget(u);
                         }
                       : undefined
                   }
                   className={
-                    'border-b border-border last:border-b-0 hover:bg-surface-hover' + (canAct ? ' cursor-pointer' : '')
+                    'border-b border-border last:border-b-0 hover:bg-surface-hover' +
+                    (canAct ? ' cursor-pointer' : '')
                   }
                 >
                   <td className="px-4 py-2.5">
@@ -276,7 +300,11 @@ export function UsersScreen() {
                       <Avatar name={displayName(u)} size="sm" />
                       <span className="font-medium text-text">
                         {displayName(u)}
-                        {isSelf && <span className="ml-1.5 text-[length:var(--fs-micro)] text-text-tertiary">(you)</span>}
+                        {isSelf && (
+                          <span className="ml-1.5 text-[length:var(--fs-micro)] text-text-tertiary">
+                            (you)
+                          </span>
+                        )}
                       </span>
                       {!isIdpManaged(u) && (
                         <Tooltip content="Acrivault manages this account, not Entra. It signs in with a password — the way back in if federation breaks.">
@@ -300,7 +328,9 @@ export function UsersScreen() {
                       <span className="text-text-tertiary">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5"><StatusBadge status={u.status} needsRole={unassigned} /></td>
+                  <td className="px-4 py-2.5">
+                    <StatusBadge status={u.status} needsRole={unassigned} />
+                  </td>
                   <td className="px-4 py-2.5 tnum text-text-secondary">{lastActivity(u)}</td>
                   {showRowActions && (
                     <td className="px-4 py-2.5 text-right">
@@ -313,16 +343,24 @@ export function UsersScreen() {
                         <DropdownMenuContent>
                           {!canAct && (
                             <DropdownMenuLabel>
-                              {isSelf ? 'You can’t manage your own account' : 'Requires a higher role'}
+                              {isSelf
+                                ? 'You can’t manage your own account'
+                                : 'Requires a higher role'}
                             </DropdownMenuLabel>
                           )}
                           {canAct && lastTa && (
-                            <DropdownMenuLabel>Last active Tenant Admin — assign another first</DropdownMenuLabel>
+                            <DropdownMenuLabel>
+                              Last active Tenant Admin — assign another first
+                            </DropdownMenuLabel>
                           )}
                           {unassigned && (
-                            <DropdownMenuItem disabled={!canAct} onSelect={() => setAssignTargets([u])}>
+                            <DropdownMenuItem
+                              disabled={!canAct}
+                              onSelect={() => setAssignTargets([u])}
+                            >
                               <span className="inline-flex items-center gap-2">
-                                <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" /> Assign a role
+                                <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" /> Assign a
+                                role
                               </span>
                             </DropdownMenuItem>
                           )}
@@ -334,7 +372,10 @@ export function UsersScreen() {
                           {idpSuspended ? (
                             <DropdownMenuLabel>Reactivate this person in Entra</DropdownMenuLabel>
                           ) : u.status === 'suspended' ? (
-                            <DropdownMenuItem disabled={!canAct} onSelect={() => setConfirm({ kind: 'activate', user: u })}>
+                            <DropdownMenuItem
+                              disabled={!canAct}
+                              onSelect={() => setConfirm({ kind: 'activate', user: u })}
+                            >
                               <span className="inline-flex items-center gap-2">
                                 <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> Activate
                               </span>
@@ -388,30 +429,54 @@ export function UsersScreen() {
         title="Manage Users"
         description="Microsoft Entra ID decides who’s here. You decide what they can do."
         actions={
-          canEdit && provisioned ? (
-            // Sync is maintenance, not the job. It reports what it did rather than
-            // leaving the admin to diff the table themselves.
-            <div className="text-right">
-              <Button
-                size="sm"
-                variant="secondary"
-                leadingIcon={<RefreshCw className="h-4 w-4" />}
-                loading={sync.isPending}
-                onClick={() => void onSync()}
-              >
-                Sync now
+          <div className="flex items-start gap-2">
+            <Link to="/settings/sso">
+              <Button variant="ghost" size="sm" leadingIcon={<KeyRound className="h-4 w-4" />}>
+                Single sign-on
               </Button>
-              <p className="mt-1 text-[length:var(--fs-micro)] text-text-tertiary">
-                {sync.data
-                  ? syncSummary(sync.data)
-                  : lastSync
-                    ? `Synced ${timeAgo(lastSync, realNow)}`
-                    : 'Never synced'}
-              </p>
-            </div>
-          ) : undefined
+            </Link>
+            {canEdit && provisioned ? (
+              // Sync is maintenance, not the job. It reports what it did rather than
+              // leaving the admin to diff the table themselves.
+              <div className="text-right">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leadingIcon={<RefreshCw className="h-4 w-4" />}
+                  loading={sync.isPending}
+                  onClick={() => void onSync()}
+                >
+                  Sync now
+                </Button>
+                <p className="mt-1 text-[length:var(--fs-micro)] text-text-tertiary">
+                  {sync.data
+                    ? syncSummary(sync.data)
+                    : lastSync
+                      ? `Synced ${timeAgo(lastSync, realNow)}`
+                      : 'Never synced'}
+                </p>
+              </div>
+            ) : null}
+          </div>
         }
       />
+
+      {signInBroken && (
+        <Banner
+          tone="critical"
+          className="mb-4"
+          action={
+            <Link to="/settings/sso" className="shrink-0">
+              <Button size="sm" variant="secondary">
+                Fix sign-in
+              </Button>
+            </Link>
+          }
+        >
+          <span className="font-medium">Nobody from Entra can sign in</span> The certificate
+          Acrivault trusts has expired. Roll it in Entra, then paste the new one in.
+        </Banner>
+      )}
 
       {!showRowActions && (
         <div className="mb-4">
@@ -428,7 +493,11 @@ export function UsersScreen() {
           action={
             !federated ? (
               <Link to="/settings/sso" className="shrink-0">
-                <Button size="sm" variant="secondary" leadingIcon={<KeyRound className="h-4 w-4" />}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leadingIcon={<KeyRound className="h-4 w-4" />}
+                >
                   Set up single sign-on
                 </Button>
               </Link>
@@ -507,7 +576,11 @@ export function UsersScreen() {
         onOpenChange={(o) => !o && setAssignTargets(null)}
         candidates={assignTargets ?? []}
       />
-      <EditUserDialog open={editTarget !== null} onOpenChange={(o) => !o && setEditTarget(null)} user={editTarget} />
+      <EditUserDialog
+        open={editTarget !== null}
+        onOpenChange={(o) => !o && setEditTarget(null)}
+        user={editTarget}
+      />
 
       <ConfirmDialog
         open={confirm?.kind === 'suspend'}

@@ -5,6 +5,7 @@ import {
   parseCertificate,
   samlStatus,
   scimStatus,
+  signInSummary,
   swapDraft,
   tenantGuidOf,
   validateSaml,
@@ -14,7 +15,11 @@ import type { SamlConfig, ScimConfig } from '@/mocks/types';
 
 const ENTITY_ID = 'https://sts.windows.net/818437a1-5008-44d7-bb45-1da663f1308d/';
 const SSO_URL = 'https://login.microsoftonline.com/818437a1-5008-44d7-bb45-1da663f1308d/saml2';
-const PEM = ['-----BEGIN CERTIFICATE-----', 'MIIC8DCCAdigAwIBAgIQRJGmR4o4PptMEDvXzn8Ozj', '-----END CERTIFICATE-----'].join('\n');
+const PEM = [
+  '-----BEGIN CERTIFICATE-----',
+  'MIIC8DCCAdigAwIBAgIQRJGmR4o4PptMEDvXzn8Ozj',
+  '-----END CERTIFICATE-----',
+].join('\n');
 
 const draft = (over: Partial<SamlDraft> = {}): SamlDraft => ({
   entityId: ENTITY_ID,
@@ -221,10 +226,52 @@ describe('effectiveScimStatus', () => {
 
 describe('certDaysLeft', () => {
   it('counts whole days remaining', () => {
-    expect(certDaysLeft({ subject: '', thumbprint: '', expiresAt: '2026-09-24T12:00:00.000Z' }, NOW)).toBe(24);
+    expect(
+      certDaysLeft({ subject: '', thumbprint: '', expiresAt: '2026-09-24T12:00:00.000Z' }, NOW),
+    ).toBe(24);
   });
 
   it('goes negative once expired', () => {
-    expect(certDaysLeft({ subject: '', thumbprint: '', expiresAt: '2026-08-29T12:00:00.000Z' }, NOW)).toBe(-2);
+    expect(
+      certDaysLeft({ subject: '', thumbprint: '', expiresAt: '2026-08-29T12:00:00.000Z' }, NOW),
+    ).toBe(-2);
+  });
+});
+
+describe('signInSummary', () => {
+  // Regression: the Settings card used to derive this from a boolean "federated",
+  // which reported an expired certificate as "not set up yet" — sending the admin
+  // to build a second configuration instead of fixing the failing one.
+  it('says a failing configuration is failing, not missing', () => {
+    const gone = { subject: 'CN=Test', thumbprint: 'x', expiresAt: '2026-08-01T00:00:00.000Z' };
+    const s = signInSummary(saml({ cert: gone }), 'Microsoft Entra ID', NOW);
+    expect(s.tone).toBe('critical');
+    expect(s.text).toMatch(/has expired/i);
+    expect(s.text).not.toMatch(/not set up/i);
+  });
+
+  it('distinguishes saved-but-untested from not set up', () => {
+    expect(signInSummary(saml({ savedAt: null }), 'Entra', NOW)).toEqual({
+      tone: 'neutral',
+      text: 'Single sign-on is not set up yet.',
+    });
+    const untested = signInSummary(saml({ lastSignInAt: null }), 'Entra', NOW);
+    expect(untested.tone).toBe('warning');
+    expect(untested.text).toMatch(/nobody has signed in/i);
+  });
+
+  it('counts down an expiring certificate', () => {
+    const soon = { subject: 'CN=Test', thumbprint: 'x', expiresAt: '2026-09-24T12:00:00.000Z' };
+    expect(signInSummary(saml({ cert: soon }), 'Entra', NOW)).toEqual({
+      tone: 'warning',
+      text: 'Entra certificate expires in 24 days.',
+    });
+  });
+
+  it('is quiet when everything works', () => {
+    expect(signInSummary(saml(), 'Entra', NOW)).toEqual({
+      tone: 'neutral',
+      text: 'Sign-in is federated with Entra.',
+    });
   });
 });

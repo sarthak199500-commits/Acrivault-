@@ -145,3 +145,34 @@ describe('once Entra has provisioned someone', () => {
     expect(screen.queryByText(/nobody has arrived from entra yet/i)).not.toBeInTheDocument();
   });
 });
+
+describe('finding the single sign-on screen', () => {
+  it('always offers a way there, not only during first run', async () => {
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    renderScreen();
+    expect(await screen.findByRole('link', { name: /single sign-on/i })).toBeInTheDocument();
+  });
+
+  // An expired certificate locks out every Entra account, and this is the screen
+  // the admin arrives at asking why nobody can get in.
+  it('says so loudly when the certificate has expired', async () => {
+    const expired: SamlConfig = {
+      ...FEDERATED,
+      cert: { subject: 'CN=Test', thumbprint: 'x', expiresAt: '2020-01-01T00:00:00.000Z' },
+    };
+    users = [OWNER, FROM_ENTRA];
+    setTenant(expired, PROVISIONED);
+    renderScreen();
+    expect(await screen.findByText(/nobody from entra can sign in/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /fix sign-in/i })).toBeInTheDocument();
+  });
+
+  it('stays quiet while the certificate is healthy', async () => {
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    renderScreen();
+    await screen.findByText('Noor Haddad');
+    expect(screen.queryByText(/nobody from entra can sign in/i)).not.toBeInTheDocument();
+  });
+});

@@ -159,6 +159,40 @@ export function isSignInFederated(saml: SamlConfig, now: Date): boolean {
   return status === 'connected' || status === 'attention';
 }
 
+/** How loudly a summary should be read. The caller maps this to its own styling. */
+export type SummaryTone = 'neutral' | 'warning' | 'critical';
+
+/**
+ * One sentence on whether people can sign in, for anywhere outside the setup
+ * screen that summarises federation. Every branch is named because the tempting
+ * shortcut — "federated or not" — reports an expired certificate as "not set up",
+ * which sends an admin to build a second configuration instead of fixing the one
+ * that is failing.
+ */
+export function signInSummary(
+  saml: SamlConfig,
+  providerLabel: string,
+  now: Date,
+): { tone: SummaryTone; text: string } {
+  switch (samlStatus(saml, now)) {
+    case 'not-started':
+      return { tone: 'neutral', text: 'Single sign-on is not set up yet.' };
+    case 'waiting':
+      return { tone: 'warning', text: 'Saved, but nobody has signed in with it yet.' };
+    case 'failing':
+      return {
+        tone: 'critical',
+        text: `The ${providerLabel} certificate has expired — sign-in is failing.`,
+      };
+    case 'attention': {
+      const days = saml.cert ? certDaysLeft(saml.cert, now) : 0;
+      return { tone: 'warning', text: `${providerLabel} certificate expires in ${days} days.` };
+    }
+    case 'connected':
+      return { tone: 'neutral', text: `Sign-in is federated with ${providerLabel}.` };
+  }
+}
+
 /**
  * Entra cannot provision into an application it cannot sign into, so step 2 stays
  * locked until step 1 has proven itself.
