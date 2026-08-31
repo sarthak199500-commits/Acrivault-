@@ -11,7 +11,7 @@ import type { SamlConfig, ScimConfig, Tenant, User } from '@/mocks/types';
  * First run is the state a brand-new tenant actually lands in, and it is NOT an
  * empty list: registration always leaves the Tenant Owner behind. These cases pin
  * that down, because an owner-only list previously fell through to the populated
- * table with nothing pointing at single sign-on — a dead end.
+ * table with nothing pointing at the Entra settings — a dead end.
  */
 
 const OWNER: User = {
@@ -103,10 +103,10 @@ beforeEach(() => {
 });
 
 describe('first run — nobody has arrived from Entra', () => {
-  it('sends an owner-only tenant to single sign-on, and offers no sync', async () => {
+  it('sends an owner-only tenant to connect Entra, and offers no sync', async () => {
     renderScreen();
     expect(await screen.findByText(/it’s just you so far/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /set up single sign-on/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /connect microsoft entra id/i })).toBeInTheDocument();
     // Nothing to sync with yet — offering the button would be a dead end.
     expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument();
   });
@@ -115,7 +115,7 @@ describe('first run — nobody has arrived from Entra', () => {
     setTenant(FEDERATED, NO_TOKEN);
     renderScreen();
     expect(await screen.findByText(/it’s just you so far/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /finish provisioning/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /finish entra setup/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument();
   });
 
@@ -146,12 +146,12 @@ describe('once Entra has provisioned someone', () => {
   });
 });
 
-describe('finding the single sign-on screen', () => {
+describe('finding the Entra settings screen', () => {
   it('always offers a way there, not only during first run', async () => {
     users = [OWNER, FROM_ENTRA];
     setTenant(FEDERATED, PROVISIONED);
     renderScreen();
-    expect(await screen.findByRole('link', { name: /entra connection/i })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /entra settings/i })).toBeInTheDocument();
   });
 
   // An expired certificate locks out every Entra account, and this is the screen

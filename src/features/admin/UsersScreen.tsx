@@ -214,7 +214,7 @@ export function UsersScreen() {
             </Button>
           ) : (
             <Link to="/settings/sso">
-              <Button leadingIcon={<KeyRound className="h-4 w-4" />}>Set up single sign-on</Button>
+              <Button leadingIcon={<KeyRound className="h-4 w-4" />}>Connect Microsoft Entra ID</Button>
             </Link>
           )
         }
@@ -430,13 +430,13 @@ export function UsersScreen() {
         description="Microsoft Entra ID decides who’s here. You decide what they can do."
         actions={
           <div className="flex items-start gap-2">
-            {/* Named for the relationship, not the protocol. From this screen the
-                question is "where do these people come from", and the answer covers
-                both halves behind the link — sign-in and provisioning — where
-                "Single sign-on" would name only the first. */}
+            {/* Plain words only, and named for the thing rather than the protocol:
+                "Single sign-on" covers just the sign-in half, and provisioning is
+                the half that actually fills this table. Every CTA on this screen
+                uses the same vocabulary — Entra, set up, finish, sync. */}
             <Link to="/settings/sso">
               <Button variant="ghost" size="sm" leadingIcon={<KeyRound className="h-4 w-4" />}>
-                Entra connection
+                Entra settings
               </Button>
             </Link>
             {canEdit && provisioned ? (
@@ -502,13 +502,13 @@ export function UsersScreen() {
                   variant="secondary"
                   leadingIcon={<KeyRound className="h-4 w-4" />}
                 >
-                  Set up single sign-on
+                  Connect Microsoft Entra ID
                 </Button>
               </Link>
             ) : !provisioned ? (
               <Link to="/settings/sso" className="shrink-0">
                 <Button size="sm" variant="secondary">
-                  Finish provisioning
+                  Finish Entra setup
                 </Button>
               </Link>
             ) : canEdit ? (
