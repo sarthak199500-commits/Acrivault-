@@ -151,7 +151,7 @@ describe('finding the single sign-on screen', () => {
     users = [OWNER, FROM_ENTRA];
     setTenant(FEDERATED, PROVISIONED);
     renderScreen();
-    expect(await screen.findByRole('link', { name: /single sign-on/i })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /entra connection/i })).toBeInTheDocument();
   });
 
   // An expired certificate locks out every Entra account, and this is the screen

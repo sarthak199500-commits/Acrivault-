@@ -430,9 +430,13 @@ export function UsersScreen() {
         description="Microsoft Entra ID decides who’s here. You decide what they can do."
         actions={
           <div className="flex items-start gap-2">
+            {/* Named for the relationship, not the protocol. From this screen the
+                question is "where do these people come from", and the answer covers
+                both halves behind the link — sign-in and provisioning — where
+                "Single sign-on" would name only the first. */}
             <Link to="/settings/sso">
               <Button variant="ghost" size="sm" leadingIcon={<KeyRound className="h-4 w-4" />}>
-                Single sign-on
+                Entra connection
               </Button>
             </Link>
             {canEdit && provisioned ? (
