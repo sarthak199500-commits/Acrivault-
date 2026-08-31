@@ -1,28 +1,26 @@
 import { X } from 'lucide-react';
-import { ROLES, ROLE_LABELS, type Role } from '@/lib/permissions';
+import { ROLES, ROLE_LABELS } from '@/lib/permissions';
 import type { User, UserStatus } from '@/mocks/types';
 import { DebouncedSearch } from '@/components/ui/DebouncedSearch';
 import { FilterMenu } from '@/components/ui/FilterMenu';
 import { StatusDot, type DotTone } from '@/components/ui/StatusDot';
-import type { useUsersFilters } from './useUsersFilters';
+import type { RoleFilter, useUsersFilters } from './useUsersFilters';
 
 type Filters = ReturnType<typeof useUsersFilters>;
 
 // Curated display order for the Status filter; only statuses actually present in
 // the population are shown. Labels and dot tones echo StatusBadge.
-const STATUS_ORDER: UserStatus[] = ['active', 'suspended', 'pending', 'invited', 'deleted'];
+const STATUS_ORDER: UserStatus[] = ['active', 'suspended', 'suspended-idp', 'deleted'];
 const STATUS_LABELS: Record<UserStatus, string> = {
   active: 'Active',
   suspended: 'Suspended',
-  pending: 'Pending',
-  invited: 'Invited',
+  'suspended-idp': 'Suspended in Entra',
   deleted: 'Deleted',
 };
 const STATUS_TONE: Record<UserStatus, DotTone> = {
   active: 'ok',
   suspended: 'warn',
-  pending: 'neutral',
-  invited: 'neutral',
+  'suspended-idp': 'neutral',
   deleted: 'neutral',
 };
 
@@ -31,18 +29,19 @@ export function UsersToolbar({ filters, users }: { filters: Filters; users: User
 
   // Facet counts over the whole population (stable, not affected by other
   // active filters) — they tell you how many of each exist.
-  const roleCounts: Partial<Record<Role, number>> = {};
+  const roleCounts: Partial<Record<RoleFilter, number>> = {};
   const statusCounts: Partial<Record<UserStatus, number>> = {};
   for (const u of users) {
-    roleCounts[u.role] = (roleCounts[u.role] ?? 0) + 1;
+    const key: RoleFilter = u.role ?? 'none';
+    roleCounts[key] = (roleCounts[key] ?? 0) + 1;
     statusCounts[u.status] = (statusCounts[u.status] ?? 0) + 1;
   }
 
-  const roleOptions = ROLES.map((r) => ({
-    value: r,
-    label: ROLE_LABELS[r],
-    count: roleCounts[r] ?? 0,
-  }));
+  // "Needs role" leads the list: it is the only entry that represents work to do.
+  const roleOptions = [
+    ...(roleCounts.none ? [{ value: 'none', label: 'Needs role', count: roleCounts.none }] : []),
+    ...ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r], count: roleCounts[r] ?? 0 })),
+  ];
 
   const statusOptions = STATUS_ORDER.filter((s) => statusCounts[s] !== undefined).map((s) => ({
     value: s,
@@ -66,7 +65,7 @@ export function UsersToolbar({ filters, users }: { filters: Filters; users: User
         label="Role"
         options={roleOptions}
         selected={filter.roles}
-        onToggle={(v) => filters.toggleRole(v as Role)}
+        onToggle={(v) => filters.toggleRole(v as RoleFilter)}
         onClear={() => filter.roles.forEach((r) => filters.toggleRole(r))}
       />
       <FilterMenu

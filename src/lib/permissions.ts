@@ -219,11 +219,14 @@ export function assignableRoles(actor: Role): Role[] {
 export function canActOnUser(
   actor: Role,
   actorId: string,
-  subjectRole: Role,
+  subjectRole: Role | null,
   subjectId: string,
 ): boolean {
   if (actor === 'tenant-owner') return true;
   if (actor === 'tenant-admin') return subjectRole !== 'tenant-owner';
   if (actorId === subjectId) return false;
+  // Someone Entra provisioned but nobody has given a role to outranks nobody:
+  // assigning them their first role is exactly what needs to be possible.
+  if (subjectRole === null) return true;
   return RANK[actor] > RANK[subjectRole];
 }

@@ -10,7 +10,7 @@ import { EXTRA_TITLES } from './nav';
 
 function titleForAuthPath(pathname: string): string {
   if (EXTRA_TITLES[pathname]) return EXTRA_TITLES[pathname];
-  // Match the longest configured prefix (e.g. /accept-invite/:token).
+  // Match the longest configured prefix (e.g. /reset-password/:token).
   const prefix = Object.keys(EXTRA_TITLES)
     .filter((p) => pathname.startsWith(p))
     .sort((a, b) => b.length - a.length)[0];

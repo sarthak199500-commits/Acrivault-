@@ -3,6 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import type { Role } from '@/lib/permissions';
 import type { UserStatus } from '@/mocks/types';
 
+/** `none` matches the people Entra provisioned who have no role yet. */
+export type RoleFilter = Role | 'none';
+
 function parseList<T extends string>(raw: string | null): T[] {
   if (!raw) return [];
   return raw.split(',').filter(Boolean) as T[];
@@ -10,7 +13,7 @@ function parseList<T extends string>(raw: string | null): T[] {
 
 export interface UsersFilter {
   search: string;
-  roles: Role[];
+  roles: RoleFilter[];
   statuses: UserStatus[];
 }
 
@@ -26,7 +29,7 @@ export function useUsersFilters() {
   const filter = useMemo<UsersFilter>(
     () => ({
       search: params.get('q') ?? '',
-      roles: parseList<Role>(params.get('role')),
+      roles: parseList<RoleFilter>(params.get('role')),
       statuses: parseList<UserStatus>(params.get('status')),
     }),
     [params],
@@ -74,7 +77,7 @@ export function useUsersFilters() {
   return {
     filter,
     setSearch,
-    toggleRole: (r: Role) => toggleInList('role', r),
+    toggleRole: (r: RoleFilter) => toggleInList('role', r),
     toggleStatus: (s: UserStatus) => toggleInList('status', s),
     clearAll,
     activeCount,

@@ -79,11 +79,11 @@ The **design system** is documented at the in-app route **`/design-system`**.
 ## Registration & administration (add-on)
 
 A second route group lives **outside** the app shell in a centered `AuthLayout`:
-organization registration, the authentication screens those flows route through, and
-self-service invitation acceptance. The administration surface (Manage Users, Groups)
-lives **inside** the shell under `/settings`.
+organization registration and the authentication screens those flows route through.
+The administration surface (Manage Users, Single Sign-On) lives **inside** the shell
+under `/settings`.
 
-There is **no backend**: every auth, SSO, MFA, email-verification, invitation, and
+There is **no backend**: every auth, SAML, SCIM, MFA, email-verification, and
 tenant-provisioning behavior is simulated against the mock layer and marked
 `// ASSUMPTION:` in code. The app defaults to an **authenticated** demo Tenant Admin
 so the in-app screens stay directly reachable; **Sign out** (account menu) clears the
@@ -98,9 +98,12 @@ Demo entry points (synthetic):
 - **Login**: `/login` — SSO is the prominent path; the password fallback accepts any
   password. Try `morgan.ellis@acme.com` (suspended) or `taylor.quinn@acme.com`
   (expired) to see those error states.
-- **Accept invitation**: `/accept-invite/acme-demo-001` (pending) ·
-  `…/acme-expired-002` (expired) · `…/acme-accepted-003` (already a member) ·
-  `…/acme-revoked-004` (revoked).
+- **Single sign-on**: `/settings/sso` — Entra is the only identity provider. Press
+  **Edit** on step 1 and paste the two URLs the wrong way round, or paste XML into the
+  certificate box, to see the form catch it. **Rotate token** issues a token once and
+  then waits for Entra to call back on its own (~12s, simulated).
+- **Manage users**: `/settings/users` — **Sync** reports what changed; two people
+  arrive from Entra with no role, which the triage banner surfaces.
 - **Reset password**: `/reset-password/expired` shows the expired-link state.
 
 The four roles are **Tenant Admin** (org owner), **Security Admin**, **Security
@@ -219,11 +222,15 @@ production build, lint, axe-clean, both themes):
   rank rules, domain types, mock tenants/users/groups/invitations + simulated
   auth/verify/SSO/MFA/provisioning with failure scenarios, new components, `AuthLayout`,
   auth session); 8b registration (Request Access → Verify → Legal Terms → provisioned);
-  8c authentication (SSO-first Login + password fallback, Accept Invitation, MFA setup +
-  challenge, password reset); 8d administration (Manage Users with rank-gated row actions,
-  Invite with Review, Edit, Resend, Suspend/Activate, Delete, audit writes, minimal
-  Groups); 8e hardening (per-route axe in both themes, registration + invitation flows
-  walked end to end, this README).
+  8c authentication (SSO-first Login + password fallback, MFA setup + challenge, password
+  reset); 8d administration (Manage Users with rank-gated row actions, Edit,
+  Suspend/Activate, Delete, audit writes, minimal Groups); 8e hardening (per-route axe in
+  both themes, registration walked end to end, this README).
+- **Phase 9 (add-on)** — Entra-provisioned users. Invitations are replaced by SAML
+  federation plus SCIM provisioning: `/settings/sso` is a two-step setup whose status is
+  observed rather than asserted (a step turns green only when Entra exercises it), the
+  paste fields catch Entra's three classic mistakes, and Manage Users is reorganised
+  around assigning roles to the people Entra sends.
 
 **All build phases (0–7 plus the 8a–8e add-on) are complete.** Every route renders in both
 themes with all four states plus role-restricted, reachable via the switchers without code

@@ -10,7 +10,7 @@ import type { UserStatus, ValidityWindow } from '@/mocks/types';
 import type { Role } from '@/lib/permissions';
 import { DocCard, Section, StateMatrix } from './doc-primitives';
 
-const USER_STATUSES: UserStatus[] = ['invited', 'pending', 'active', 'suspended'];
+const USER_STATUSES: UserStatus[] = ['active', 'suspended', 'suspended-idp', 'deleted'];
 const DEMO_ROLE: Role = 'analyst';
 
 export function AuthSection() {

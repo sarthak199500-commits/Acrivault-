@@ -15,7 +15,6 @@ import {
   type CloudConnection,
   type Identity,
   type IdentityStatus,
-  type Invitation,
   type NhiType,
   type NotificationItem,
   type Policy,
@@ -900,6 +899,7 @@ export const TENANT_ID = 'tnt_acme';
 function iso(now: Date, msAgo: number): string {
   return new Date(now.getTime() - msAgo).toISOString();
 }
+const MINUTE = 60000;
 const HOUR = 3600000;
 const DAY = 86400000;
 
@@ -909,62 +909,73 @@ export function generateTenant(now: Date): Tenant {
     name: 'Acme Corp',
     allowedDomains: ['acme.com'],
     status: 'active',
-    sso: { provider: 'entra', configured: true },
+    sso: { provider: 'entra' },
+    // Seeded fully connected, with a healthy certificate. Shorten CERT_DAYS to
+    // land inside CERT_WARN_DAYS and the setup screen's `attention` state appears.
+    saml: {
+      entityId: 'https://sts.windows.net/818437a1-5008-44d7-bb45-1da663f1308d/',
+      ssoUrl: 'https://login.microsoftonline.com/818437a1-5008-44d7-bb45-1da663f1308d/saml2',
+      certificate: SEED_CERT,
+      // ASSUMPTION: x509 is decoded upstream; these are the values that come back.
+      cert: {
+        subject: 'CN=Microsoft Azure Federated SSO Certificate',
+        thumbprint: '3A9F 2B41 7C08 D5E6 1F93 4A70 B2C8 6D11 5E0F 92A3',
+        expiresAt: new Date(now.getTime() + CERT_DAYS * DAY).toISOString(),
+      },
+      savedAt: iso(now, 11 * DAY),
+      // Minutes-old values read against real time, not the hour-floored NOW the
+      // rest of the seed uses: floored, "6 minutes ago" drifts up to an hour and
+      // a healthy connection renders as a neglected one.
+      lastSignInAt: iso(new Date(), 6 * MINUTE),
+    },
+    scim: {
+      tokenIssuedAt: iso(now, 10 * DAY),
+      lastSyncAt: iso(new Date(), 4 * MINUTE),
+      usersReceived: 11,
+    },
+    passwordFallback: true,
     createdAt: iso(now, 420 * DAY),
   };
 }
 
+/** Days of certificate life left in the seed. */
+const CERT_DAYS = 195;
+
+const SEED_CERT = [
+  '-----BEGIN CERTIFICATE-----',
+  'MIIC8DCCAdigAwIBAgIQRJGmR4o4PptMEDvXzn8OzjANBgkqhkiG9w0BAQsFADA0',
+  'MTIwMAYDVQQDEyINaWNyb3NvZnQgQXp1cmUgRmVkZXJhdGVkIFNTTyBDZXJ0aWZp',
+  'Y2F0ZTAeFw0yNjA0MTgwOTIxNDNaFw0yNzAzMTQwOTIxNDNaMDQxMjAwBgNVBAMT',
+  'KU1pY3Jvc29mdCBBenVyZSBGZWRlcmF0ZWQgU1NPIENlcnRpZmljYXRlMIIBIjAN',
+  'BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwO70bajDcPjS0EtPCIQTX5qI3eOt',
+  '2omAE+Nww2bh594eS0rJ/JEY8cU0pZU5SCPwwN8glpoLcj+pviC1wif7Hyi2vFw0',
+  '-----END CERTIFICATE-----',
+].join('\n');
+
 // Seed users covering every role and every status, so the user list shows all
 // states out of the box. usr_1 (Alex Kim) is the signed-in actor — a Tenant
 // Admin, so the default view exercises the admin surface without being the
-// protected Owner. usr_0 (Noor Haddad) is the tenant's single Tenant Owner,
-// seeded separately so the Owner-protection guard is demonstrable.
-// A second Tenant Admin (Dana) exists so rank-gating is demonstrable distinctly
-// from the never-act-on-self rule.
+// protected Owner. usr_0 (Noor Haddad) is the tenant's single Tenant Owner and
+// the ONLY account Entra does not manage: registration created it, it signs in
+// with a password, and it is the way back in if federation ever breaks.
+// Two users arrive from Entra with no role yet, which is the triage the Manage
+// Users screen is built around.
 export function generateUsers(now: Date): User[] {
   const base = { tenantId: TENANT_ID } as const;
+  const entra = { source: 'entra', authMethod: 'sso' } as const;
   return [
-    { ...base, id: 'usr_0', name: 'Noor Haddad', email: 'noor.haddad@acme.com', role: 'tenant-owner', status: 'active', authMethod: 'sso', lastLogin: iso(now, 6 * HOUR) },
-    { ...base, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 2 * HOUR) },
-    { ...base, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 1 * DAY) },
-    { ...base, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', authMethod: 'sso', lastLogin: iso(now, 5 * HOUR) },
-    { ...base, id: 'usr_4', name: 'Morgan Ellis', email: 'morgan.ellis@acme.com', role: 'security-admin', status: 'suspended', authMethod: 'sso', lastLogin: iso(now, 20 * DAY) },
-    { ...base, id: 'usr_5', name: 'Priya Nair', email: 'priya.nair@acme.com', role: 'analyst', status: 'active', authMethod: 'sso', lastLogin: iso(now, 3 * HOUR) },
-    { ...base, id: 'usr_6', name: 'Sam Lee', email: 'sam.lee@acme.com', role: 'analyst', status: 'active', authMethod: 'password', lastLogin: iso(now, 2 * DAY) },
-    { ...base, id: 'usr_7', name: 'Chris Vaughn', email: 'chris.vaughn@acme.com', role: 'viewer', status: 'active', authMethod: 'sso', lastLogin: iso(now, 8 * DAY) },
-    { ...base, id: 'usr_8', name: 'Robin Park', email: 'robin.park@acme.com', role: 'analyst', status: 'pending', authMethod: 'sso', invitedAt: iso(now, 1 * DAY), invitedBy: 'usr_1' },
-    { ...base, id: 'usr_9', name: 'Taylor Quinn', email: 'taylor.quinn@acme.com', role: 'viewer', status: 'suspended', authMethod: 'sso', validity: { expiry: iso(now, 3 * DAY) }, lastLogin: iso(now, 30 * DAY) },
-    { ...base, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: 'security-admin', status: 'invited', authMethod: 'sso', invitedAt: iso(now, 3 * HOUR), invitedBy: 'usr_1' },
+    { ...base, id: 'usr_0', name: 'Noor Haddad', email: 'noor.haddad@acme.com', role: 'tenant-owner', status: 'active', source: 'local', authMethod: 'password', addedAt: iso(now, 420 * DAY), lastLogin: iso(now, 6 * HOUR) },
+    { ...base, ...entra, id: 'usr_1', name: 'Alex Kim', email: 'alex.kim@acme.com', role: 'tenant-admin', status: 'active', addedAt: iso(now, 400 * DAY), lastLogin: iso(now, 2 * HOUR) },
+    { ...base, ...entra, id: 'usr_2', name: 'Dana Brooks', email: 'dana.brooks@acme.com', role: 'tenant-admin', status: 'active', addedAt: iso(now, 380 * DAY), lastLogin: iso(now, 1 * DAY) },
+    { ...base, ...entra, id: 'usr_3', name: 'Jordan Rivera', email: 'jordan.rivera@acme.com', role: 'security-admin', status: 'active', addedAt: iso(now, 300 * DAY), lastLogin: iso(now, 5 * HOUR) },
+    { ...base, ...entra, id: 'usr_4', name: 'Morgan Ellis', email: 'morgan.ellis@acme.com', role: 'security-admin', status: 'suspended', addedAt: iso(now, 280 * DAY), lastLogin: iso(now, 20 * DAY) },
+    { ...base, ...entra, id: 'usr_5', name: 'Priya Nair', email: 'priya.nair@acme.com', role: 'analyst', status: 'active', addedAt: iso(now, 210 * DAY), lastLogin: iso(now, 3 * HOUR) },
+    { ...base, ...entra, id: 'usr_6', name: 'Sam Lee', email: 'sam.lee@acme.com', role: 'analyst', status: 'active', addedAt: iso(now, 180 * DAY), lastLogin: iso(now, 2 * DAY) },
+    { ...base, ...entra, id: 'usr_7', name: 'Chris Vaughn', email: 'chris.vaughn@acme.com', role: 'viewer', status: 'active', addedAt: iso(now, 120 * DAY), lastLogin: iso(now, 8 * DAY) },
+    { ...base, ...entra, id: 'usr_8', name: 'Robin Park', email: 'robin.park@acme.com', role: null, status: 'active', addedAt: iso(now, 1 * DAY) },
+    { ...base, ...entra, id: 'usr_9', name: 'Taylor Quinn', email: 'taylor.quinn@acme.com', role: 'viewer', status: 'suspended', addedAt: iso(now, 95 * DAY), validity: { expiry: iso(now, 3 * DAY) }, lastLogin: iso(now, 30 * DAY) },
+    { ...base, ...entra, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: null, status: 'active', addedAt: iso(now, 3 * HOUR) },
+    { ...base, ...entra, id: 'usr_11', name: 'Lea Brandt', email: 'lea.brandt@acme.com', role: 'viewer', status: 'suspended-idp', addedAt: iso(now, 150 * DAY), lastLogin: iso(now, 12 * DAY) },
   ];
 }
 
-// Seeded invitations with KNOWN tokens so the Accept Invitation screen can resolve
-// each state directly: /accept-invite/<token>. See the README demo links.
-export function generateInvitations(now: Date): Invitation[] {
-  const mk = (
-    token: string,
-    email: string,
-    role: Invitation['role'],
-    status: Invitation['status'],
-    sentDaysAgo: number,
-    expiresDaysFromNow: number,
-  ): Invitation => ({
-    token,
-    tenantId: TENANT_ID,
-    email,
-    role,
-    authMethod: 'sso',
-    status,
-    sentAt: iso(now, sentDaysAgo * DAY),
-    expiresAt: new Date(now.getTime() + expiresDaysFromNow * DAY).toISOString(),
-  });
-  return [
-    mk('acme-demo-001', 'newhire@acme.com', 'analyst', 'pending', 1, 6),
-    mk('acme-expired-002', 'late.applicant@acme.com', 'viewer', 'expired', 10, -3),
-    mk('acme-accepted-003', 'priya.nair@acme.com', 'analyst', 'accepted', 40, -33),
-    mk('acme-revoked-004', 'former.contractor@acme.com', 'viewer', 'revoked', 5, 2),
-    // Match the seeded pending/invited users so Resend Invitation has a target.
-    mk('inv-robin', 'robin.park@acme.com', 'analyst', 'pending', 1, 6),
-    mk('inv-jamie', 'jamie.fox@acme.com', 'security-admin', 'pending', 0.125, 7),
-  ];
-}

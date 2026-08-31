@@ -20,8 +20,6 @@ const SIGN_IN_METHODS: SignInMethod[] = ['auto', 'sso', 'password'];
 const AUTH_SCREENS: { to: string; label: string }[] = [
   { to: '/login', label: 'Sign in' },
   { to: '/register', label: 'Request access' },
-  { to: '/accept-invite/acme-demo-001', label: 'Invite · pending' },
-  { to: '/accept-invite/acme-expired-002', label: 'Invite · expired' },
   { to: '/mfa/setup', label: 'MFA setup' },
   { to: '/forgot-password', label: 'Forgot password' },
 ];

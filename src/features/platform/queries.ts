@@ -7,7 +7,7 @@ import {
   markNotificationRead,
   updateUserRole,
 } from '@/mocks/api';
-import type { User } from '@/mocks/types';
+import type { Role } from '@/lib/permissions';
 
 export function useUsers() {
   return useQuery({ queryKey: ['users'], queryFn: listUsers });
@@ -20,7 +20,7 @@ export function useConnections() {
 export function useUpdateUserRole() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, role }: { id: string; role: User['role'] }) => updateUserRole(id, role),
+    mutationFn: ({ id, role }: { id: string; role: Role }) => updateUserRole(id, role),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }

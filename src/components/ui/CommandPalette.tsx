@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQuery } from '@tanstack/react-query';
-import { CornerDownLeft, Search } from 'lucide-react';
+import { CornerDownLeft, KeyRound, Search } from 'lucide-react';
 import { ALL_NAV_ITEMS, EXTRA_TITLES } from '@/app/nav';
 import { listIdentities } from '@/mocks/api';
 import { NhiTypeIcon } from './NhiTypeIcon';
@@ -25,7 +25,22 @@ const SCREEN_RESULTS: Result[] = [
     to: i.to,
     icon: <i.icon className="h-4 w-4" aria-hidden="true" />,
   })),
-  { id: 'screen:/onboarding', label: 'Onboarding & Connect', hint: 'Get started', to: '/onboarding', icon: <Search className="h-4 w-4" aria-hidden="true" /> },
+  {
+    id: 'screen:/onboarding',
+    label: 'Onboarding & Connect',
+    hint: 'Get started',
+    to: '/onboarding',
+    icon: <Search className="h-4 w-4" aria-hidden="true" />,
+  },
+  // Not a rail item — it is configured once — but it must still be findable, and
+  // it is the screen an admin hunts for when nobody can sign in.
+  {
+    id: 'screen:/settings/sso',
+    label: 'Single Sign-On',
+    hint: 'Platform',
+    to: '/settings/sso',
+    icon: <KeyRound className="h-4 w-4" aria-hidden="true" />,
+  },
 ];
 
 export function CommandPalette() {
@@ -62,7 +77,8 @@ export function CommandPalette() {
   const term = query.trim().toLowerCase();
 
   const screens = useMemo(
-    () => (term ? SCREEN_RESULTS.filter((s) => s.label.toLowerCase().includes(term)) : SCREEN_RESULTS),
+    () =>
+      term ? SCREEN_RESULTS.filter((s) => s.label.toLowerCase().includes(term)) : SCREEN_RESULTS,
     [term],
   );
 
@@ -135,12 +151,21 @@ export function CommandPalette() {
               aria-activedescendant={results[active] ? `acv-opt-${results[active].id}` : undefined}
               className="h-12 w-full bg-transparent text-[length:var(--fs-body)] text-text outline-none placeholder:text-text-tertiary"
             />
-            <kbd className="hidden rounded-[var(--r-xs)] border border-border bg-surface-2 px-1.5 py-0.5 text-[length:var(--fs-micro)] text-text-secondary sm:inline">Esc</kbd>
+            <kbd className="hidden rounded-[var(--r-xs)] border border-border bg-surface-2 px-1.5 py-0.5 text-[length:var(--fs-micro)] text-text-secondary sm:inline">
+              Esc
+            </kbd>
           </div>
 
-          <ul id="acv-palette-list" role="listbox" aria-label="Results" className="max-h-80 overflow-y-auto p-1.5">
+          <ul
+            id="acv-palette-list"
+            role="listbox"
+            aria-label="Results"
+            className="max-h-80 overflow-y-auto p-1.5"
+          >
             {results.length === 0 ? (
-              <li className="px-3 py-6 text-center text-[length:var(--fs-small)] text-text-tertiary">No matches for “{query}”.</li>
+              <li className="px-3 py-6 text-center text-[length:var(--fs-small)] text-text-tertiary">
+                No matches for “{query}”.
+              </li>
             ) : (
               results.map((r, i) => (
                 <li
@@ -156,9 +181,20 @@ export function CommandPalette() {
                   )}
                 >
                   <span className="text-text-tertiary">{r.icon}</span>
-                  <span className="min-w-0 flex-1 truncate text-[length:var(--fs-small)] text-text">{r.label}</span>
-                  {r.hint && <span className="shrink-0 text-[length:var(--fs-micro)] text-text-tertiary">{r.hint}</span>}
-                  {i === active && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />}
+                  <span className="min-w-0 flex-1 truncate text-[length:var(--fs-small)] text-text">
+                    {r.label}
+                  </span>
+                  {r.hint && (
+                    <span className="shrink-0 text-[length:var(--fs-micro)] text-text-tertiary">
+                      {r.hint}
+                    </span>
+                  )}
+                  {i === active && (
+                    <CornerDownLeft
+                      className="h-3.5 w-3.5 shrink-0 text-text-tertiary"
+                      aria-hidden="true"
+                    />
+                  )}
                 </li>
               ))
             )}

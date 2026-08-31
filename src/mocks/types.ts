@@ -399,7 +399,12 @@ export interface CloudConnection {
 // behaviour is simulated upstream; these types model what the UI displays.
 
 // No separate "expired" status: a lapsed validity window maps to `suspended`.
-export type UserStatus = 'invited' | 'pending' | 'active' | 'suspended' | 'deleted';
+// `suspended-idp` is Entra's doing, not an admin's — the distinction matters
+// because only Entra can lift it.
+export type UserStatus = 'active' | 'suspended' | 'suspended-idp' | 'deleted';
+
+/** Who owns this account. Entra owns everyone except the registered Tenant Owner. */
+export type UserSource = 'entra' | 'local';
 export type AuthMethod = 'sso' | 'password';
 
 /** ISO date strings; an absent field means no bound. */
@@ -416,12 +421,45 @@ export const SSO_PROVIDER_LABELS: Record<SsoProvider, string> = {
   none: 'None',
 };
 
+/**
+ * A certificate's readable summary. Parsed upstream — the UI never decodes x509,
+ * it only displays what it is handed (see the mock's ASSUMPTION tag).
+ */
+export interface CertSummary {
+  subject: string;
+  thumbprint: string;
+  expiresAt: string;
+}
+
+/** What Acrivault trusts for sign-in. Null fields mean "not supplied yet". */
+export interface SamlConfig {
+  entityId: string | null;
+  ssoUrl: string | null;
+  certificate: string | null;
+  cert: CertSummary | null;
+  savedAt: string | null;
+  /** Set by a real assertion. Until then the configuration is a claim, not a fact. */
+  lastSignInAt: string | null;
+}
+
+/** How Entra provisions people in. */
+export interface ScimConfig {
+  tokenIssuedAt: string | null;
+  /** Set the first time Entra calls the endpoint — this is what proves the token works. */
+  lastSyncAt: string | null;
+  usersReceived: number;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   allowedDomains: string[]; // SSO-allowed email domains
   status: 'provisioning' | 'active' | 'failed';
-  sso: { provider: SsoProvider; configured: boolean };
+  sso: { provider: SsoProvider };
+  saml: SamlConfig;
+  scim: ScimConfig;
+  /** Password sign-in for accounts Entra does not manage. The way back in. */
+  passwordFallback: boolean;
   createdAt: string;
 }
 
@@ -430,25 +468,15 @@ export interface User {
   tenantId: string;
   name: string; // read-only, sourced from the IdP
   email: string; // read-only, sourced from the IdP
-  role: Role;
+  /** Null until an admin assigns one. Entra sends people, not permissions. */
+  role: Role | null;
   status: UserStatus;
+  source: UserSource;
   authMethod: AuthMethod;
   validity?: ValidityWindow;
   lastLogin?: string;
-  invitedAt?: string;
-  invitedBy?: string;
-}
-
-export interface Invitation {
-  token: string;
-  tenantId: string;
-  email: string;
-  role: Role;
-  validity?: ValidityWindow;
-  authMethod: AuthMethod;
-  status: 'pending' | 'accepted' | 'expired' | 'revoked';
-  expiresAt: string;
-  sentAt: string;
+  /** When the account appeared in Acrivault — a SCIM push, or registration. */
+  addedAt: string;
 }
 
 // Wave 2 concept fixtures (concept fidelity only; no recovery internals implied).
