@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { getDataset } from './dataset';
 import { listAudit, listQuarantined, quarantineAgent, releaseQuarantine } from './api';
+import { matchesPolicy } from './policy';
 import { CURRENT_USER_ID } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 
@@ -43,6 +44,45 @@ describe('Act > Quarantine provenance', () => {
     for (const identity of quarantined) {
       expect(identity.orphaned, identity.id).toBe(true);
       expect(identity.riskScore, identity.id).toBeGreaterThanOrEqual(70);
+    }
+  });
+
+  // Coherence, not just presence: a named producer that could not actually have
+  // produced the effect is worse than none, because it reads as authoritative.
+  // A prior version fell back to "any quarantine policy" when none matched --
+  // this asserts the fallback stays gone by checking every policy-kind row
+  // against the same matchesPolicy() the policy engine itself uses.
+  it('names only a policy whose own conditions actually match the identity', () => {
+    const ds = getDataset();
+    const withPolicy = ds.identities.filter((i) => i.quarantine?.by.kind === 'policy');
+    expect(withPolicy.length).toBeGreaterThan(0);
+    for (const identity of withPolicy) {
+      const record = identity.quarantine;
+      if (!record || record.by.kind !== 'policy') {
+        throw new Error(`fixture: expected ${identity.id} to carry policy provenance`);
+      }
+      const by = record.by; // hoisted: narrowing doesn't survive the .find() closure below
+      const policy = ds.policies.find((p) => p.id === by.policyId);
+      if (!policy) throw new Error(`fixture: policy ${by.policyId} referenced by ${identity.id} not found`);
+      expect(matchesPolicy(identity, policy.tokens), identity.id).toBe(true);
+    }
+  });
+
+  // Same principle for session: a session review can only explain the agent
+  // whose session it is, never a stranger's.
+  it('names only a session that belongs to the same identity it explains', () => {
+    const ds = getDataset();
+    const withSession = ds.identities.filter((i) => i.quarantine?.by.kind === 'session');
+    expect(withSession.length).toBeGreaterThan(0);
+    for (const identity of withSession) {
+      const record = identity.quarantine;
+      if (!record || record.by.kind !== 'session') {
+        throw new Error(`fixture: expected ${identity.id} to carry session provenance`);
+      }
+      const by = record.by;
+      const session = ds.sessions.find((s) => s.id === by.sessionId);
+      if (!session) throw new Error(`fixture: session ${by.sessionId} referenced by ${identity.id} not found`);
+      expect(session.identityId, identity.id).toBe(identity.id);
     }
   });
 

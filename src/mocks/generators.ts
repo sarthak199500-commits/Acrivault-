@@ -1041,8 +1041,12 @@ export function attachQuarantineProvenance(
   quarantined.forEach((identity, i) => {
     const at = new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString();
     const ownSessions = sessionsByIdentity.get(identity.id) ?? [];
-    const matchingPolicies = quarantinePolicies.filter((p) => matchesPolicy(identity, p.tokens));
-    const eligiblePolicies = matchingPolicies.length > 0 ? matchingPolicies : quarantinePolicies;
+    // No fallback to "any quarantine policy": a policy whose own conditions do
+    // not match this identity could not have quarantined it, and naming one
+    // anyway is worse than naming none -- it reads as authoritative and isn't.
+    // The ORDERS loop below already falls through to the next kind when this
+    // is empty, same as it does for session.
+    const eligiblePolicies = quarantinePolicies.filter((p) => matchesPolicy(identity, p.tokens));
 
     for (const kind of ORDERS[i % 3]) {
       if (kind === 'session' && ownSessions.length > 0) {
