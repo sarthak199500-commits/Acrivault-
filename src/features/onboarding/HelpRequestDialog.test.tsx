@@ -62,14 +62,11 @@ describe('the form', () => {
     expect(dialog.getByText(/only if you would rather we call/i)).toBeInTheDocument();
   });
 
-  it('names every field it would attach, rather than asking for trust', async () => {
+  it('offers no way to attach setup details, so nothing is sent unasked', async () => {
     const user = setup();
     const dialog = await openHelp(user);
-    await user.click(dialog.getByRole('button', { name: /see the list/i }));
-
-    expect(dialog.getByText('Step')).toBeInTheDocument();
-    expect(dialog.getByText('Clouds')).toBeInTheDocument();
-    expect(dialog.getByText(/AWS disconnected/)).toBeInTheDocument();
+    expect(dialog.queryByRole('button', { name: /see the list/i })).not.toBeInTheDocument();
+    expect(dialog.queryByLabelText(/setup details/i)).not.toBeInTheDocument();
   });
 
   it('blocks an empty submit and says what each field needs', async () => {
@@ -113,7 +110,9 @@ describe('after sending', () => {
     expect(dialog.getByText('Request sent')).toBeInTheDocument();
     expect(dialog.getByText('Reference')).toBeInTheDocument();
     expect(dialog.getByText(signedInEmail())).toBeInTheDocument();
-    expect(dialog.getByText('setup details')).toBeInTheDocument();
+    // No screenshots in this flow and setup details are gone, so the honest
+    // summary is that nothing was attached — not a blank row.
+    expect(dialog.getByText('Nothing')).toBeInTheDocument();
   });
 
   it('says the setup is not blocked while they wait', async () => {

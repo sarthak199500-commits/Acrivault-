@@ -260,7 +260,6 @@ export function OnboardingScreen() {
   const navigate = useNavigate();
   const canConnect = useCan('connector.manage');
   const setDiscovered = useUiStore((s) => s.setDiscovered);
-  const role = useUiStore((s) => s.role);
   const [step, setStep] = useState(0);
   const [conn, setConn] = useState<Record<CloudT, ConnState>>({
     aws: 'disconnected',
@@ -374,18 +373,7 @@ export function OnboardingScreen() {
     </Button>
   );
 
-  // Exactly what "Include my setup details" attaches — enumerated so the checkbox
-  // can show it rather than asking anyone to trust a summary.
-  const helpContext = [
-    { label: 'Screen', value: 'Onboarding & Connect' },
-    { label: 'Step', value: STEPS[step].label },
-    { label: 'Clouds', value: CLOUDS.map((c) => `${PROVIDER_LABEL[c]} ${conn[c]}`).join(', ') },
-    { label: 'Viewing as', value: role },
-  ];
-
-  const helpDialog = (
-    <HelpRequestDialog open={helpOpen} onOpenChange={setHelpOpen} context={helpContext} />
-  );
+  const helpDialog = <HelpRequestDialog open={helpOpen} onOpenChange={setHelpOpen} />;
 
   // Onboarding is admin-only: a person reaches it only with the Connect capability
   // (Tenant Admin or Security Admin). Everyone else is gated out, not walked through.

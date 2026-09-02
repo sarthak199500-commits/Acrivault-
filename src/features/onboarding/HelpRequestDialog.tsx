@@ -4,7 +4,6 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
-import { Checkbox } from '@/components/ui/Checkbox';
 import { KeyValueList } from '@/components/ui/KeyValueList';
 import { FileDropzone, type DroppedFile } from '@/components/ui/FileDropzone';
 import { announce } from '@/lib/a11y';
@@ -23,14 +22,11 @@ export interface HelpRequestValues {
   subject: string;
   description: string;
   files: DroppedFile[];
-  includeContext: boolean;
 }
 
 export interface HelpRequestDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** What "Include my setup details" would attach, shown in full before sending. */
-  context: { label: string; value: string }[];
   /** Prefills the subject when opened from a specific failure. */
   defaultSubject?: string;
 }
@@ -42,18 +38,15 @@ function useSignedInEmail(): string {
   return useMemo(() => getDataset().users.find((u) => u.id === userId)?.email ?? '', [userId]);
 }
 
-export function HelpRequestDialog({ open, onOpenChange, context, defaultSubject }: HelpRequestDialogProps) {
+export function HelpRequestDialog({ open, onOpenChange, defaultSubject }: HelpRequestDialogProps) {
   const signedInEmail = useSignedInEmail();
   const formId = useId();
-  const contextId = useId();
 
   const [email, setEmail] = useState(signedInEmail);
   const [mobile, setMobile] = useState('');
   const [subject, setSubject] = useState(defaultSubject ?? '');
   const [description, setDescription] = useState('');
   const [files, setFiles] = useState<DroppedFile[]>([]);
-  const [includeContext, setIncludeContext] = useState(true);
-  const [showContext, setShowContext] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [reference, setReference] = useState<string | null>(null);
 
@@ -64,8 +57,6 @@ export function HelpRequestDialog({ open, onOpenChange, context, defaultSubject 
     setSubject(defaultSubject ?? '');
     setDescription('');
     setFiles([]);
-    setIncludeContext(true);
-    setShowContext(false);
     setErrors({});
     setReference(null);
   }, [open, signedInEmail, defaultSubject]);
@@ -124,13 +115,9 @@ export function HelpRequestDialog({ open, onOpenChange, context, defaultSubject 
               { label: 'Sent to', value: email, mono: true },
               {
                 label: 'Attached',
-                value:
-                  [
-                    files.length ? `${files.length} ${files.length === 1 ? 'screenshot' : 'screenshots'}` : null,
-                    includeContext ? 'setup details' : null,
-                  ]
-                    .filter(Boolean)
-                    .join(', ') || 'Nothing',
+                value: files.length
+                  ? `${files.length} ${files.length === 1 ? 'screenshot' : 'screenshots'}`
+                  : 'Nothing',
               },
             ]}
           />
@@ -226,34 +213,6 @@ export function HelpRequestDialog({ open, onOpenChange, context, defaultSubject 
           hint="PNG or JPG · up to 5 files · 10 MB each"
           compact
         />
-
-        <div>
-          <div className="flex items-start gap-2.5">
-            <Checkbox
-              id={contextId}
-              checked={includeContext}
-              onCheckedChange={setIncludeContext}
-              className="mt-0.5"
-            />
-            <div className="min-w-0">
-              <label htmlFor={contextId} className="text-[length:var(--fs-small)] text-text">
-                Include my setup details
-              </label>{' '}
-              {/* Attaching context silently would be the easy version. Naming every
-                  field is the honest one — the detail lives behind this, so the
-                  checkbox needs no second line of its own. */}
-              <button
-                type="button"
-                onClick={() => setShowContext((v) => !v)}
-                aria-expanded={showContext}
-                className="text-[length:var(--fs-small)] text-accent-text underline underline-offset-2 hover:text-text"
-              >
-                {showContext ? 'hide the list' : 'see the list'}
-              </button>
-            </div>
-          </div>
-          {showContext && <KeyValueList className="mt-2" boxed items={context} />}
-        </div>
       </form>
     </Dialog>
   );
