@@ -101,6 +101,12 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import('@/features/rotate/RotateScreen')).RotateScreen }),
       },
       {
+        path: 'act/quarantine',
+        lazy: async () => ({
+          Component: (await import('@/features/act/QuarantineScreen')).QuarantineScreen,
+        }),
+      },
+      {
         path: 'rotate/:jobId',
         lazy: async () => ({ Component: (await import('@/features/rotate/RotationJobDetail')).RotationJobDetail }),
       },

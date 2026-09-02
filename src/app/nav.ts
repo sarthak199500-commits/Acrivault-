@@ -11,6 +11,7 @@ import {
   ScrollText,
   Settings,
   ShieldHalf,
+  ShieldX,
   Sparkles,
   Users,
   Workflow,
@@ -65,7 +66,10 @@ export const NAV: NavGroup[] = [
   },
   {
     layer: 'Act',
-    items: [{ to: '/rotate', label: 'Rotate', pillar: 'Rotate', icon: RefreshCw }],
+    items: [
+      { to: '/rotate', label: 'Rotate', pillar: 'Rotate', icon: RefreshCw },
+      { to: '/act/quarantine', label: 'Quarantine', pillar: 'Quarantine', icon: ShieldX },
+    ],
   },
   {
     layer: 'Platform',

@@ -38,6 +38,7 @@ import type {
   PolicyAction,
   PolicyActionOutcome,
   PolicyToken,
+  QuarantineRecord,
   ReachEdge,
   ReachNode,
   RiskBand,
@@ -933,6 +934,13 @@ export function quarantineAgent(identityId: string, note?: string): Promise<Iden
   return respond(() => {
     const identity = findAgent(identityId);
     identity.status = 'quarantined';
+    // Named provenance (Act > Quarantine, audit point 5): without this, a live
+    // containment would be the one row on that screen with no producer, even
+    // though every seeded row has one.
+    identity.quarantine = {
+      at: new Date().toISOString(),
+      by: { kind: 'user', userId: currentActor().id },
+    };
     const trimmed = note?.trim();
     appendAudit(
       'quarantined agent',
@@ -1023,14 +1031,79 @@ export function recommendQuarantine(identityId: string, fromSessionId?: string):
 /** Release from quarantine — Tenant Owner / Tenant Admin only (spec §5). */
 export function releaseQuarantine(identityId: string): Promise<Identity> {
   return respond(() => {
+    assertActorCan('session.quarantineRelease');
     const identity = findAgent(identityId);
     if (identity.status !== 'quarantined') {
       throw new MockApiError('This identity is not quarantined.');
     }
     identity.status = 'active';
+    identity.quarantine = undefined;
     appendAudit('released agent from quarantine', identity.name, 'The agent can act again.');
     return { ...identity };
   });
+}
+
+/* ------------------------------------------------------------- act > quarantine */
+
+export interface QuarantinedIdentity {
+  id: string;
+  name: string;
+  type: NhiType;
+  at: string;
+  /** Resolved producer, e.g. "Policy · Orphaned AI agents". */
+  byLabel: string;
+  /** Where the producer lives, for the link back. Absent when it has no screen. */
+  byHref?: string;
+}
+
+/** Resolve a QuarantineRecord's producer to a human label and, where one exists, a link back to it. */
+function quarantineLabel(record: QuarantineRecord): { byLabel: string; byHref?: string } {
+  const ds = getDataset();
+  // Bound to a local const: narrowing `record.by.kind` doesn't survive into the
+  // `.find()` closures below (TS re-widens a narrowed property access across a
+  // function boundary), but narrowing a local `const` does.
+  const by = record.by;
+  if (by.kind === 'policy') {
+    const policy = ds.policies.find((p) => p.id === by.policyId);
+    return {
+      byLabel: `Policy · ${policy?.name ?? 'removed policy'}`,
+      byHref: policy ? `/govern/builder/${policy.id}` : undefined,
+    };
+  }
+  if (by.kind === 'user') {
+    const user = ds.users.find((u) => u.id === by.userId);
+    // No href: a user has no standalone screen to link back to in Wave 1.
+    if (!user) return { byLabel: 'Removed user' };
+    return { byLabel: user.role ? `${user.name} · ${ROLE_LABELS[user.role]}` : user.name };
+  }
+  const session = ds.sessions.find((s) => s.id === by.sessionId);
+  return {
+    byLabel: session ? `Session review · ${session.id}` : 'Removed session',
+    byHref: `/intelligence/${by.sessionId}`,
+  };
+}
+
+/**
+ * Every contained identity, newest-first, with its producer resolved for display.
+ * An identity can read `status === 'quarantined'` with no `quarantine` record only
+ * in a contrived edge case (see act.test.ts) — skip it rather than show a blank
+ * producer, which would be worse than not listing the row at all.
+ */
+export function listQuarantined(): Promise<QuarantinedIdentity[]> {
+  return respond(() =>
+    getDataset()
+      .identities.filter((i): i is Identity & { quarantine: QuarantineRecord } =>
+        i.status === 'quarantined' && Boolean(i.quarantine),
+      )
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        type: i.type,
+        at: i.quarantine.at,
+        ...quarantineLabel(i.quarantine),
+      }))
+      .sort((a, b) => b.at.localeCompare(a.at)),
+  );
 }
 
 /* --------------------------------------------------------------- blast radius */

@@ -4,6 +4,7 @@
 // with ?scale=50000 (or localStorage 'acrivault.scale') to hit the perf target.
 
 import {
+  attachQuarantineProvenance,
   generateAlerts,
   generateAudit,
   generateConnections,
@@ -84,12 +85,16 @@ function build(): Dataset {
   // Audit targets name real entities, so the things it names are built first.
   const policies = generatePolicies(identities, SEED, NOW);
   const tenant = generateTenant(NOW);
+  const sessions = generateSessions(identities, SEED, NOW);
+  // Post-pass: policies, users and sessions all exist now, so a quarantined
+  // identity can finally be given a producer (see attachQuarantineProvenance).
+  attachQuarantineProvenance(identities, policies, users, sessions, SEED, NOW);
   return {
     size,
     identities,
     identityById,
     alerts: generateAlerts(identities, SEED, NOW),
-    sessions: generateSessions(identities, SEED, NOW),
+    sessions,
     policies,
     policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
     rotations: generateRotations(identities, SEED, NOW),

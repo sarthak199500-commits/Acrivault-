@@ -56,6 +56,21 @@ export interface AttributeConflict {
 
 export type GovernanceStatus = 'governed' | 'ungoverned' | 'drift';
 
+/**
+ * What put an identity into quarantine. The state is reachable three ways — a
+ * Govern policy action, an admin acting from the identity panel, and a session
+ * review — and a terminal state with no named producer is not auditable.
+ */
+export type QuarantineSource =
+  | { kind: 'policy'; policyId: string }
+  | { kind: 'user'; userId: string }
+  | { kind: 'session'; sessionId: string };
+
+export interface QuarantineRecord {
+  at: string;
+  by: QuarantineSource;
+}
+
 export interface Identity {
   id: string;
   name: string;
@@ -69,6 +84,8 @@ export interface Identity {
   riskBand: RiskBand; // derived from score, display mapping
   governanceStatus: GovernanceStatus; // derived
   status: IdentityStatus; // lifecycle state (derived) // ASSUMPTION: derived upstream
+  /** Present only while `status` is 'quarantined'. */
+  quarantine?: QuarantineRecord;
   owner?: string;
   relationships: { identityId: string; kind: string }[];
   riskSeries: { t: string; score: number }[]; // for the per-identity timeline

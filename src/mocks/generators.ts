@@ -32,6 +32,7 @@ import {
   type User,
 } from './types';
 import { riskBand } from '@/lib/risk';
+import { can } from '@/lib/permissions';
 import { generatedCode, matchesPolicy, plainEnglish } from './policy';
 
 /* ----------------------------------------------------------------- seeded RNG */
@@ -980,5 +981,112 @@ export function generateUsers(now: Date): User[] {
     { ...base, ...entra, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: null, status: 'active', addedAt: iso(now, 3 * HOUR) },
     { ...base, ...entra, id: 'usr_11', name: 'Lea Brandt', email: 'lea.brandt@acme.com', role: 'viewer', status: 'suspended-idp', addedAt: iso(now, 150 * DAY), lastLogin: iso(now, 12 * DAY) },
   ];
+}
+
+/* ------------------------------------------------------- quarantine provenance */
+
+/**
+ * Attach a producer to every quarantined identity. Runs as a post-pass, called
+ * from `dataset.ts` after policies, users and sessions all exist — containment
+ * is decided in `makeIdentity` (an orphaned, high-risk identity, by dice roll)
+ * before any of the things that could have named it are built.
+ *
+ * Each candidate producer is constrained to one that could plausibly have done
+ * it, not picked uniformly at random:
+ *  - `policy`  — only a rule whose OWN action is quarantine, preferring one
+ *    whose conditions actually match this identity (falls back to any
+ *    quarantine-action policy — the seeded containment roll isn't literally
+ *    driven by the policy engine, so an exact match isn't always available).
+ *  - `user`    — only an active account holding `session.quarantine`; a
+ *    suspended admin couldn't have acted, and Analysts can only recommend.
+ *  - `session` — only one of the IDENTITY'S OWN sessions, and only when it has
+ *    one (an agent). A session review cannot explain a service account's
+ *    containment, and linking to a stranger's session would be a broken story.
+ *
+ * The preferred kind cycles by index so the fixture demonstrates all three
+ * producers rather than whichever the dice favours, falling through to the
+ * next-preferred kind when this identity can't support it.
+ */
+export function attachQuarantineProvenance(
+  identities: Identity[],
+  policies: Policy[],
+  users: User[],
+  sessions: AgentSession[],
+  seed: number,
+  now: Date,
+): void {
+  const rng = new Rng(seed ^ 0x51a7e5);
+  const quarantined = identities.filter((i) => i.status === 'quarantined');
+  if (quarantined.length === 0) return;
+
+  const quarantinePolicies = policies.filter((p) =>
+    p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'quarantine'),
+  );
+  const admins = users.filter(
+    (u) => u.status === 'active' && u.role !== null && can(u.role, 'session.quarantine'),
+  );
+  const sessionsByIdentity = new Map<string, AgentSession[]>();
+  for (const session of sessions) {
+    const list = sessionsByIdentity.get(session.identityId);
+    if (list) list.push(session);
+    else sessionsByIdentity.set(session.identityId, [session]);
+  }
+
+  const ORDERS: Record<number, readonly ('policy' | 'session' | 'user')[]> = {
+    0: ['policy', 'session', 'user'],
+    1: ['user', 'policy', 'session'],
+    2: ['session', 'user', 'policy'],
+  };
+
+  quarantined.forEach((identity, i) => {
+    const at = new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString();
+    const ownSessions = sessionsByIdentity.get(identity.id) ?? [];
+    const matchingPolicies = quarantinePolicies.filter((p) => matchesPolicy(identity, p.tokens));
+    const eligiblePolicies = matchingPolicies.length > 0 ? matchingPolicies : quarantinePolicies;
+
+    for (const kind of ORDERS[i % 3]) {
+      if (kind === 'session' && ownSessions.length > 0) {
+        identity.quarantine = { at, by: { kind: 'session', sessionId: rng.pick(ownSessions).id } };
+        return;
+      }
+      if (kind === 'policy' && eligiblePolicies.length > 0) {
+        identity.quarantine = { at, by: { kind: 'policy', policyId: rng.pick(eligiblePolicies).id } };
+        return;
+      }
+      if (kind === 'user' && admins.length > 0) {
+        identity.quarantine = { at, by: { kind: 'user', userId: rng.pick(admins).id } };
+        return;
+      }
+    }
+    // Every pool this identity was eligible for was empty (a degenerate fixture,
+    // e.g. no users at all) — name whoever exists rather than leave it silent.
+    identity.quarantine = { at, by: { kind: 'user', userId: users[0]?.id ?? 'usr_0' } };
+  });
+
+  // At the default seed/size, containment (`makeIdentity`'s dice roll) never lands
+  // on an ai-agent, so `session` never gets a legitimate candidate above — a
+  // session review can only explain the agent whose session it is, and no
+  // quarantined identity has any. Rather than loosen that rule (linking a
+  // service account's containment to a stranger's session would be a broken
+  // story), promote one real ai-agent that already has a session of its own, so
+  // the fixture — and the screen it feeds — demonstrates all three paths.
+  const hasSessionProducer = quarantined.some((i) => i.quarantine?.by.kind === 'session');
+  if (!hasSessionProducer) {
+    // Pair each eligible identity with its own (non-empty) session list inline,
+    // so the pick below never needs a second, possibly-empty Map lookup.
+    const candidates = identities.flatMap((i) => {
+      if (i.type !== 'ai-agent' || i.status === 'quarantined') return [];
+      const own = sessionsByIdentity.get(i.id);
+      return own && own.length > 0 ? [[i, own] as const] : [];
+    });
+    if (candidates.length > 0) {
+      const [promoted, ownSessions] = rng.pick(candidates);
+      promoted.status = 'quarantined';
+      promoted.quarantine = {
+        at: new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString(),
+        by: { kind: 'session', sessionId: rng.pick(ownSessions).id },
+      };
+    }
+  }
 }
 
