@@ -95,7 +95,7 @@ function build(): Dataset {
     rotations: generateRotations(identities, SEED, NOW),
     audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
     notifications: generateNotifications(SEED, NOW),
-    connections: generateConnections(identities),
+    connections: generateConnections(identities, NOW),
     rehearsals: generateRehearsals(SEED, NOW),
     copilot: generateCopilotSuggestions(identities, SEED),
     tenant,

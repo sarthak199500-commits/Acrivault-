@@ -49,6 +49,15 @@ export const AUTH_SCENARIO_LABELS: Record<AuthScenario, string> = {
  */
 export type SignInMethod = 'auto' | 'sso' | 'password';
 
+/**
+ * Connector health preview. The seeded default keeps all three clouds green — a
+ * degraded source makes every count on every screen short, which is correct
+ * behaviour and wrong for a demo that has not opted into it.
+ */
+export type SourceScenario = 'healthy' | 'degraded';
+
+export const SOURCE_SCENARIOS: SourceScenario[] = ['healthy', 'degraded'];
+
 export interface ScenarioConfig {
   /** Force every data view into a state, or 'auto' to behave normally. */
   state: ScenarioState;
@@ -58,6 +67,8 @@ export interface ScenarioConfig {
   auth: AuthScenario;
   /** Preview the tenant sign-in fork (SSO vs password fallback). */
   signIn: SignInMethod;
+  /** Force a connector into a failed state, or keep every source green. */
+  sources: SourceScenario;
 }
 
 export const DEFAULT_SCENARIO: ScenarioConfig = {
@@ -65,6 +76,7 @@ export const DEFAULT_SCENARIO: ScenarioConfig = {
   latencyMs: 320,
   auth: 'normal',
   signIn: 'auto',
+  sources: 'healthy',
 };
 
 export const LATENCY_PRESETS = [

@@ -8,8 +8,10 @@ import {
   AUTH_SCENARIOS,
   AUTH_SCENARIO_LABELS,
   LATENCY_PRESETS,
+  SOURCE_SCENARIOS,
   type ScenarioState,
   type SignInMethod,
+  type SourceScenario,
 } from '@/mocks/scenarios';
 import type { Density, Theme } from '@/stores/ui';
 
@@ -126,6 +128,13 @@ export function ScenarioSwitcher() {
               options={SIGN_IN_METHODS}
               onChange={(v) => store.setSignIn(v)}
               format={(m) => (m === 'sso' ? 'SSO' : m[0].toUpperCase() + m.slice(1))}
+            />
+            <Segment
+              label="Source health"
+              value={store.scenario.sources}
+              options={SOURCE_SCENARIOS}
+              format={(v) => (v === 'healthy' ? 'All healthy' : 'Azure failing')}
+              onChange={(v: SourceScenario) => store.setSources(v)}
             />
             <Segment
               label="Theme"

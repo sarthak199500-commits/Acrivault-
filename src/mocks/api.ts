@@ -8,6 +8,7 @@ import { currentActor } from '@/stores/auth';
 import {
   conflictsCount,
   getDataset,
+  NOW,
   orphanedCount,
   riskBreakdown,
   sourceInstanceCount,
@@ -42,6 +43,7 @@ import type {
   RiskBand,
   RotationHistoryEntry,
   RotationJob,
+  SourceHealth,
   Tenant,
   User,
   UserStatus,
@@ -1256,8 +1258,63 @@ export function requestRotation(identityId: string, mode: 'standard' | 'emergenc
 
 /* ---------------------------------------------------- platform / connections */
 
+/**
+ * The degraded fixture, applied on read rather than baked into the dataset so the
+ * seeded store stays one healthy source of truth and the Scenario Switcher can
+ * flip it back without a rebuild.
+ * // ASSUMPTION: real connector error reporting is upstream.
+ */
+const DEGRADED_CLOUD: Cloud = 'azure';
+const DEGRADED_AGE_MINUTES = 192;
+
+/**
+ * Anchored to the dataset's NOW, not to Date.now(): getConnections and
+ * getSourceHealth both report this instant, and a fresh Date.now() per call made
+ * them disagree by a few milliseconds on the same "last success".
+ */
+function degradedSince(): string {
+  return new Date(NOW.getTime() - DEGRADED_AGE_MINUTES * 60000).toISOString();
+}
+
+function sourcesDegraded(): boolean {
+  return currentScenario().sources === 'degraded';
+}
+
 export function getConnections(): Promise<CloudConnection[]> {
-  return respond(() => getDataset().connections.map((c) => ({ ...c })));
+  return respond(() =>
+    getDataset().connections.map((c) => {
+      if (!sourcesDegraded() || c.cloud !== DEGRADED_CLOUD) return { ...c };
+      const since = degradedSince();
+      return {
+        ...c,
+        status: 'error' as const,
+        // Last SUCCESS, not last attempt: the chip reports how stale the data is.
+        lastSyncAt: since,
+        error: {
+          code: 'AuthorizationFailed',
+          message:
+            'The app registration lost Directory.Read.All. Counts on Dashboard and Inventory exclude this source until it clears.',
+          since,
+        },
+      };
+    }),
+  );
+}
+
+export function getSourceHealth(): Promise<SourceHealth> {
+  return respond(() => {
+    const degraded = sourcesDegraded() ? [DEGRADED_CLOUD] : [];
+    const syncs = getDataset()
+      .connections.map((c) => (degraded.includes(c.cloud) ? degradedSince() : c.lastSyncAt))
+      .filter((t): t is string => Boolean(t))
+      .sort();
+    return {
+      healthy: getDataset().connections.length - degraded.length,
+      total: getDataset().connections.length,
+      oldestSyncAt: syncs[0],
+      degraded,
+    };
+  });
 }
 
 export function listAudit(search?: string): Promise<AuditEntry[]> {

@@ -392,6 +392,22 @@ export interface CloudConnection {
   cloud: Cloud;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   counts?: Record<NhiType, number>;
+  /** ISO timestamp of this source's last SUCCESSFUL sync. Absent if never synced. */
+  lastSyncAt?: string;
+  /** Present only while `status` is 'error'. */
+  error?: { code: string; message: string; since: string };
+}
+
+/**
+ * Tenant-wide connector coverage for the persistent chrome indicator. A count of
+ * healthy sources plus the age of the OLDEST successful sync — never the newest,
+ * which is what would let a partial dataset present itself as fresh.
+ */
+export interface SourceHealth {
+  healthy: number;
+  total: number;
+  oldestSyncAt?: string;
+  degraded: Cloud[];
 }
 
 /* --------------------------------------------------- users, tenants, groups */

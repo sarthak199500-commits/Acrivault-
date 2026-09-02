@@ -823,7 +823,7 @@ export function generateNotifications(seed: number, now: Date): NotificationItem
   }));
 }
 
-export function generateConnections(identities: Identity[]): CloudConnection[] {
+export function generateConnections(identities: Identity[], now: Date): CloudConnection[] {
   const byCloud: Record<Cloud, Record<NhiType, number>> = {
     aws: emptyCounts(),
     gcp: emptyCounts(),
@@ -834,10 +834,13 @@ export function generateConnections(identities: Identity[]): CloudConnection[] {
       byCloud[source.cloud][identity.type] += 1;
     }
   }
+  // Staggered sync ages, so the coverage chip has a real oldest-sync to report.
+  const ageMinutes: Record<Cloud, number> = { aws: 6, gcp: 11, azure: 4 };
   return CLOUDS.map((cloud) => ({
     cloud,
     status: 'connected' as const,
     counts: byCloud[cloud],
+    lastSyncAt: new Date(now.getTime() - ageMinutes[cloud] * 60000).toISOString(),
   }));
 }
 
