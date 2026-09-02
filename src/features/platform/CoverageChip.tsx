@@ -27,10 +27,12 @@ export function CoverageChip() {
   // first, so the top bar doesn't reflow once real data (or an error) lands.
   if (query.isPending) {
     return (
-      <span className={cn(SHELL, NEUTRAL)} aria-hidden="true">
+      // A div, not a span: Skeleton renders a div, which is not phrasing content.
+      // SHELL's inline-flex controls the layout, so the tag is free to be correct.
+      <div className={cn(SHELL, NEUTRAL)} aria-hidden="true">
         <CloudIcon className="h-3.5 w-3.5 shrink-0" />
         <Skeleton className="h-3 w-24" />
-      </span>
+      </div>
     );
   }
 
