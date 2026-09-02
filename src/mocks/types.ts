@@ -398,6 +398,11 @@ export interface CloudConnection {
   error?: { code: string; message: string; since: string };
 }
 
+/** A connection's reported instances summed across every NHI type. Absent counts read as 0. */
+export function totalFor(connection: CloudConnection): number {
+  return connection.counts ? Object.values(connection.counts).reduce((a, b) => a + b, 0) : 0;
+}
+
 /**
  * Tenant-wide connector coverage for the persistent chrome indicator. A count of
  * healthy sources plus the age of the OLDEST successful sync — never the newest,

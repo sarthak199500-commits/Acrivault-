@@ -3,6 +3,12 @@ import { CloudOff, Cloud as CloudIcon } from 'lucide-react';
 import { useSourceHealth } from './queries';
 import { relativeTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { Skeleton } from '@/components/ui/Skeleton';
+
+const SHELL =
+  'hidden h-8 items-center gap-1.5 rounded-[var(--r-pill)] border px-2.5 lg:inline-flex text-[length:var(--fs-small)] transition-colors';
+const NEUTRAL = 'border-border bg-surface text-text-tertiary hover:text-text';
+const WARNING = 'border-[color-mix(in_srgb,var(--warning)_45%,var(--border))] bg-warn-bg text-warn-fg';
 
 /**
  * Persistent connector-coverage indicator in the top bar.
@@ -14,21 +20,37 @@ import { cn } from '@/lib/cn';
  */
 export function CoverageChip() {
   const query = useSourceHealth();
+
+  // Loading and error both leave `query.data` undefined — a bare `if (!data)` can't
+  // tell them apart, so it hid the chip on error too, and this indicator going dark
+  // is a worse failure than any degraded reading it could show. Held pill footprint
+  // first, so the top bar doesn't reflow once real data (or an error) lands.
+  if (query.isPending) {
+    return (
+      <span className={cn(SHELL, NEUTRAL)} aria-hidden="true">
+        <CloudIcon className="h-3.5 w-3.5 shrink-0" />
+        <Skeleton className="h-3 w-24" />
+      </span>
+    );
+  }
+
+  if (query.isError) {
+    // Rendered, not hidden: a coverage indicator that disappears the moment it can't
+    // confirm coverage recreates the exact audit finding it exists to close — a gap
+    // nobody notices because nothing on screen says there is one.
+    return (
+      <Link to="/settings/sources" className={cn(SHELL, WARNING)}>
+        <CloudOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>Coverage unknown</span>
+      </Link>
+    );
+  }
+
   const health = query.data;
-  if (!health) return null;
   const degraded = health.degraded.length > 0;
 
   return (
-    <Link
-      to="/settings/sources"
-      className={cn(
-        'hidden h-8 items-center gap-1.5 rounded-[var(--r-pill)] border px-2.5 lg:inline-flex',
-        'text-[length:var(--fs-small)] transition-colors',
-        degraded
-          ? 'border-[color-mix(in_srgb,var(--warning)_45%,var(--border))] bg-warn-bg text-warn-fg'
-          : 'border-border bg-surface text-text-tertiary hover:text-text',
-      )}
-    >
+    <Link to="/settings/sources" className={cn(SHELL, degraded ? WARNING : NEUTRAL)}>
       {degraded ? (
         <CloudOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       ) : (

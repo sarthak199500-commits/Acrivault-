@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Cloud as CloudIcon } from 'lucide-react';
-import { useConnections, useSourceHealth } from './queries';
-import { CLOUD_LABELS, type CloudConnection } from '@/mocks/types';
+import { useConnections } from './queries';
+import { CLOUD_LABELS, totalFor, type CloudConnection } from '@/mocks/types';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
@@ -13,10 +13,6 @@ import { buttonClasses } from '@/components/ui/Button';
 import { useCan } from '@/components/ui/Can';
 import { CONNECTION_TONE } from '@/lib/tones';
 import { count, dateTime, relativeTime } from '@/lib/format';
-
-function totalFor(connection: CloudConnection): number {
-  return connection.counts ? Object.values(connection.counts).reduce((a, b) => a + b, 0) : 0;
-}
 
 function SourceRow({ connection }: { connection: CloudConnection }) {
   const failed = connection.status === 'error';
@@ -35,8 +31,8 @@ function SourceRow({ connection }: { connection: CloudConnection }) {
             {connection.lastSyncAt ? (
               <>
                 {failed ? 'last success ' : 'synced '}
-                <span className="tnum" title={dateTime(connection.lastSyncAt)}>
-                  {relativeTime(connection.lastSyncAt)}
+                <span className="tnum">
+                  {relativeTime(connection.lastSyncAt)} ({dateTime(connection.lastSyncAt)})
                 </span>
               </>
             ) : (
@@ -62,9 +58,12 @@ function SourceRow({ connection }: { connection: CloudConnection }) {
 
 export function SourcesScreen() {
   const connections = useConnections();
-  const health = useSourceHealth();
   const canConnect = useCan('connector.manage');
-  const degraded = (health.data?.degraded.length ?? 0) > 0;
+  // Derived from the same query the list below renders, not a second fetch: the mock
+  // already flags the failing connection's own `status`, and reading it here means
+  // an error on THIS query is the only way the banner can go missing — never a
+  // silent mismatch against a health query the list underneath doesn't share.
+  const degraded = (connections.data ?? []).some((c) => c.status === 'error');
 
   return (
     <div>
