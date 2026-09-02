@@ -6,6 +6,7 @@ import { PhaseTrack } from './PhaseTrack';
 import { StartRotationDialog } from './StartRotationDialog';
 import type { RotationData } from '@/mocks/api';
 import type { RotationHistoryEntry, RotationJob } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -119,8 +120,7 @@ export function RotateScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Act · Rotate"
-        title="Rotate"
+        {...screenHeaderProps('/rotate')}
         description="Zero-downtime credential rotation across the six-phase lifecycle. Mechanics are illustrative in Wave 1."
         actions={
           <div className="flex items-center gap-2">

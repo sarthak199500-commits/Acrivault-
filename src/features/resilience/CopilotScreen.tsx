@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Play, ShieldCheck, SkipForward, Sparkles, UserCheck } from 'lucide-react';
 import { useCopilotSuggestions } from './queries';
 import type { CopilotSuggestion } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -57,8 +58,7 @@ export function CopilotScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Resilience · Wave 2 concept"
-        title="Defender Copilot"
+        {...screenHeaderProps('/resilience/copilot')}
         description="An advisory assistant that ranks what to look at next. It recommends; it never acts on its own."
         actions={<Badge tone="neutral">Concept</Badge>}
       />

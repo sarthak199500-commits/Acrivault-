@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Menu, PanelLeftClose, PanelLeftOpen, Search, Database, X } from 'lucide-react';
-import { NAV, ALL_NAV_ITEMS, EXTRA_TITLES } from './nav';
+import { NAV, screenIdentity } from './nav';
 import { cn } from '@/lib/cn';
 import { announce, focusById } from '@/lib/a11y';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
@@ -18,14 +18,7 @@ import { Toaster } from '@/components/ui/Toaster';
 import { CommandPalette } from '@/components/ui/CommandPalette';
 
 function titleForPath(pathname: string): string {
-  // Prefer an explicit full title (nav labels may be shortened to fit the rail).
-  if (EXTRA_TITLES[pathname]) return EXTRA_TITLES[pathname];
-  const exact = ALL_NAV_ITEMS.find((i) => i.to === pathname);
-  if (exact) return exact.label;
-  const prefix = ALL_NAV_ITEMS.filter((i) => i.to !== '/' && pathname.startsWith(i.to)).sort(
-    (a, b) => b.to.length - a.to.length,
-  )[0];
-  return prefix ? prefix.label : 'Acrivault';
+  return screenIdentity(pathname).title;
 }
 
 /** Announce route changes politely and move focus to the main heading. */

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQuery } from '@tanstack/react-query';
 import { CornerDownLeft, KeyRound, Search } from 'lucide-react';
-import { ALL_NAV_ITEMS, EXTRA_TITLES } from '@/app/nav';
+import { ALL_NAV_ITEMS, screenIdentity } from '@/app/nav';
 import { listIdentities } from '@/mocks/api';
 import { NhiTypeIcon } from './NhiTypeIcon';
 import { cn } from '@/lib/cn';
@@ -20,7 +20,7 @@ interface Result {
 const SCREEN_RESULTS: Result[] = [
   ...ALL_NAV_ITEMS.map((i) => ({
     id: `screen:${i.to}`,
-    label: EXTRA_TITLES[i.to] ?? i.label,
+    label: screenIdentity(i.to).title,
     hint: i.layer,
     to: i.to,
     icon: <i.icon className="h-4 w-4" aria-hidden="true" />,

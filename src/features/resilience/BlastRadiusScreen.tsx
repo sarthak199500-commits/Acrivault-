@@ -4,6 +4,7 @@ import { ArrowRight, GitBranch, ShieldHalf, Timer, Workflow } from 'lucide-react
 import { useBlastOrigins, useBlastRadius } from './queries';
 import type { ReachKind } from '@/components/charts/RadialGraph';
 import { RadialGraph, KIND_COLOR, KIND_LABEL } from '@/components/charts/RadialGraph';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -124,8 +125,7 @@ export function BlastRadiusScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Know · Resilience"
-        title="Blast Radius"
+        {...screenHeaderProps('/resilience/blast-radius')}
         description="What an identity could reach by direct, transitive, and cascade paths. Read-only — this view counts and visualizes; it never changes anything."
         actions={<Badge tone="neutral">Read-only</Badge>}
       />

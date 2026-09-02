@@ -4,6 +4,7 @@ import { useConnections } from './queries';
 import { useTenant, useUsers } from '@/features/admin/queries';
 import { CLOUD_LABELS, SSO_PROVIDER_LABELS, type Tenant } from '@/mocks/types';
 import { samlStatus, scimStatus, signInSummary, type SummaryTone } from '@/lib/sso';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -143,8 +144,7 @@ export function SettingsScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Settings"
+        {...screenHeaderProps('/settings')}
         description="Organization, sign-in, connected clouds, and team."
       />
 

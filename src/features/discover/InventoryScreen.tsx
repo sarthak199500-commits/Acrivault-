@@ -11,6 +11,7 @@ import type { IdentityListResult } from '@/mocks/api';
 import { useUiStore } from '@/stores/ui';
 import { useCan } from '@/components/ui/Can';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { KpiTile } from '@/components/ui/KpiTile';
@@ -210,8 +211,7 @@ export function InventoryScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="See · Discover"
-        title="Identity Inventory"
+        {...screenHeaderProps('/discover')}
         description="Every correlated non-human identity. Filter, sort, and expand a row to inspect its source instances."
         actions={
           // The unfiltered "N identities" count is removed — it duplicated the

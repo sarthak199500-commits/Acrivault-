@@ -7,6 +7,7 @@ import { applySessionFilter, useSessionFilters } from './useSessionFilters';
 import { SESSION_SORTS } from './sessionRanking';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
 import { bucketByTime } from '@/lib/timeBuckets';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -214,8 +215,7 @@ export function SessionListScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Know · Intelligence"
-        title="Agent Sessions"
+        {...screenHeaderProps('/intelligence')}
         description="Captured AI-agent sessions. Step through prompts, tool calls, and responses; anomalies and held steps are flagged."
         actions={
           activeCount > 0 && all.length > 0 ? (

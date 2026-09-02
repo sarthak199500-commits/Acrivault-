@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, Lock, ScrollText, Search } from 'lucide-react';
 import { useAudit } from './queries';
 import type { AuditEntry } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -40,8 +41,7 @@ export function AuditScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Audit Log"
+        {...screenHeaderProps('/audit')}
         description="An append-only record of who did what and when. Everyone can read it; no one can edit it."
         actions={
           <div className="flex items-center gap-2">

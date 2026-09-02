@@ -7,6 +7,7 @@ import { useMonitorFilters } from './useMonitorFilters';
 import type { AlertWithIdentity } from '@/mocks/api';
 import type { RiskBand } from '@/mocks/types';
 import { bucketByTime, splitAcknowledged } from './alertGrouping';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -141,8 +142,7 @@ export function MonitorScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Know · Monitor"
-        title="Monitor"
+        {...screenHeaderProps('/monitor')}
         description="Behavioral alerts on your identities, with an honest view of how settled the baseline is."
       />
 

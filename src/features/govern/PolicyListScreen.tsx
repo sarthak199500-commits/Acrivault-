@@ -33,6 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -297,8 +298,7 @@ export function PolicyListScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Know · Govern"
-        title="Policies"
+        {...screenHeaderProps('/govern')}
         description="Rules that govern non-human identities. Authoring and enforcement are illustrative in Wave 1."
         actions={
           canCreate ? (

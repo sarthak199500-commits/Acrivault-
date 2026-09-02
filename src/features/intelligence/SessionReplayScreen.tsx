@@ -25,6 +25,7 @@ import {
 } from '@/features/discover/queries';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
 import { SPAWN_KIND_LABELS, isFlaggedStep, type SessionStep, type StepStatus } from '@/mocks/types';
+import { detailEyebrow } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -705,7 +706,7 @@ export function SessionReplayScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Know · Intelligence · Session Replay"
+        eyebrow={detailEyebrow('/intelligence')}
         title={session ? session.identityName : 'Session Replay'}
         description={session ? `${dateTime(session.startedAt)} – ${dateTime(session.endedAt)}` : undefined}
         actions={

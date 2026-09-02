@@ -4,6 +4,7 @@ import { ChevronLeft, GitBranch } from 'lucide-react';
 import { useRotationJob } from './queries';
 import { PhaseTrack, PHASE_LABEL } from './PhaseTrack';
 import { ROTATION_PHASES, type RotationJob, type RotationPhase } from '@/mocks/types';
+import { detailEyebrow } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -104,7 +105,7 @@ export function RotationJobDetail() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Act · Rotate · Job"
+        eyebrow={detailEyebrow('/rotate')}
         title={query.data ? query.data.identityName : 'Rotation job'}
         description={query.data ? `Started ${relativeTime(query.data.startedAt)}` : undefined}
         actions={

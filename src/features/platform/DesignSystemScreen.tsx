@@ -1,3 +1,4 @@
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { FoundationsSection } from './design-system/FoundationsSection';
 import { LayoutSection } from './design-system/LayoutSection';
@@ -27,8 +28,7 @@ export function DesignSystemScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Design System"
+        {...screenHeaderProps('/design-system')}
         description="Every token and component, rendered in the active theme. Toggle theme and density in the top bar to verify both modes."
       />
 

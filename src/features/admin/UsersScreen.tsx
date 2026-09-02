@@ -14,6 +14,7 @@ import {
   UserPlus,
   Users as UsersIcon,
 } from 'lucide-react';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
@@ -425,8 +426,7 @@ export function UsersScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Manage Users"
+        {...screenHeaderProps('/settings/users')}
         description="Microsoft Entra ID decides who’s here. You decide what they can do."
         actions={
           <div className="flex items-start gap-2">
