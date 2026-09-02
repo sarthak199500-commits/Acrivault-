@@ -60,8 +60,11 @@ export function useAssignOwner() {
 
 /**
  * Enforcement lives on the identity, so quarantine and release are identity mutations
- * even when raised from a session replay. Both invalidate the session caches too: an
- * agent's containment shows on every session it ever ran, not just the one in view.
+ * even when raised from a session replay. Invalidates the session caches too: an
+ * agent's containment shows on every session it ever ran, not just the one in view --
+ * and `quarantined`, since Act > Quarantine reads the exact same mutations (this is
+ * the single hook backing both quarantine/release call sites; see useReleaseQuarantine
+ * below, which QuarantineScreen also uses).
  */
 function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string }>) {
   const qc = useQueryClient();
@@ -73,6 +76,7 @@ function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string
       qc.invalidateQueries({ queryKey: ['sessions'] });
       qc.invalidateQueries({ queryKey: ['session'] });
       qc.invalidateQueries({ queryKey: ['audit'] });
+      qc.invalidateQueries({ queryKey: ['quarantined'] });
     },
   });
 }

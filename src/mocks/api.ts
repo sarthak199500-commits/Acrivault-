@@ -1072,14 +1072,18 @@ function quarantineLabel(record: QuarantineRecord): { byLabel: string; byHref?: 
   }
   if (by.kind === 'user') {
     const user = ds.users.find((u) => u.id === by.userId);
-    // No href: a user has no standalone screen to link back to in Wave 1.
-    if (!user) return { byLabel: 'Removed user' };
+    // A user is soft-deleted (status flips to 'deleted'; deleteUser never
+    // removes the record -- see mocks/api.ts), so `!user` alone never catches
+    // a removed producer. Suspended renders normally: the account still
+    // exists, and having quarantined this identity is a true historical fact
+    // either way. No href: a user has no standalone screen to link back to.
+    if (!user || user.status === 'deleted') return { byLabel: 'Removed user' };
     return { byLabel: user.role ? `${user.name} · ${ROLE_LABELS[user.role]}` : user.name };
   }
   const session = ds.sessions.find((s) => s.id === by.sessionId);
   return {
     byLabel: session ? `Session review · ${session.id}` : 'Removed session',
-    byHref: `/intelligence/${by.sessionId}`,
+    byHref: session ? `/intelligence/${session.id}` : undefined,
   };
 }
 

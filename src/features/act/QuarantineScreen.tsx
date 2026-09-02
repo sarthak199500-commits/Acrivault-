@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ShieldX } from 'lucide-react';
-import { useQuarantined, useReleaseFromQuarantine } from './queries';
+import { useQuarantined } from './queries';
+import { useReleaseQuarantine } from '@/features/discover/queries';
 import { NHI_TYPE_LABELS } from '@/mocks/types';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
@@ -26,7 +27,7 @@ import { errorInfo } from '@/lib/apiError';
  */
 export function QuarantineScreen() {
   const query = useQuarantined();
-  const release = useReleaseFromQuarantine();
+  const release = useReleaseQuarantine();
   const canRelease = useCan('session.quarantineRelease');
   const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
 

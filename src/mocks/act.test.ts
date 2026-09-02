@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { getDataset } from './dataset';
 import { listAudit, listQuarantined, quarantineAgent, releaseQuarantine } from './api';
 import { matchesPolicy } from './policy';
+import { attachQuarantineProvenance } from './generators';
+import type { Identity, Policy } from './types';
 import { CURRENT_USER_ID } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 
@@ -65,7 +67,48 @@ describe('Act > Quarantine provenance', () => {
       const policy = ds.policies.find((p) => p.id === by.policyId);
       if (!policy) throw new Error(`fixture: policy ${by.policyId} referenced by ${identity.id} not found`);
       expect(matchesPolicy(identity, policy.tokens), identity.id).toBe(true);
+      // A draft or archived policy never enforced anything (see
+      // generatePolicyActions's own `enforcing` filter) -- only active and
+      // suspended policies are eligible producers.
+      expect(policy.status === 'active' || policy.status === 'suspended', identity.id).toBe(true);
     }
+  });
+
+  // The seeded data alone can't expose this: both naturally-eligible quarantine
+  // policies happen to be active/suspended already, so this constructs the gap
+  // directly -- a draft policy whose conditions DO match must still never be
+  // named, or a third quarantine policy added in draft state would regress
+  // silently (exactly what generatePolicyActions already guards against).
+  it('never attributes a quarantine to a policy that has not enforced, even when its conditions match', () => {
+    const ds = getDataset();
+    const activePolicy = ds.policies.find((p) => p.id === 'pol_0000');
+    if (!activePolicy) throw new Error('fixture: expected pol_0000 to exist');
+    const draftPolicy: Policy = { ...activePolicy, id: 'pol_test_draft_review', status: 'draft' };
+
+    const target: Identity = {
+      id: 'idn_test_draft_policy_review',
+      name: 'test-draft-policy-target',
+      type: 'ai-agent',
+      sources: [],
+      correlated: false,
+      orphaned: true,
+      orphanReason: 'No owner assigned',
+      conflicts: [],
+      riskScore: 90,
+      riskBand: 'critical',
+      governanceStatus: 'ungoverned',
+      status: 'quarantined',
+      relationships: [],
+      riskSeries: [],
+      createdAt: new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+    };
+
+    // draftPolicy's conditions (type=ai-agent, orphaned=true, copied from
+    // pol_0000) DO match target -- the only thing standing between it and a
+    // false attribution is the status check.
+    attachQuarantineProvenance([target], [draftPolicy], ds.users, [], 1, new Date());
+    expect(target.quarantine?.by.kind).not.toBe('policy');
   });
 
   // Same principle for session: a session review can only explain the agent
@@ -109,6 +152,27 @@ describe('Act > Quarantine provenance', () => {
         expect(row.byHref).toMatch(/^\/intelligence\//);
       }
     }
+  });
+
+  it('renders a soft-deleted user as a removed producer, not a stale name', async () => {
+    const ds = getDataset();
+    const identity = ds.identities.find((i) => i.quarantine?.by.kind === 'user');
+    if (!identity) throw new Error('fixture: expected at least one user-kind quarantine record');
+    const record = identity.quarantine;
+    if (!record || record.by.kind !== 'user') {
+      throw new Error(`fixture: expected ${identity.id} to carry user provenance`);
+    }
+    const by = record.by; // hoisted: narrowing doesn't survive the .find() closure below
+    const user = ds.users.find((u) => u.id === by.userId);
+    if (!user) throw new Error(`fixture: expected user ${by.userId} to exist`);
+
+    const originalStatus = user.status;
+    user.status = 'deleted';
+    const row = (await listQuarantined()).find((r) => r.id === identity.id);
+    if (!row) throw new Error('fixture: expected the identity to still be listed');
+    expect(row.byLabel).toBe('Removed user');
+    expect(row.byHref).toBeUndefined();
+    user.status = originalStatus; // restore -- later tests rely on the seeded users
   });
 
   it('excludes a quarantined identity with no provenance rather than showing a blank producer', async () => {
