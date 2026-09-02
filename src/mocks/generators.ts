@@ -1072,15 +1072,35 @@ export function attachQuarantineProvenance(
   // the fixture — and the screen it feeds — demonstrates all three paths.
   const hasSessionProducer = quarantined.some((i) => i.quarantine?.by.kind === 'session');
   if (!hasSessionProducer) {
-    // Pair each eligible identity with its own (non-empty) session list inline,
-    // so the pick below never needs a second, possibly-empty Map lookup.
+    // Restricted to ACTIVE candidates (not merely "not already quarantined"):
+    // an inactive identity's `lastSeen` is weeks stale by definition, and flipping
+    // it straight to quarantined would claim it was contained days ago while its
+    // own lastSeen says it hadn't been seen in a month. An active one needs no
+    // such reconciling.
     const candidates = identities.flatMap((i) => {
-      if (i.type !== 'ai-agent' || i.status === 'quarantined') return [];
+      if (i.type !== 'ai-agent' || i.status !== 'active') return [];
       const own = sessionsByIdentity.get(i.id);
       return own && own.length > 0 ? [[i, own] as const] : [];
     });
     if (candidates.length > 0) {
       const [promoted, ownSessions] = rng.pick(candidates);
+      // Containment (`makeIdentity`, above) is `orphaned && riskScore >= 70` —
+      // every naturally-quarantined identity satisfies it, so a promoted one
+      // must too, or it becomes the one contained identity in the dataset that
+      // isn't a high-risk orphan. Reachable in the UI: IdentityDetailPanel
+      // renders the Orphaned badge and RiskPill straight off these fields.
+      promoted.orphaned = true;
+      promoted.orphanReason = rng.pick([
+        'No owner assigned',
+        'No legitimate use in 90 days',
+        'Creator account deactivated',
+      ]);
+      // Orphans are capped below the critical threshold elsewhere in this file
+      // (see makeIdentity) — matched here rather than reaching for 80-100.
+      promoted.riskScore = rng.int(70, 79);
+      // Never hand-write the band: derive it the same way makeIdentity does, so
+      // a future change to the band thresholds can't leave this fixture behind.
+      promoted.riskBand = riskBand(promoted.riskScore).band;
       promoted.status = 'quarantined';
       promoted.quarantine = {
         at: new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString(),

@@ -31,6 +31,21 @@ describe('Act > Quarantine provenance', () => {
     expect(kinds).toEqual(new Set(['policy', 'user', 'session']));
   });
 
+  // The domain rule (see makeIdentity's containment roll): only a high-risk
+  // orphan is ever quarantined. This has to hold for EVERY quarantined identity,
+  // including the one attachQuarantineProvenance promotes to demonstrate the
+  // session-review path — a promoted identity that skips this check would be
+  // the one contained identity in the whole dataset that isn't a high-risk
+  // orphan, visible the moment its detail panel is opened.
+  it('quarantines only high-risk orphans, never a promoted identity that skips the rule', () => {
+    const quarantined = getDataset().identities.filter((i) => i.status === 'quarantined');
+    expect(quarantined.length).toBeGreaterThan(0);
+    for (const identity of quarantined) {
+      expect(identity.orphaned, identity.id).toBe(true);
+      expect(identity.riskScore, identity.id).toBeGreaterThanOrEqual(70);
+    }
+  });
+
   it('returns rows newest-first', async () => {
     const rows = await listQuarantined();
     for (let i = 1; i < rows.length; i++) {
