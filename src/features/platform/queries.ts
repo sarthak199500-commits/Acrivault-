@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getConnections,
+  getSourceHealth,
   listAudit,
   listNotifications,
   listUsers,
@@ -15,6 +16,10 @@ export function useUsers() {
 
 export function useConnections() {
   return useQuery({ queryKey: ['connections'], queryFn: getConnections });
+}
+
+export function useSourceHealth() {
+  return useQuery({ queryKey: ['source-health'], queryFn: getSourceHealth });
 }
 
 export function useUpdateUserRole() {

@@ -3,6 +3,7 @@ import {
   Bell,
   BookOpen,
   Boxes,
+  Database,
   GitBranch,
   LayoutDashboard,
   ListChecks,
@@ -70,6 +71,7 @@ export const NAV: NavGroup[] = [
     layer: 'Platform',
     items: [
       { to: '/settings/users', label: 'Users', title: 'Manage Users', icon: Users },
+      { to: '/settings/sources', label: 'Sources', icon: Database },
       { to: '/settings', label: 'Settings', icon: Settings, end: true },
       { to: '/audit', label: 'Audit Log', icon: ScrollText },
       { to: '/notifications', label: 'Notifications', icon: Bell },

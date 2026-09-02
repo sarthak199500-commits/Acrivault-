@@ -13,7 +13,6 @@ import { KeyValueList } from '@/components/ui/KeyValueList';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { buttonClasses } from '@/components/ui/Button';
-import { useCan } from '@/components/ui/Can';
 import { count, pluralize } from '@/lib/format';
 import { CONNECTION_TONE as CONN_TONE } from '@/lib/tones';
 import { cn } from '@/lib/cn';
@@ -139,7 +138,6 @@ function UsersCard() {
 export function SettingsScreen() {
   const connections = useConnections();
   const tenant = useTenant();
-  const canConnect = useCan('connector.manage');
 
   return (
     <div>
@@ -181,11 +179,9 @@ export function SettingsScreen() {
             title="Connected clouds"
             description="Read-only access to AWS, GCP, and Azure."
             action={
-              canConnect ? (
-                <Link to="/onboarding" className={buttonClasses('secondary', 'sm')}>
-                  Add a cloud
-                </Link>
-              ) : undefined
+              <Link to="/settings/sources" className={buttonClasses('secondary', 'sm')}>
+                View sources
+              </Link>
             }
           />
           <CardBody>

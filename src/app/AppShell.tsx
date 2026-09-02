@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Logo } from '@/components/ui/Logo';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
 import { NotificationsBell } from './NotificationsBell';
+import { CoverageChip } from '@/features/platform/CoverageChip';
 import { AccountMenu } from './AccountMenu';
 import { Toaster } from '@/components/ui/Toaster';
 import { CommandPalette } from '@/components/ui/CommandPalette';
@@ -182,6 +183,7 @@ function TopBar({
             Ctrl K
           </kbd>
         </button>
+        <CoverageChip />
         <Badge tone="info" icon={<Database className="h-3 w-3" />} className="hidden lg:inline-flex">
           Synthetic data
         </Badge>
