@@ -89,6 +89,7 @@ function InventoryKpis() {
 function BulkBar({
   selected,
   rows,
+  activeFilters,
   onClear,
 }: {
   selected: Set<string>;
@@ -98,6 +99,13 @@ function BulkBar({
    * the console — so the values have to come from somewhere.
    */
   rows: Identity[];
+  /**
+   * Labels for the filters that produced `rows`. An evidence file that omits
+   * the filter its rows were drawn under invites exactly the "these numbers
+   * don't reconcile" challenge the manifest exists to answer: 20 identities
+   * with no record that the view was narrowed to Critical is unfalsifiable.
+   */
+  activeFilters: string[];
   onClear: () => void;
 }) {
   const canRotate = useCan('rotate.request');
@@ -150,10 +158,18 @@ function BulkBar({
         tenant: tenantLabel(getDataset().tenant.name),
         actor: actorEmail,
         generatedAt: utcStamp(at),
-        // Says how the set was narrowed without restating the count below it or
-        // implying a reproducible filter: these rows were picked by hand.
-        filter: 'hand-picked selection',
+        // Both facts, because either alone misleads: the rows were picked by
+        // hand (so the set is not reproducible from the filter), AND they were
+        // picked out of an already-narrowed view (so the filter is part of why
+        // these identities and not others are in the file).
+        filter:
+          activeFilters.length > 0
+            ? `hand-picked selection from a view filtered by ${activeFilters.join(', ')}`
+            : 'hand-picked selection from the unfiltered inventory',
         rows: chosen.length,
+        // The population is the view the rows were picked from, not the tenant:
+        // "3 of 20" against the filter line above is the whole provenance.
+        of: rows.length,
       },
     );
     downloadFile(`acrivault-identities-${fileStamp(at)}.csv`, csv);
@@ -289,6 +305,9 @@ export function InventoryScreen() {
           <BulkBar
             selected={selected}
             rows={data?.rows ?? []}
+            // The full label list, not the truncated `filterSummary` the header
+            // shows: a manifest that says "+3" records nothing.
+            activeFilters={activeLabels}
             onClear={() => setSelected(new Set())}
           />
         )}

@@ -51,6 +51,50 @@ function objectParam(raw: string | null): AuditObject[] {
   return found ? [found] : [];
 }
 
+/**
+ * Empty-state copy that names the filter which produced it.
+ *
+ * "Try a different search term" is advice a reader who arrived from a user
+ * row's View audit trail cannot act on — they never typed one. And "no history
+ * for this target" is a different fact from "no match for your search": the
+ * first is an answer, the second is a dead end.
+ */
+export function auditEmptyCopy(filter: {
+  search: string;
+  objects: AuditObject[];
+  days: number;
+}): { headline: string; guidance: string } {
+  const { search, objects, days } = filter;
+  const narrowings = [
+    objects.length > 0
+      ? `the ${objects.map((o) => AUDIT_OBJECT_LABELS[o].toLowerCase()).join(' and ')} filter`
+      : null,
+    days > 0 ? `the last ${days} days` : null,
+  ].filter((v): v is string => v !== null);
+
+  if (search) {
+    return {
+      headline: `No audit entries for “${search}”`,
+      guidance:
+        narrowings.length > 0
+          ? `Nothing under ${narrowings.join(' or ')} names it. Widen the filters to search the whole log.`
+          : 'Nothing in the log names it as an actor, action, target, or detail.',
+    };
+  }
+  if (narrowings.length > 0) {
+    return {
+      headline: 'No audit entries in this view',
+      guidance: `Nothing was recorded under ${narrowings.join(' or ')}.`,
+    };
+  }
+  // Reachable only when the log itself is empty — a tenant before its first
+  // action, or the Scenario Switcher's forced empty state.
+  return {
+    headline: 'No audit entries yet',
+    guidance: 'Actions taken in the console are recorded here as they happen.',
+  };
+}
+
 export function AuditScreen() {
   // Seeded from the query string so a link can land pre-filtered — the Users
   // screen sends `?object=user&target=<email>` to reach one person's trail
@@ -205,8 +249,7 @@ export function AuditScreen() {
           <Card>
             <EmptyState
               icon={<ScrollText className="h-5 w-5" />}
-              headline="No matching audit entries"
-              guidance="Try a different search term, another object, or a wider date range."
+              {...auditEmptyCopy({ search, objects, days })}
             />
           </Card>
         }
