@@ -1046,10 +1046,13 @@ export function attachQuarantineProvenance(
     else sessionsByIdentity.set(session.identityId, [session]);
   }
 
-  const ORDERS: Record<number, readonly ('policy' | 'session' | 'user')[]> = {
-    0: ['policy', 'session', 'user'],
-    1: ['user', 'policy', 'session'],
-    2: ['session', 'user', 'policy'],
+  // 'replay' is a person who acted from a session review, not a separate actor
+  // -- see QuarantineSource. It stays a distinct entry here because it is a
+  // distinct thing to DEMONSTRATE on the screen, even though it writes a user.
+  const ORDERS: Record<number, readonly ('policy' | 'replay' | 'user')[]> = {
+    0: ['policy', 'replay', 'user'],
+    1: ['user', 'policy', 'replay'],
+    2: ['replay', 'user', 'policy'],
   };
 
   quarantined.forEach((identity, i) => {
@@ -1063,8 +1066,16 @@ export function attachQuarantineProvenance(
     const eligiblePolicies = quarantinePolicies.filter((p) => matchesPolicy(identity, p.tokens));
 
     for (const kind of ORDERS[i % 3]) {
-      if (kind === 'session' && ownSessions.length > 0) {
-        identity.quarantine = { at, by: { kind: 'session', sessionId: rng.pick(ownSessions).id } };
+      if (kind === 'replay' && ownSessions.length > 0 && admins.length > 0) {
+        // Both, not either: the admin who acted and the replay they acted from.
+        identity.quarantine = {
+          at,
+          by: {
+            kind: 'user',
+            userId: rng.pick(admins).id,
+            viaSessionId: rng.pick(ownSessions).id,
+          },
+        };
         return;
       }
       if (kind === 'policy' && eligiblePolicies.length > 0) {
@@ -1081,7 +1092,7 @@ export function attachQuarantineProvenance(
     identity.quarantine = { at, by: { kind: 'user', userId: users[0]?.id ?? 'usr_0' } };
   });
 
-  promoteSessionReviewCandidate(identities, quarantined, sessionsByIdentity, rng, now);
+  promoteSessionReviewCandidate(identities, quarantined, sessionsByIdentity, admins, rng, now);
 }
 
 /**
@@ -1090,7 +1101,7 @@ export function attachQuarantineProvenance(
  * to quarantine one that wasn't.
  *
  * At the default seed/size, containment (`makeIdentity`'s dice roll) never lands
- * on an ai-agent, so `session` never gets a legitimate candidate in the main
+ * on an ai-agent, so 'replay' never gets a legitimate candidate in the main
  * loop -- a session review can only explain the agent whose session it is, and
  * no quarantined identity has any. Rather than loosen that rule (linking a
  * service account's containment to a stranger's session would be a broken
@@ -1101,11 +1112,18 @@ function promoteSessionReviewCandidate(
   identities: Identity[],
   quarantined: Identity[],
   sessionsByIdentity: Map<string, AgentSession[]>,
+  admins: User[],
   rng: Rng,
   now: Date,
 ): void {
-  const hasSessionProducer = quarantined.some((i) => i.quarantine?.by.kind === 'session');
-  if (hasSessionProducer) return;
+  const hasReplayProducer = quarantined.some((i) => {
+    const by = i.quarantine?.by;
+    return by?.kind === 'user' && Boolean(by.viaSessionId);
+  });
+  if (hasReplayProducer) return;
+  // Without an admin there is nobody to hold answerable, and a containment that
+  // cites evidence but names no actor is the shape this whole change removes.
+  if (admins.length === 0) return;
 
   // Restricted to ACTIVE candidates (not merely "not already quarantined"):
   // an inactive identity's `lastSeen` is weeks stale by definition, and flipping
@@ -1140,7 +1158,11 @@ function promoteSessionReviewCandidate(
   promoted.status = 'quarantined';
   promoted.quarantine = {
     at: new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString(),
-    by: { kind: 'session', sessionId: rng.pick(ownSessions).id },
+    by: {
+      kind: 'user',
+      userId: rng.pick(admins).id,
+      viaSessionId: rng.pick(ownSessions).id,
+    },
   };
 }
 

@@ -82,8 +82,21 @@ function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string
 
 /** UC-04 takes an optional note at confirmation; it lands in the audit detail. */
 export function useQuarantineAgent() {
-  return useEnforcement(({ identityId, note }: { identityId: string; note?: string }) =>
-    quarantineAgent(identityId, note),
+  return useEnforcement(
+    ({
+      identityId,
+      note,
+      viaSessionId,
+    }: {
+      identityId: string;
+      note?: string;
+      /**
+       * The replay this decision was made from. Passed by the session replay
+       * screen and omitted by the inventory, which cites none -- the containment
+       * records the evidence only where there actually was some.
+       */
+      viaSessionId?: string;
+    }) => quarantineAgent(identityId, note, viaSessionId),
   );
 }
 

@@ -24,6 +24,12 @@ import { errorInfo } from '@/lib/apiError';
  * ways — a Govern policy, an admin action, a session review — but had no
  * destination that named, for a contained identity, which of the three did it.
  * Every row here resolves that producer and links back to it.
+ *
+ * Corrected Sep 2026: a session review is not a producer, it is the EVIDENCE a
+ * person produced one with. It used to be modelled as its own provenance kind,
+ * which made the two exclusive -- and since only the seed could write that
+ * kind, a real session review rendered as a bare admin name. A row now names
+ * the person and, underneath, the replay they decided on.
  */
 export function QuarantineScreen() {
   const query = useQuarantined();
@@ -46,7 +52,7 @@ export function QuarantineScreen() {
     <div>
       <ScreenHeader
         {...screenHeaderProps('/act/quarantine')}
-        description="Every contained identity, and what put it there. Quarantine is produced by a Govern policy, an admin action, or a session review — each row names its producer and links back to it."
+        description="Every contained identity, and what put it there. Quarantine is produced by a Govern policy or by a person — and where that person acted from a session replay, the row carries the session they decided on."
       />
 
       {!canRelease && (
@@ -115,6 +121,22 @@ export function QuarantineScreen() {
                           </Link>
                         ) : (
                           row.byLabel
+                        )}
+                        {/* The evidence sits UNDER the producer rather than
+                            folded into it: one names who is answerable, the
+                            other what they decided on, and an auditor follows
+                            them separately. A removed session still shows,
+                            unlinked, so the gap is visible instead of silent. */}
+                        {row.viaLabel && (
+                          <span className="mt-0.5 block text-[length:var(--fs-micro)] text-text-tertiary">
+                            {row.viaHref ? (
+                              <Link to={row.viaHref} className="text-accent-text hover:underline">
+                                {row.viaLabel}
+                              </Link>
+                            ) : (
+                              row.viaLabel
+                            )}
+                          </span>
                         )}
                       </td>
                       <td className="tnum px-4 py-2.5 text-text-tertiary" title={dateTime(row.at)}>

@@ -61,10 +61,26 @@ export type GovernanceStatus = 'governed' | 'ungoverned' | 'drift';
  * Govern policy action, an admin acting from the identity panel, and a session
  * review — and a terminal state with no named producer is not auditable.
  */
+/**
+ * What produced a containment: a Govern policy enforcing, or a person deciding.
+ *
+ * There is deliberately no third `session` kind. A session review is not an
+ * actor -- it is the evidence a PERSON acted on, so it rides along on the user
+ * variant as `viaSessionId`. Modelling it as its own kind (which this type did
+ * until Sep 2026) made the two mutually exclusive, so a containment could name
+ * the replay or the person but never both. Worse, nothing in `api.ts` could
+ * write the session kind: it existed only in seeded data, so a real session
+ * review rendered as a bare admin name while the demo rows showed the evidence.
+ * `act.test.ts` now asserts this set stays closed.
+ */
 export type QuarantineSource =
   | { kind: 'policy'; policyId: string }
-  | { kind: 'user'; userId: string }
-  | { kind: 'session'; sessionId: string };
+  | {
+      kind: 'user';
+      userId: string;
+      /** The replay this person decided on, when they acted from one. */
+      viaSessionId?: string;
+    };
 
 export interface QuarantineRecord {
   at: string;
