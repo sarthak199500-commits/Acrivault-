@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Download, Lock, ScrollText, Search } from 'lucide-react';
 import { useAudit } from './queries';
 import {
@@ -40,10 +41,25 @@ const RANGES: ReadonlyArray<{ value: string; label: string; days: number }> = [
   { value: '90', label: 'Last 90 days', days: 90 },
 ];
 
+/**
+ * `?object=` from a link, or nothing if it names something outside the closed
+ * set. A bogus value would show an active filter chip matching zero rows and
+ * read as "this user has no history", which is the opposite of the truth.
+ */
+function objectParam(raw: string | null): AuditObject[] {
+  const found = AUDIT_OBJECTS.find((o) => o === raw);
+  return found ? [found] : [];
+}
+
 export function AuditScreen() {
-  const [input, setInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [objects, setObjects] = useState<AuditObject[]>([]);
+  // Seeded from the query string so a link can land pre-filtered — the Users
+  // screen sends `?object=user&target=<email>` to reach one person's trail
+  // (point 38). Read once, at mount: the filters are the user's from then on,
+  // and writing state back to the URL would fight the controls.
+  const [params] = useSearchParams();
+  const [input, setInput] = useState(() => params.get('target') ?? '');
+  const [search, setSearch] = useState(() => params.get('target') ?? '');
+  const [objects, setObjects] = useState<AuditObject[]>(() => objectParam(params.get('object')));
   const [range, setRange] = useState('all');
 
   const days = RANGES.find((r) => r.value === range)?.days ?? 0;

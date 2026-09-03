@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Ban,
   CheckCircle2,
   FilterX,
+  History,
   KeyRound,
   Lock,
   MoreHorizontal,
@@ -84,6 +85,7 @@ export function UsersScreen() {
   const actorRole = useUiStore((s) => s.role);
   const actorId = useAuthStore((s) => s.userId);
   const filters = useUsersFilters();
+  const navigate = useNavigate();
 
   const canEdit = useCan('users.edit');
   const canSuspend = useCan('users.suspend');
@@ -368,6 +370,27 @@ export function UsersScreen() {
                           <DropdownMenuItem disabled={!canAct} onSelect={() => setEditTarget(u)}>
                             <span className="inline-flex items-center gap-2">
                               <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+                            </span>
+                          </DropdownMenuItem>
+                          {/* Deliberately not gated on canAct: reading the log is a
+                              view capability, and the trail of someone you cannot
+                              act on is exactly what an investigation needs. The
+                              email is the search term because every user entry
+                              names the person in `target`.
+                              onSelect + navigate, not asChild + Link: the local
+                              DropdownMenuItem does not forward asChild to Radix, so
+                              a nested anchor would render outside the menu's
+                              keyboard handling. */}
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              navigate(
+                                `/audit?object=user&target=${encodeURIComponent(u.email)}`,
+                              )
+                            }
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <History className="h-3.5 w-3.5" aria-hidden="true" /> View audit
+                              trail
                             </span>
                           </DropdownMenuItem>
                           {idpSuspended ? (
