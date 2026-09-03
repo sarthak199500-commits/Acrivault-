@@ -572,10 +572,12 @@ export const AUDIT_OBJECT_LABELS: Record<AuditObject, string> = {
 
 /**
  * How long entries are retained before archival.
- * // ASSUMPTION: 12 months is a placeholder chosen to be defensible for the
- * // October SOC 2 Type I date. It is a policy decision with cost and legal
- * // consequences and is pending sign-off. If it is not signed off, ship the
- * // sentence without the figure — the copy is this one constant.
+ *
+ * Signed off at 12 months (3 Sep 2026). It reached the UI as a placeholder and
+ * was confirmed as the tenant's policy — the Audit Log banner states it to
+ * readers, so it is a commitment, not a description. Nothing here enforces it:
+ * retention is upstream, and this constant is only the claim the product makes.
+ * Changing the policy means changing this one string; every surface follows.
  */
 export const AUDIT_RETENTION_LABEL = '12 months';
 
