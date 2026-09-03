@@ -93,6 +93,24 @@ export interface Identity {
   lastSeen: string;
 }
 
+/**
+ * The DISTINCT providers an identity was correlated from.
+ *
+ * `Identity.correlated` only says there is more than one source instance, and
+ * two instances inside one provider are a dedupe result, not a cross-cloud
+ * finding. Everything that claims a span — the Cross-cloud filter, its facet
+ * count, and the per-row badge — reads this one predicate, so the badge can
+ * never print "1 clouds" on a row the filter admitted.
+ */
+export function spannedClouds(sources: SourceInstance[]): Cloud[] {
+  return [...new Set(sources.map((s) => s.cloud))];
+}
+
+/** True when an identity's sources span more than one provider. */
+export function isCrossCloud(identity: Pick<Identity, 'sources'>): boolean {
+  return spannedClouds(identity.sources).length > 1;
+}
+
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 
 export interface Alert {

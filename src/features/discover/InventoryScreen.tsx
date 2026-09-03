@@ -257,6 +257,10 @@ export function InventoryScreen() {
     ...(f.statuses ?? []).map((s) => IDENTITY_STATUS_LABELS[s]),
     ...(f.orphanedOnly ? ['Orphaned'] : []),
     ...(f.conflictsOnly ? ['Conflicts'] : []),
+    // Also feeds the CSV export's filter manifest, so a new flag that is not
+    // listed here would let an evidence file under-report the narrowing that
+    // chose its rows.
+    ...(f.crossCloudOnly ? ['Cross-cloud'] : []),
     ...(f.search ? [`“${f.search}”`] : []),
   ];
   const filterSummary =

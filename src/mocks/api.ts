@@ -20,7 +20,7 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { ACTION_OBJECT, isFlaggedStep } from './types';
+import { ACTION_OBJECT, isCrossCloud, isFlaggedStep } from './types';
 import type {
   Alert,
   AgentSession,
@@ -225,6 +225,13 @@ export interface IdentityFilter {
   statuses?: IdentityStatus[];
   orphanedOnly?: boolean;
   conflictsOnly?: boolean;
+  /**
+   * Correlated across more than one cloud — the deduplication differentiator.
+   * Deliberately narrower than the `correlated` boolean, which only says an
+   * identity has several source instances: two instances in the same provider
+   * are a dedupe result, not a cross-cloud finding. See `spannedClouds`.
+   */
+  crossCloudOnly?: boolean;
 }
 
 export interface IdentitySort {
@@ -247,6 +254,7 @@ export interface IdentityFacetCounts {
   byStatus: Record<IdentityStatus, number>;
   orphaned: number;
   conflicts: number;
+  crossCloud: number;
 }
 
 export interface IdentityListResult {
@@ -283,6 +291,7 @@ function matchesExcept(
     return false;
   if (skip !== 'orphanedOnly' && filter.orphanedOnly && !identity.orphaned) return false;
   if (skip !== 'conflictsOnly' && filter.conflictsOnly && identity.conflicts.length === 0) return false;
+  if (skip !== 'crossCloudOnly' && filter.crossCloudOnly && !isCrossCloud(identity)) return false;
   return true;
 }
 
@@ -329,13 +338,15 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
   }
   let orphaned = 0;
   let conflicts = 0;
+  let crossCloud = 0;
   let total = 0;
   for (const identity of identities) {
     if (matchesExcept(identity, filter, 'orphanedOnly') && identity.orphaned) orphaned += 1;
     if (matchesExcept(identity, filter, 'conflictsOnly') && identity.conflicts.length > 0) conflicts += 1;
+    if (matchesExcept(identity, filter, 'crossCloudOnly') && isCrossCloud(identity)) crossCloud += 1;
     if (matchesExcept(identity, filter, null)) total += 1;
   }
-  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts };
+  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud };
 }
 
 function emptyTypeCounts(): Record<NhiType, number> {
@@ -370,6 +381,7 @@ export function listIdentities(params: IdentityListParams = {}): Promise<Identit
           byStatus: emptyStatusCounts(),
           orphaned: 0,
           conflicts: 0,
+          crossCloud: 0,
         },
       };
     }

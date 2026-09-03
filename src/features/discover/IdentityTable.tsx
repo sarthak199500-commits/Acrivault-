@@ -21,13 +21,14 @@ import {
   CLOUD_LABELS,
   IDENTITY_STATUS_LABELS,
   NHI_TYPE_LABELS,
+  spannedClouds,
   type Identity,
   type SourceInstance,
 } from '@/mocks/types';
 import type { IdentitySort } from '@/mocks/api';
 import { NOW } from '@/mocks/dataset';
 import { cn } from '@/lib/cn';
-import { relativeDays } from '@/lib/format';
+import { pluralize, relativeDays } from '@/lib/format';
 import { announce } from '@/lib/a11y';
 import { RiskPill } from '@/components/ui/RiskPill';
 import { StatusDot } from '@/components/ui/StatusDot';
@@ -98,6 +99,30 @@ function SourceDetail({ identity }: { identity: Identity }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The cross-cloud finding, stated in the row.
+ *
+ * Spanning several providers is the correlation the product exists to do, and it
+ * previously read only as the grey "+N" in the Source cell — visually
+ * indistinguishable from a "list truncated" affordance. Stating the span count
+ * in the identity cell makes it a finding: it carries the info tone (notable,
+ * not risk — the palette reserves warn/critical for risk, and the brand green
+ * already means "selected" on this screen), and it lives in the pinned column,
+ * so it survives scrolling right past the Source cell.
+ *
+ * Gated on the DISTINCT provider count rather than `identity.correlated`, so the
+ * badge can never claim a span of one.
+ */
+function CrossCloudBadge({ sources }: { sources: SourceInstance[] }) {
+  const spanned = spannedClouds(sources).length;
+  if (spanned < 2) return null;
+  return (
+    <span className="tnum shrink-0 rounded-[var(--r-xs)] bg-info-bg px-1.5 text-[length:var(--fs-micro)] font-medium text-info-fg">
+      {pluralize(spanned, 'cloud')}
+    </span>
   );
 }
 
@@ -388,6 +413,7 @@ export function IdentityTable({
                         </span>
                       </Tooltip>
                     )}
+                    <CrossCloudBadge sources={identity.sources} />
                   </div>
                   {/* type */}
                   <div role="gridcell" className="flex min-w-0 items-center gap-1.5 text-[length:var(--fs-small)] text-text-secondary">
