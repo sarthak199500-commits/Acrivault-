@@ -16,10 +16,12 @@ import {
   useAssignOwner,
   useIdentity,
   useQuarantineAgent,
-  useRecommendQuarantine,
   useReleaseQuarantine,
   useRequestRotations,
 } from './queries';
+// Cross-feature by design: a recommendation's destination is the Act > Approvals
+// queue, so the hook that raises one lives with the queue that receives it.
+import { useRequestApproval } from '@/features/act/queries';
 import { CLOUD_LABELS, NHI_TYPE_LABELS, type Identity } from '@/mocks/types';
 import { NOW } from '@/mocks/dataset';
 import { Drawer } from '@/components/ui/Drawer';
@@ -38,6 +40,7 @@ import { useCan } from '@/components/ui/Can';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { riskBand } from '@/lib/risk';
 import { errorInfo } from '@/lib/apiError';
 import { dateTime, pluralize, relativeDays } from '@/lib/format';
@@ -244,10 +247,14 @@ function DetailFooter({
     showSessions;
   const rotate = useRequestRotations();
   const quarantine = useQuarantineAgent();
-  const recommend = useRecommendQuarantine();
+  const recommend = useRequestApproval();
   const release = useReleaseQuarantine();
   const [confirmQuarantine, setConfirmQuarantine] = useState(false);
   const [confirmRelease, setConfirmRelease] = useState(false);
+  // The approver reads this in the queue, so it is worth collecting here rather
+  // than leaving every live request with a blank reason next to seeded ones that
+  // have one.
+  const [reason, setReason] = useState('');
 
   const startRotation = (verb: 'started' | 'requested') =>
     rotate.mutate([identity.id], {
@@ -348,7 +355,7 @@ function DetailFooter({
         description={
           canQuarantine
             ? 'The identity keeps existing but is blocked from acting until released. Synthetic — no upstream state changes.'
-            : 'Your role can propose this but not carry it out. An admin reviews the recommendation and decides. Synthetic — no upstream state changes.'
+            : 'Your role can propose this but not carry it out. It joins the queue in Act › Approvals, where a Security Admin decides. Synthetic — no upstream state changes.'
         }
         confirmLabel={canQuarantine ? 'Quarantine' : 'Send recommendation'}
         confirmVariant={canQuarantine ? 'danger' : 'primary'}
@@ -367,21 +374,35 @@ function DetailFooter({
                   onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
                 },
               )
-            : recommend.mutate(
-                { identityId: identity.id },
+            : // Raises a real pending request now, not just an audit line. The
+              // toast names where it went: "sent for approval" with no
+              // destination left the analyst nothing to check.
+              recommend.mutate(
+                { identityId: identity.id, reason },
                 {
                   onSuccess: () => {
                     setConfirmQuarantine(false);
+                    setReason('');
                     toast(`Quarantine recommended for ${identity.name}`, {
                       tone: 'success',
-                      description: 'Sent to an admin for approval.',
+                      description: 'Waiting in Act › Approvals for a Security Admin to decide.',
                     });
                   },
                   onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
                 },
               )
         }
-      />
+      >
+        {!canQuarantine && (
+          <Textarea
+            label="Reason (optional)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="What the approver needs to know"
+            rows={2}
+          />
+        )}
+      </ConfirmDialog>
       <ConfirmDialog
         open={confirmRelease}
         onOpenChange={setConfirmRelease}

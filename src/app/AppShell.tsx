@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Menu, PanelLeftClose, PanelLeftOpen, Search, Database, X } from 'lucide-react';
-import { NAV, screenIdentity } from './nav';
+import { APPROVALS_ROUTE, NAV, screenIdentity } from './nav';
+import { usePendingApprovalCount } from '@/features/act/queries';
 import { cn } from '@/lib/cn';
 import { announce, focusById } from '@/lib/a11y';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
@@ -48,6 +49,43 @@ function Brand({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+/**
+ * Live pending-approval count on the Act > Approvals rail item.
+ *
+ * Point 7's guarantee — that a proposed containment waits on a second pair of
+ * hands — is worth nothing if you have to navigate to the queue to discover
+ * anything is waiting in it. Shares the screen's own query, so the number and
+ * the list it summarises can never disagree.
+ *
+ * Its own component because the count comes from a hook: rendered inline in
+ * SideNav's map it would be a conditional hook call.
+ */
+function ApprovalsNavCount({ collapsed }: { collapsed: boolean }) {
+  const pending = usePendingApprovalCount();
+  if (pending === 0) return null;
+
+  // Collapsed, there is no label to sit beside — a corner dot is all that fits,
+  // so the figure moves into text only a screen reader hears. It still has to be
+  // announced: the rail is where the waiting work is discovered.
+  if (collapsed) {
+    return (
+      <>
+        <span
+          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--warning)]"
+          aria-hidden="true"
+        />
+        <span className="sr-only">, {pending} awaiting a decision</span>
+      </>
+    );
+  }
+  return (
+    <span className="tnum ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-[var(--r-pill)] bg-warn-bg px-1.5 text-[length:var(--fs-micro)] font-semibold text-warn-fg">
+      {pending}
+      <span className="sr-only"> awaiting a decision</span>
+    </span>
+  );
+}
+
 function SideNav({ collapsed }: { collapsed: boolean }) {
   return (
     <nav aria-label="Primary" className="flex-1 overflow-y-auto px-2 py-1.5">
@@ -81,6 +119,7 @@ function SideNav({ collapsed }: { collapsed: boolean }) {
                         )}
                         <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
                         {!collapsed && <span className="truncate">{item.label}</span>}
+                        {item.to === APPROVALS_ROUTE && <ApprovalsNavCount collapsed={collapsed} />}
                         {!collapsed && item.concept && (
                           <Badge tone="neutral" className="ml-auto px-1.5 py-0 text-[length:var(--fs-micro)]">
                             Concept

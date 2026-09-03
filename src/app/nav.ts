@@ -3,6 +3,7 @@ import {
   Bell,
   BookOpen,
   Boxes,
+  ClipboardCheck,
   Database,
   GitBranch,
   LayoutDashboard,
@@ -43,6 +44,19 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+/**
+ * Act > Approvals. Named because the rail decorates this ONE destination with a
+ * live pending count (see AppShell's SideNav), and a bare string literal
+ * compared in a render path is the kind of coupling that silently stops matching
+ * when a route moves.
+ *
+ * Deliberately not a general `NavItem.count` field: nav.ts is a plain data
+ * module with no React in it, so it cannot express "fetch this number", and a
+ * lookup table with one entry is machinery without a payer. A second counted
+ * destination is when that changes.
+ */
+export const APPROVALS_ROUTE = '/act/approvals';
+
 export const NAV: NavGroup[] = [
   {
     layer: 'See',
@@ -69,6 +83,11 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/rotate', label: 'Rotate', pillar: 'Rotate', icon: RefreshCw },
       { to: '/act/quarantine', label: 'Quarantine', pillar: 'Quarantine', icon: ShieldX },
+      // No `pillar`, unlike its two siblings: Rotate and Quarantine are named
+      // FRS pillars, Approvals is a screen inside the Act layer and not one.
+      // Both encodings produce the eyebrow 'Act'; this one doesn't claim a
+      // pillar the spec has never defined.
+      { to: APPROVALS_ROUTE, label: 'Approvals', icon: ClipboardCheck },
     ],
   },
   {

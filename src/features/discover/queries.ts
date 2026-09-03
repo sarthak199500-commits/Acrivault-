@@ -4,7 +4,6 @@ import {
   getIdentity,
   listIdentities,
   quarantineAgent,
-  recommendQuarantine,
   releaseQuarantine,
   requestRotation,
   type IdentityFilter,
@@ -92,8 +91,8 @@ export function useReleaseQuarantine() {
   return useEnforcement((identityId: string) => releaseQuarantine(identityId));
 }
 
-export function useRecommendQuarantine() {
-  return useEnforcement(({ identityId, fromSessionId }: { identityId: string; fromSessionId?: string }) =>
-    recommendQuarantine(identityId, fromSessionId),
-  );
-}
+// Recommending a quarantine used to live here as `useRecommendQuarantine`, built
+// on useEnforcement. It was never an enforcement -- it changes nothing about the
+// identity -- and the call it wrapped created nothing to approve. Both call sites
+// now raise a real request through useRequestApproval in @/features/act/queries,
+// which is where the queue that receives it lives.

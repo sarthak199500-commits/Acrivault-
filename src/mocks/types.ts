@@ -387,6 +387,62 @@ export interface MonitoringBaseline {
   windowDays: number;
 }
 
+/* ------------------------------------------------------------------ approvals */
+
+export type ApprovalStatus = 'pending' | 'approved' | 'declined';
+
+/**
+ * A proposed quarantine waiting on a second pair of hands.
+ *
+ * This is the ONE action Wave 1's permission model splits into propose and
+ * execute: an Analyst holds `session.quarantineRecommend` and a Security Admin
+ * and above holds `session.quarantine` (lib/permissions.ts). The queue exists to
+ * make that split visible — a recommendation used to write an audit line saying
+ * "Awaiting an admin decision" and then go nowhere a human could find.
+ *
+ * There is deliberately NO `kind` discriminant. Rotation looks like the obvious
+ * second member and is not one: `rotate.request` is held by the Analyst and
+ * WITHHELD from the Security Admin (permissions.ts EXCEPTION 2), so no role can
+ * both propose and receive a rotation proposal, and `requestRotation` in api.ts
+ * creates the job outright with no propose/execute split to surface. A
+ * single-member union would put a column of one repeated value on the screen and
+ * a one-entry Record behind it — machinery with no payer, and a claim that the
+ * product has a general approvals mechanism when it has exactly one gated action.
+ *
+ * // ASSUMPTION: the audit finding reads "every state-changing action requires
+ * // approval by design". The FRS does not say that, and universal two-person
+ * // control is a new REQUIREMENT rather than a missing UI. Widening this beyond
+ * // quarantine — which actions, which approver ranks, what happens to an action
+ * // whose approver is the only person who can perform it — is Architect-owned.
+ * // Until that lands, the type models one action and the screen's empty state
+ * // says so outright.
+ */
+export interface ApprovalRequest {
+  id: string;
+  /** The identity a containment is proposed for. */
+  identityId: string;
+  /** The proposing user's id, resolved to a name and role only on read. */
+  requestedBy: string;
+  requestedAt: string;
+  /** The requester's own words. Optional — the audit trail records it either way. */
+  reason?: string;
+  /**
+   * The session that evidenced the proposal, when it was raised from a replay.
+   * Carried on the request rather than only stamped on the session so the
+   * approver can reach the evidence from the queue, and so a decision can find
+   * the session whose "awaiting a decision" marker it has just answered.
+   */
+  fromSessionId?: string;
+  status: ApprovalStatus;
+  /**
+   * Who decided, and when. Nested so the two can never disagree, and absent
+   * exactly while `status` is 'pending' — the same status/record pairing
+   * `Identity.status === 'quarantined'` has with `Identity.quarantine`.
+   * Asserted in approvals.test.ts so the invariant is not left to convention.
+   */
+  decided?: { by: string; at: string };
+}
+
 export const AUDIT_OBJECTS = ['identity', 'session', 'policy', 'user', 'cloud', 'tenant'] as const;
 export type AuditObject = (typeof AUDIT_OBJECTS)[number];
 
@@ -411,6 +467,8 @@ export const AUDIT_ACTIONS = [
   'executed emergency rotation',
   'quarantined agent',
   'recommended agent quarantine',
+  'approved quarantine request',
+  'declined quarantine request',
   'released agent from quarantine',
   'reviewed agent session',
   'confirmed held step',
@@ -452,6 +510,12 @@ export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
   'executed emergency rotation': 'identity',
   'quarantined agent': 'identity',
   'recommended agent quarantine': 'identity',
+  // Both decisions file under `identity`, not `session`: unlike the held-step
+  // decisions below, what an approval decides is whether the AGENT is contained.
+  // A reader filtering for identity changes has to see the authorization next to
+  // the containment it authorized, or the containment reads as unilateral.
+  'approved quarantine request': 'identity',
+  'declined quarantine request': 'identity',
   'released agent from quarantine': 'identity',
   'reviewed agent session': 'session',
   'confirmed held step': 'session',

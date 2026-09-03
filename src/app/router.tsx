@@ -107,6 +107,12 @@ export const router = createBrowserRouter([
         }),
       },
       {
+        path: 'act/approvals',
+        lazy: async () => ({
+          Component: (await import('@/features/act/ApprovalsScreen')).ApprovalsScreen,
+        }),
+      },
+      {
         path: 'rotate/:jobId',
         lazy: async () => ({ Component: (await import('@/features/rotate/RotationJobDetail')).RotationJobDetail }),
       },

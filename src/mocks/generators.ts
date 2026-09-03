@@ -10,6 +10,7 @@ import {
   SSO_PROVIDER_LABELS,
   type AgentSession,
   type Alert,
+  type ApprovalRequest,
   type AttributeConflict,
   type AuditAction,
   type AuditEntry,
@@ -1140,5 +1141,96 @@ function promoteSessionReviewCandidate(
     at: new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString(),
     by: { kind: 'session', sessionId: rng.pick(ownSessions).id },
   };
+}
+
+/* ------------------------------------------------------------------ approvals */
+
+/** How many pending requests the queue is seeded with. Enough to read as a queue. */
+const SEEDED_APPROVALS = 3;
+
+/**
+ * A pending propose-and-approve queue, so Act > Approvals and its rail count are
+ * non-empty on first load rather than demonstrating the guarantee with an empty
+ * table.
+ *
+ * Both ends of every row have to be coherent, the same rule
+ * attachQuarantineProvenance above is built around:
+ *
+ *  - REQUESTER — an ACTIVE user actually holding `session.quarantineRecommend`.
+ *    Read off the permission matrix rather than hardcoding 'analyst', so the two
+ *    cannot drift: Security Admin holds it too, and if the matrix ever moves the
+ *    capability the fixture follows. A suspended account could not have raised
+ *    anything, and a role without the capability could not have either.
+ *
+ *  - TARGET — an ACTIVE, orphaned identity scoring at or above the containment
+ *    threshold. `makeIdentity` contains only `orphaned && riskScore >= 70` and
+ *    only a quarter of those, so uncontained high-risk orphans are exactly the
+ *    population an analyst is left looking at. Already-quarantined identities are
+ *    excluded because there is nothing left to propose for them, and low-risk or
+ *    owned ones because the reason on the row would then be a fabrication.
+ *
+ *  - REASON — derived from the identity's OWN `orphanReason`, not picked from a
+ *    pool. A row that says "no accountable owner" about an identity that has one
+ *    is the kind of detail that reads as authoritative and isn't.
+ *
+ * Returns fewer rows (or none) rather than relaxing any of the above: a
+ * degenerate fixture should show an honest empty queue, not an incoherent one.
+ */
+export function generateApprovals(
+  identities: Identity[],
+  users: User[],
+  seed: number,
+  now: Date,
+): ApprovalRequest[] {
+  const rng = new Rng(seed ^ 0x0a99a1);
+  const proposers = users.filter(
+    (u) => u.status === 'active' && u.role !== null && can(u.role, 'session.quarantineRecommend'),
+  );
+  if (proposers.length === 0) return [];
+
+  const candidates = identities.filter(
+    (i) => i.status === 'active' && i.orphaned && i.riskScore >= 70,
+  );
+
+  // Spread across the population rather than taking the first N: consecutive ids
+  // would put three near-identical neighbours on screen and imply the queue only
+  // ever sees the low end of the inventory.
+  const stride = Math.max(1, Math.floor(candidates.length / SEEDED_APPROVALS));
+  const targets = Array.from({ length: SEEDED_APPROVALS }, (_, i) => candidates[i * stride]).filter(
+    (i): i is Identity => Boolean(i),
+  );
+
+  return targets.map((identity, i) => ({
+    id: `apr_${i.toString(36).padStart(4, '0')}`,
+    identityId: identity.id,
+    // Cycled, not random: with two seeded Analysts a random pick can land on one
+    // of them three times and the screen stops showing that requesters differ.
+    requestedBy: proposers[i % proposers.length].id,
+    // Minutes apart and all within the hour, so the queue reads as live work
+    // rather than a backlog nobody has looked at.
+    requestedAt: new Date(now.getTime() - rng.int(4, 20) * (i + 1) * 60000).toISOString(),
+    reason: approvalReason(identity),
+    status: 'pending' as const,
+  }));
+}
+
+/**
+ * The requester's stated case, in their voice, derived from the identity's own
+ * facts. `orphanReason` is set for every orphan (see makeIdentity), and the
+ * generator only ever targets orphans — the risk-only sentence is the honest
+ * fallback if that ever stops holding, not a second code path to maintain.
+ */
+function approvalReason(identity: Identity): string {
+  const risk = `Risk ${identity.riskScore} and no containment yet.`;
+  switch (identity.orphanReason) {
+    case 'No owner assigned':
+      return `Spans ${identity.sources.length === 1 ? 'one cloud' : `${identity.sources.length} clouds`} with no accountable owner. ${risk}`;
+    case 'No legitimate use in 90 days':
+      return `No legitimate use in 90 days, and it still holds live credentials. ${risk}`;
+    case 'Creator account deactivated':
+      return `The account that created it is gone, so nobody can vouch for it. ${risk}`;
+    default:
+      return risk;
+  }
 }
 

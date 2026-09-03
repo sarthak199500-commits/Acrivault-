@@ -18,11 +18,10 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { useDecideBlockedStep, useMarkReviewed, useSession, useSessionIdentity } from './queries';
-import {
-  useQuarantineAgent,
-  useRecommendQuarantine,
-  useReleaseQuarantine,
-} from '@/features/discover/queries';
+import { useQuarantineAgent, useReleaseQuarantine } from '@/features/discover/queries';
+// A recommendation raised from a replay lands in the same Act > Approvals queue,
+// so it goes through the same hook the queue's own screen uses.
+import { useRequestApproval } from '@/features/act/queries';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
 import { SPAWN_KIND_LABELS, isFlaggedStep, type SessionStep, type StepStatus } from '@/mocks/types';
 import { detailEyebrow } from '@/app/nav';
@@ -156,8 +155,15 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
           </Banner>
         )}
         {session.quarantineRecommendedAt && !quarantined && (
+          // Names the destination: "awaiting an admin decision" with no link left
+          // the reader nowhere to look, which is the finding this screen shares
+          // with the recommend action itself.
           <Banner tone="warning">
-            An analyst has recommended quarantining this agent. Awaiting an admin decision.
+            An analyst has recommended quarantining this agent.{' '}
+            <Link to="/act/approvals" className="underline">
+              Awaiting a decision in Act › Approvals
+            </Link>
+            .
           </Banner>
         )}
       </CardBody>
@@ -428,7 +434,7 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
 
   const markReviewed = useMarkReviewed();
   const quarantine = useQuarantineAgent();
-  const recommend = useRecommendQuarantine();
+  const recommend = useRequestApproval();
   const release = useReleaseQuarantine();
   const [confirm, setConfirm] = useState<null | 'review' | 'quarantine' | 'recommend' | 'release'>(null);
   const [note, setNote] = useState('');
@@ -439,11 +445,14 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
   const showRelease = canRelease && quarantined;
   const anyAction = showReview || showQuarantine || showRecommend || showRelease;
 
-  const settle = (message: string, tone: 'success' | 'critical') => ({
+  // `description` carries the second line where the outcome has somewhere the
+  // reader now has to go — a recommendation is not finished when the toast
+  // fades, it is waiting in a queue.
+  const settle = (message: string, tone: 'success' | 'critical', description?: string) => ({
     onSuccess: () => {
       setConfirm(null);
       setNote('');
-      toast(message, { tone });
+      toast(message, { tone, description });
     },
     onError: (err: unknown) => toast(errorInfo(err).message, { tone: 'critical' }),
   });
@@ -523,20 +532,37 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
         />
       </Dialog>
 
+      {/* Raises a real pending request against the agent, stamped with the
+          session that evidenced it, rather than only an audit line. Shares
+          `note` with the quarantine dialog above: the two are mutually exclusive
+          (showRecommend requires !canQuarantine), both ask "what prompted this",
+          and `settle` already clears it. */}
       <ConfirmDialog
         open={confirm === 'recommend'}
         onOpenChange={(o) => !o && setConfirm(null)}
         title={`Recommend quarantining ${session.identityName}?`}
-        description="Your role can propose this but not carry it out. An admin reviews the recommendation and decides. The proposal is written to the audit trail."
+        description="Your role can propose this but not carry it out. It joins the queue in Act › Approvals, where a Security Admin decides. The proposal is written to the audit trail either way."
         confirmLabel="Send recommendation"
         pending={recommend.isPending}
         onConfirm={() =>
           recommend.mutate(
-            { identityId: session.identityId, fromSessionId: session.id },
-            settle(`Quarantine recommended for ${session.identityName}`, 'success'),
+            { identityId: session.identityId, fromSessionId: session.id, reason: note },
+            settle(
+              `Quarantine recommended for ${session.identityName}`,
+              'success',
+              'Waiting in Act › Approvals for a Security Admin to decide.',
+            ),
           )
         }
-      />
+      >
+        <Textarea
+          label="Reason (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="What the approver needs to know"
+          rows={2}
+        />
+      </ConfirmDialog>
       <ConfirmDialog
         open={confirm === 'release'}
         onOpenChange={(o) => !o && setConfirm(null)}

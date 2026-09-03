@@ -24,6 +24,8 @@ import { ACTION_OBJECT, isFlaggedStep } from './types';
 import type {
   Alert,
   AgentSession,
+  ApprovalRequest,
+  ApprovalStatus,
   AuditAction,
   AuditEntry,
   AuditObject,
@@ -933,38 +935,50 @@ export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentit
  * "open" after it had supposedly been contained.
  */
 export function quarantineAgent(identityId: string, note?: string): Promise<Identity> {
-  return respond(() => {
-    const identity = findAgent(identityId);
-    identity.status = 'quarantined';
-    // Named provenance (Act > Quarantine, audit point 5): without this, a live
-    // containment would be the one row on that screen with no producer, even
-    // though every seeded row has one.
-    identity.quarantine = {
-      at: new Date().toISOString(),
-      by: { kind: 'user', userId: currentActor().id },
-    };
-    const trimmed = note?.trim();
-    appendAudit(
-      'quarantined agent',
-      identity.name,
-      [
-        'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
-        trimmed ? `Note: ${trimmed}` : null,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    );
-    // UC-04 main flow step 4: notify the identity's owner. An orphaned agent has no one
-    // to tell, which is itself worth surfacing rather than silently skipping.
-    pushNotification({
-      severity: 'critical',
-      title: identity.owner
-        ? `${identity.name} quarantined — ${identity.owner} notified`
-        : `${identity.name} quarantined — no owner to notify`,
-      href: `/discover/${identity.id}`,
-    });
-    return { ...identity };
+  return respond(() => containIdentity(findAgent(identityId), note));
+}
+
+/**
+ * The containment itself: status, named provenance, audit line, owner
+ * notification. Extracted from `quarantineAgent` as a SYNCHRONOUS core so the
+ * approvals path (`decideApproval`) can reuse it from inside its own `respond`
+ * body — an approved request has to produce exactly the same state a direct
+ * quarantine does, and a second implementation is how one of them would end up
+ * without the `quarantine` record or without notifying the owner.
+ *
+ * The provenance is always `currentActor()`, which is what makes the APPROVER —
+ * not the analyst who recommended it — answerable for the state they produced.
+ */
+function containIdentity(identity: Identity, note?: string): Identity {
+  identity.status = 'quarantined';
+  // Named provenance (Act > Quarantine, audit point 5): without this, a live
+  // containment would be the one row on that screen with no producer, even
+  // though every seeded row has one.
+  identity.quarantine = {
+    at: new Date().toISOString(),
+    by: { kind: 'user', userId: currentActor().id },
+  };
+  const trimmed = note?.trim();
+  appendAudit(
+    'quarantined agent',
+    identity.name,
+    [
+      'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
+      trimmed ? `Note: ${trimmed}` : null,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  // UC-04 main flow step 4: notify the identity's owner. An orphaned agent has no one
+  // to tell, which is itself worth surfacing rather than silently skipping.
+  pushNotification({
+    severity: 'critical',
+    title: identity.owner
+      ? `${identity.name} quarantined — ${identity.owner} notified`
+      : `${identity.name} quarantined — no owner to notify`,
+    href: `/discover/${identity.id}`,
   });
+  return { ...identity };
 }
 
 /**
@@ -1005,28 +1019,6 @@ export function decideBlockedStep(
         .join(' '),
     );
     return withIdentityName(session);
-  });
-}
-
-/**
- * Analyst path: propose a quarantine for an admin to carry out (spec §5).
- *
- * The proposal is against the agent; `fromSessionId` records which session evidenced
- * it, when the analyst raised it from a replay. The audit trail is the system of record
- * either way — that is what an admin reviews before deciding.
- */
-export function recommendQuarantine(identityId: string, fromSessionId?: string): Promise<Identity> {
-  return respond(() => {
-    const identity = findAgent(identityId);
-    if (fromSessionId) findSession(fromSessionId).quarantineRecommendedAt = new Date().toISOString();
-    appendAudit(
-      'recommended agent quarantine',
-      identity.name,
-      fromSessionId
-        ? `Proposed from session ${fromSessionId}. Awaiting an admin decision.`
-        : 'Awaiting an admin decision.',
-    );
-    return { ...identity };
   });
 }
 
@@ -1110,6 +1102,194 @@ export function listQuarantined(): Promise<QuarantinedIdentity[]> {
       }))
       .sort((a, b) => b.at.localeCompare(a.at)),
   );
+}
+
+/* ------------------------------------------------------------- act > approvals */
+
+/**
+ * A request with the things the queue has to show resolved: an admin deciding
+ * cannot act on two user ids and an identity id.
+ *
+ * The requester's name and role are resolved on READ rather than stamped at
+ * request time, unlike `PolicyAction.policyName` / `accountable`. The difference
+ * is that those record what already happened and must not be rewritten, whereas
+ * a pending request is a live question — "who is asking, and what may they do" —
+ * and the answer that matters is the one true when the admin decides it. An
+ * analyst suspended since raising it is exactly what the approver needs to see.
+ */
+export interface ApprovalWithContext extends ApprovalRequest {
+  identityName: string;
+  identityType: NhiType;
+  requesterName: string;
+  /** Display label, or an em dash where Entra sent a person but nobody has given them a role. */
+  requesterRole: string;
+}
+
+function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
+  const ds = getDataset();
+  const identity = ds.identityById.get(request.identityId);
+  const user = ds.users.find((u) => u.id === request.requestedBy);
+  return {
+    ...request,
+    identityName: identity?.name ?? request.identityId,
+    // A request always names a real identity (requestApproval refuses otherwise),
+    // so this fallback is unreachable in practice; picked over a cast because a
+    // non-null assertion is banned and a wrong-looking type is worse than a
+    // conservative default.
+    identityType: identity?.type ?? 'service-account',
+    // Soft-deleted users keep their record (deleteUser flips status), so `!user`
+    // alone never catches a removed requester — same reasoning as
+    // quarantineLabel above.
+    requesterName: !user || user.status === 'deleted' ? 'Removed user' : user.name,
+    requesterRole: user && user.role ? ROLE_LABELS[user.role] : '—',
+  };
+}
+
+/**
+ * The queue, newest-first. `status` omitted returns every request, whatever its
+ * state, so a decided one stays auditable rather than vanishing.
+ */
+export function listApprovals(status?: ApprovalStatus): Promise<ApprovalWithContext[]> {
+  return respond(() => {
+    if (isEmptyForced()) return [];
+    return getDataset()
+      .approvals.filter((a) => !status || a.status === status)
+      .map(withApprovalContext)
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  });
+}
+
+/**
+ * Propose a containment for an admin to decide (spec §5). The Analyst path.
+ *
+ * This REPLACED `recommendQuarantine`, which wrote an audit line reading
+ * "Awaiting an admin decision." and then created nothing to await — the
+ * recommendation existed only as a sentence in the log. Kept as one function
+ * rather than added beside it: two ways to propose the same containment is how
+ * the queue would end up missing the proposals raised through the other one.
+ *
+ * `fromSessionId` records which session evidenced the proposal, when raised from
+ * a replay; the audit trail remains the system of record either way.
+ */
+export function requestApproval(input: {
+  identityId: string;
+  reason?: string;
+  fromSessionId?: string;
+}): Promise<ApprovalRequest> {
+  return respond(() => {
+    assertActorCan('session.quarantineRecommend');
+    const ds = getDataset();
+    const identity = findAgent(input.identityId);
+    // Both guards are races a real queue hits immediately: two analysts looking
+    // at the same high-risk orphan, or one raising a request against something
+    // a policy contained a second earlier. Either would put a row on the screen
+    // proposing work that is already done or already asked for.
+    if (identity.status === 'quarantined') {
+      throw new MockApiError(`${identity.name} is already quarantined.`, 'ALREADY_QUARANTINED');
+    }
+    if (ds.approvals.some((a) => a.status === 'pending' && a.identityId === identity.id)) {
+      throw new MockApiError(
+        `A quarantine is already pending approval for ${identity.name}.`,
+        'ALREADY_PENDING',
+      );
+    }
+
+    const reason = input.reason?.trim();
+    const request: ApprovalRequest = {
+      id: `apr_${Math.random().toString(36).slice(2, 8)}`,
+      identityId: identity.id,
+      requestedBy: currentActor().id,
+      requestedAt: new Date().toISOString(),
+      ...(reason ? { reason } : {}),
+      ...(input.fromSessionId ? { fromSessionId: input.fromSessionId } : {}),
+      status: 'pending',
+    };
+    // Resolved BEFORE the request is stored, so a bad session id rejects the
+    // whole call instead of leaving an orphan request pointing at nothing.
+    const source = input.fromSessionId ? findSession(input.fromSessionId) : null;
+    ds.approvals.unshift(request);
+    if (source) source.quarantineRecommendedAt = request.requestedAt;
+    appendAudit(
+      'recommended agent quarantine',
+      identity.name,
+      [
+        input.fromSessionId ? `Proposed from session ${input.fromSessionId}.` : null,
+        'Awaiting an admin decision in Act > Approvals.',
+        reason ? `Reason: ${reason}` : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    return { ...request };
+  });
+}
+
+/**
+ * Approve or decline a pending request — the second pair of hands.
+ *
+ * Approving runs the SAME containment a direct quarantine does (containIdentity
+ * above), which is what makes the approver the identity's recorded producer:
+ * they are who produced the state, not the analyst who asked for it.
+ * Declining does not touch the identity at all — the request is answered and
+ * nothing is enforced.
+ */
+export function decideApproval(
+  id: string,
+  decision: 'approved' | 'declined',
+): Promise<ApprovalRequest> {
+  return respond(() => {
+    const ds = getDataset();
+    const request = ds.approvals.find((a) => a.id === id);
+    if (!request) throw new MockApiError('Approval request not found.', 'NOT_FOUND');
+    if (request.status !== 'pending') {
+      throw new MockApiError(
+        `This request was already decided (${request.status}).`,
+        'ALREADY_DECIDED',
+      );
+    }
+    assertActorCan('session.quarantine');
+    const identity = findAgent(request.identityId);
+
+    // Approving an already-contained identity would overwrite its existing
+    // QuarantineRecord and reassign responsibility for a containment this
+    // approver did not produce. Declining stays available, and is how the stale
+    // row gets cleared.
+    if (decision === 'approved' && identity.status === 'quarantined') {
+      throw new MockApiError(
+        `${identity.name} is already quarantined. Decline this request to clear it.`,
+        'ALREADY_QUARANTINED',
+      );
+    }
+
+    request.status = decision;
+    request.decided = { by: currentActor().id, at: new Date().toISOString() };
+
+    // `AgentSession.quarantineRecommendedAt` marks an OPEN recommendation — the
+    // replay screen renders it as "awaiting a decision in Act > Approvals".
+    // Left set after a decision, that banner would claim a decision is still
+    // pending forever, and a DECLINED request would be the worst case: nothing
+    // is waiting and nothing ever will. The fact itself survives in the audit
+    // log and on this request, which keeps its requestedAt and its outcome.
+    const source = request.fromSessionId
+      ? ds.sessions.find((s) => s.id === request.fromSessionId)
+      : undefined;
+    if (source) source.quarantineRecommendedAt = undefined;
+
+    // The authorization is written BEFORE the containment so the log, which is
+    // newest-first, reads containment-above-decision — the order they happened.
+    appendAudit(
+      decision === 'approved' ? 'approved quarantine request' : 'declined quarantine request',
+      identity.name,
+      [
+        `Request ${request.id}, raised by ${ds.users.find((u) => u.id === request.requestedBy)?.email ?? 'a removed user'}.`,
+        decision === 'declined' ? 'The identity was left as it was.' : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    if (decision === 'approved') containIdentity(identity, request.reason);
+    return { ...request };
+  });
 }
 
 /* --------------------------------------------------------------- blast radius */

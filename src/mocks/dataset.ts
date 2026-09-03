@@ -6,6 +6,7 @@
 import {
   attachQuarantineProvenance,
   generateAlerts,
+  generateApprovals,
   generateAudit,
   generateConnections,
   generateCopilotSuggestions,
@@ -63,6 +64,8 @@ export interface Dataset {
   identities: Identity[];
   identityById: Map<string, Identity>;
   alerts: ReturnType<typeof generateAlerts>;
+  /** Pending propose-and-approve queue (Act > Approvals). Mutable: decisions land here. */
+  approvals: ReturnType<typeof generateApprovals>;
   sessions: ReturnType<typeof generateSessions>;
   policies: ReturnType<typeof generatePolicies>;
   policyActions: ReturnType<typeof generatePolicyActions>;
@@ -89,11 +92,16 @@ function build(): Dataset {
   // Post-pass: policies, users and sessions all exist now, so a quarantined
   // identity can finally be given a producer (see attachQuarantineProvenance).
   attachQuarantineProvenance(identities, policies, users, sessions, SEED, NOW);
+  // Strictly AFTER the post-pass, which PROMOTES one active ai-agent to
+  // quarantined. Seeded before it, an approval could name that identity and the
+  // queue would open with a request to contain something already contained.
+  const approvals = generateApprovals(identities, users, SEED, NOW);
   return {
     size,
     identities,
     identityById,
     alerts: generateAlerts(identities, SEED, NOW),
+    approvals,
     sessions,
     policies,
     policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
