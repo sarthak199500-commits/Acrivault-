@@ -26,12 +26,31 @@ describe('Act > Quarantine provenance', () => {
     expect(rows.every((r) => typeof r.at === 'string')).toBe(true);
   });
 
-  it('demonstrates all three producer kinds in the seeded data', () => {
+  // The producer set is CLOSED. A kind only the generator can write is exactly
+  // the defect this replaced: `session` lived in this union for a release, so a
+  // seeded row showed the evidence while a real session review showed a bare
+  // admin name. The previous version of this test asserted that set was
+  // correct, which is why nine tests and two review passes did not catch it.
+  it('uses no provenance kind the product cannot produce', () => {
     const kinds = new Set(
       getDataset()
         .identities.flatMap((i) => (i.quarantine ? [i.quarantine.by.kind] : [])),
     );
-    expect(kinds).toEqual(new Set(['policy', 'user', 'session']));
+    expect([...kinds].sort()).toEqual(['policy', 'user']);
+  });
+
+  // Closing the kind set must not cost the variety this screen exists to show:
+  // all three DISPLAY outcomes still have to occur in the seeded data.
+  it('demonstrates all three producer outcomes in the seeded data', () => {
+    const outcomes = new Set(
+      getDataset().identities.flatMap((i) => {
+        const by = i.quarantine?.by;
+        if (!by) return [];
+        if (by.kind === 'policy') return ['policy'];
+        return [by.viaSessionId ? 'person-from-replay' : 'person'];
+      }),
+    );
+    expect([...outcomes].sort()).toEqual(['person', 'person-from-replay', 'policy']);
   });
 
   // The domain rule (see makeIdentity's containment roll): only a high-risk
@@ -111,20 +130,31 @@ describe('Act > Quarantine provenance', () => {
     expect(target.quarantine?.by.kind).not.toBe('policy');
   });
 
-  // Same principle for session: a session review can only explain the agent
-  // whose session it is, never a stranger's.
-  it('names only a session that belongs to the same identity it explains', () => {
+  // Same principle for the session a person cited: a replay can only explain the
+  // agent whose session it is, never a stranger's. What changed is WHERE the
+  // session sits. A containment names the person accountable for it and, when
+  // they acted from a replay, the session that evidenced them -- never a session
+  // alone, because nothing in this product contains an identity without a human.
+  it('names an accountable person and a session belonging to the identity it explains', () => {
     const ds = getDataset();
-    const withSession = ds.identities.filter((i) => i.quarantine?.by.kind === 'session');
-    expect(withSession.length).toBeGreaterThan(0);
-    for (const identity of withSession) {
+    const viaReplay = ds.identities.filter((i) => {
+      const by = i.quarantine?.by;
+      return by?.kind === 'user' && Boolean(by.viaSessionId);
+    });
+    expect(viaReplay.length).toBeGreaterThan(0);
+    for (const identity of viaReplay) {
       const record = identity.quarantine;
-      if (!record || record.by.kind !== 'session') {
-        throw new Error(`fixture: expected ${identity.id} to carry session provenance`);
+      if (!record || record.by.kind !== 'user' || !record.by.viaSessionId) {
+        throw new Error(`fixture: expected ${identity.id} to carry replay-evidenced provenance`);
       }
-      const by = record.by;
-      const session = ds.sessions.find((s) => s.id === by.sessionId);
-      if (!session) throw new Error(`fixture: session ${by.sessionId} referenced by ${identity.id} not found`);
+      const by = record.by; // hoisted: narrowing doesn't survive the .find() closures below
+      // The person has to exist. A session can evidence a containment but must
+      // never be the only thing named for it -- somebody is answerable.
+      expect(ds.users.some((u) => u.id === by.userId), identity.id).toBe(true);
+      const session = ds.sessions.find((s) => s.id === by.viaSessionId);
+      if (!session) {
+        throw new Error(`fixture: session ${by.viaSessionId} referenced by ${identity.id} not found`);
+      }
       expect(session.identityId, identity.id).toBe(identity.id);
     }
   });
@@ -136,20 +166,26 @@ describe('Act > Quarantine provenance', () => {
     }
   });
 
-  it('links back to the producer for policy and session kinds, but not for a user', async () => {
+  it('links a policy producer, never the person, and links the session separately', async () => {
     const rows = await listQuarantined();
-    const kindById = new Map(
+    const byId = new Map(
       getDataset()
-        .identities.flatMap((i) => (i.quarantine ? [[i.id, i.quarantine.by.kind] as const] : [])),
+        .identities.flatMap((i) => (i.quarantine ? [[i.id, i.quarantine.by] as const] : [])),
     );
     for (const row of rows) {
-      const kind = kindById.get(row.id);
-      if (kind === 'user') {
-        expect(row.byHref).toBeUndefined();
-      } else if (kind === 'policy') {
-        expect(row.byHref).toMatch(/^\/govern\/builder\//);
+      const by = byId.get(row.id);
+      if (by?.kind === 'policy') {
+        expect(row.byHref, row.id).toMatch(/^\/govern\/builder\//);
+        expect(row.viaHref, row.id).toBeUndefined();
       } else {
-        expect(row.byHref).toMatch(/^\/intelligence\//);
+        // A person has no standalone screen, so the producer itself never links.
+        expect(row.byHref, row.id).toBeUndefined();
+        // Their evidence does, when they cited any.
+        if (by?.kind === 'user' && by.viaSessionId) {
+          expect(row.viaHref, row.id).toBe(`/intelligence/${by.viaSessionId}`);
+        } else {
+          expect(row.viaHref, row.id).toBeUndefined();
+        }
       }
     }
   });
@@ -223,5 +259,65 @@ describe('Act > Quarantine provenance', () => {
     const entries = await listAudit();
     expect(entries[0].action).toBe('released agent from quarantine');
     expect(entries[0].target).toBe(row.name);
+  });
+});
+
+describe('Act > Quarantine - a containment raised from a replay', () => {
+  /** An active agent that actually has a session, so a replay could have evidenced it. */
+  function pickReplayCandidate() {
+    const ds = getDataset();
+    for (const session of ds.sessions) {
+      const identity = ds.identityById.get(session.identityId);
+      if (identity?.status === 'active') return { identity, session };
+    }
+    throw new Error('fixture: expected an active agent with at least one session');
+  }
+
+  it('records the session alongside the person, so the evidence survives the action', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const { identity, session } = pickReplayCandidate();
+    const updated = await quarantineAgent(identity.id, undefined, session.id);
+    expect(updated.quarantine?.by).toEqual({
+      kind: 'user',
+      userId: CURRENT_USER_ID,
+      viaSessionId: session.id,
+    });
+    await releaseQuarantine(identity.id);
+  });
+
+  it('exposes the person as producer and the session as its evidence', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const { identity, session } = pickReplayCandidate();
+    await quarantineAgent(identity.id, undefined, session.id);
+    const row = (await listQuarantined()).find((r) => r.id === identity.id);
+    if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
+    expect(row.byHref).toBeUndefined();
+    expect(row.viaLabel).toBe(`Session review · ${session.id}`);
+    expect(row.viaHref).toBe(`/intelligence/${session.id}`);
+    await releaseQuarantine(identity.id);
+  });
+
+  // Same treatment the producer already gets for a soft-deleted user: name the
+  // gap rather than render a link that goes nowhere.
+  it('names a removed session as removed instead of linking nowhere', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const { identity } = pickReplayCandidate();
+    await quarantineAgent(identity.id, undefined, 'ses_does_not_exist');
+    const row = (await listQuarantined()).find((r) => r.id === identity.id);
+    if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
+    expect(row.viaLabel).toBe('Removed session');
+    expect(row.viaHref).toBeUndefined();
+    await releaseQuarantine(identity.id);
+  });
+
+  it('leaves the record unchanged when no replay evidenced the containment', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const target = getDataset().identities.find((i) => i.status === 'active');
+    if (!target) throw new Error('fixture: expected at least one active identity');
+    const updated = await quarantineAgent(target.id);
+    // No stray `viaSessionId: undefined` key: toEqual would accept one, so the
+    // absence is asserted on the key set itself.
+    expect(Object.keys(updated.quarantine?.by ?? {}).sort()).toEqual(['kind', 'userId']);
+    await releaseQuarantine(target.id);
   });
 });

@@ -265,3 +265,51 @@ describe('Act > Approvals — deciding a request', () => {
     }
   });
 });
+
+describe('Act > Approvals - the evidence an approval was granted on', () => {
+  /**
+   * A candidate that also has a session, so the request can name the replay it
+   * was raised from. Mirrors pickCandidate's guards -- not already contained,
+   * nothing already pending -- because both are enforced by requestApproval and
+   * a test that ignored them would assert against the guard, not the behaviour.
+   */
+  function pickReplayCandidate() {
+    const ds = getDataset();
+    const pending = new Set(
+      ds.approvals.filter((a) => a.status === 'pending').map((a) => a.identityId),
+    );
+    for (const session of ds.sessions) {
+      const identity = ds.identityById.get(session.identityId);
+      if (identity && identity.status === 'active' && !pending.has(identity.id)) {
+        return { identity, session };
+      }
+    }
+    throw new Error('fixture: expected an active agent with a session and no pending request');
+  }
+
+  // The approver is answerable for the containment (currentActor stamps it), but
+  // the evidence they decided on is the analyst's replay. Before this, the
+  // session reached the queue and then stopped there: the containment it
+  // produced named a person and cited nothing.
+  it('records the session the request was raised from, not just the approver', async () => {
+    const { identity, session } = pickReplayCandidate();
+    const request = await requestApproval({ identityId: identity.id, fromSessionId: session.id });
+    await decideApproval(request.id, 'approved');
+
+    const record = getDataset().identityById.get(identity.id)?.quarantine;
+    expect(record?.by).toEqual({
+      kind: 'user',
+      userId: CURRENT_USER_ID,
+      viaSessionId: session.id,
+    });
+  });
+
+  it('cites no session when the request was raised outside a replay', async () => {
+    const identity = pickCandidate();
+    const request = await requestApproval({ identityId: identity.id });
+    await decideApproval(request.id, 'approved');
+
+    const record = getDataset().identityById.get(identity.id)?.quarantine;
+    expect(Object.keys(record?.by ?? {}).sort()).toEqual(['kind', 'userId']);
+  });
+});

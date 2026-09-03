@@ -513,7 +513,10 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
               loading={quarantine.isPending}
               onClick={() =>
                 quarantine.mutate(
-                  { identityId: session.identityId, note },
+                  // `viaSessionId` is the whole point of acting from here: the
+                  // containment records this replay as the evidence, not just
+                  // the name of whoever clicked.
+                  { identityId: session.identityId, note, viaSessionId: session.id },
                   settle(`${session.identityName} quarantined`, 'critical'),
                 )
               }

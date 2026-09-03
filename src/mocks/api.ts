@@ -947,8 +947,12 @@ export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentit
  * reached its existing 'quarantined' member, and the agent's other sessions still read
  * "open" after it had supposedly been contained.
  */
-export function quarantineAgent(identityId: string, note?: string): Promise<Identity> {
-  return respond(() => containIdentity(findAgent(identityId), note));
+export function quarantineAgent(
+  identityId: string,
+  note?: string,
+  viaSessionId?: string,
+): Promise<Identity> {
+  return respond(() => containIdentity(findAgent(identityId), note, viaSessionId));
 }
 
 /**
@@ -962,14 +966,21 @@ export function quarantineAgent(identityId: string, note?: string): Promise<Iden
  * The provenance is always `currentActor()`, which is what makes the APPROVER —
  * not the analyst who recommended it — answerable for the state they produced.
  */
-function containIdentity(identity: Identity, note?: string): Identity {
+function containIdentity(identity: Identity, note?: string, viaSessionId?: string): Identity {
   identity.status = 'quarantined';
   // Named provenance (Act > Quarantine, audit point 5): without this, a live
   // containment would be the one row on that screen with no producer, even
   // though every seeded row has one.
   identity.quarantine = {
     at: new Date().toISOString(),
-    by: { kind: 'user', userId: currentActor().id },
+    // Spread rather than always-present so a containment with no replay stays
+    // byte-identical to one written before `viaSessionId` existed -- no stray
+    // `viaSessionId: undefined` key for a reader or a test to trip over.
+    by: {
+      kind: 'user',
+      userId: currentActor().id,
+      ...(viaSessionId ? { viaSessionId } : {}),
+    },
   };
   const trimmed = note?.trim();
   appendAudit(
@@ -1061,10 +1072,21 @@ export interface QuarantinedIdentity {
   byLabel: string;
   /** Where the producer lives, for the link back. Absent when it has no screen. */
   byHref?: string;
+  /**
+   * The replay a person decided on, when they acted from one.
+   *
+   * Kept separate from `byLabel` rather than folded into it: the producer is who
+   * is answerable, the evidence is what they saw, and an auditor has to be able
+   * to follow each independently.
+   */
+  viaLabel?: string;
+  viaHref?: string;
 }
 
 /** Resolve a QuarantineRecord's producer to a human label and, where one exists, a link back to it. */
-function quarantineLabel(record: QuarantineRecord): { byLabel: string; byHref?: string } {
+function quarantineLabel(
+  record: QuarantineRecord,
+): { byLabel: string; byHref?: string; viaLabel?: string; viaHref?: string } {
   const ds = getDataset();
   // Bound to a local const: narrowing `record.by.kind` doesn't survive into the
   // `.find()` closures below (TS re-widens a narrowed property access across a
@@ -1077,21 +1099,32 @@ function quarantineLabel(record: QuarantineRecord): { byLabel: string; byHref?: 
       byHref: policy ? `/govern/builder/${policy.id}` : undefined,
     };
   }
-  if (by.kind === 'user') {
-    const user = ds.users.find((u) => u.id === by.userId);
-    // A user is soft-deleted (status flips to 'deleted'; deleteUser never
-    // removes the record -- see mocks/api.ts), so `!user` alone never catches
-    // a removed producer. Suspended renders normally: the account still
-    // exists, and having quarantined this identity is a true historical fact
-    // either way. No href: a user has no standalone screen to link back to.
-    if (!user || user.status === 'deleted') return { byLabel: 'Removed user' };
-    return { byLabel: user.role ? `${user.name} · ${ROLE_LABELS[user.role]}` : user.name };
-  }
-  const session = ds.sessions.find((s) => s.id === by.sessionId);
+  const user = ds.users.find((u) => u.id === by.userId);
+  // Resolved independently of the person: a containment whose acting user was
+  // since removed still has to show what it was decided on.
+  const via = by.viaSessionId ? sessionEvidence(by.viaSessionId) : {};
+  // A user is soft-deleted (status flips to 'deleted'; deleteUser never
+  // removes the record -- see mocks/api.ts), so `!user` alone never catches
+  // a removed producer. Suspended renders normally: the account still
+  // exists, and having quarantined this identity is a true historical fact
+  // either way. No href: a user has no standalone screen to link back to.
+  if (!user || user.status === 'deleted') return { byLabel: 'Removed user', ...via };
   return {
-    byLabel: session ? `Session review · ${session.id}` : 'Removed session',
-    byHref: session ? `/intelligence/${session.id}` : undefined,
+    byLabel: user.role ? `${user.name} · ${ROLE_LABELS[user.role]}` : user.name,
+    ...via,
   };
+}
+
+/**
+ * The replay a person cited, named whether or not it still exists -- same
+ * treatment a removed policy and a removed user already get, because a link
+ * that goes nowhere is worse than a label that admits the gap.
+ */
+function sessionEvidence(sessionId: string): { viaLabel: string; viaHref?: string } {
+  const session = getDataset().sessions.find((s) => s.id === sessionId);
+  return session
+    ? { viaLabel: `Session review · ${session.id}`, viaHref: `/intelligence/${session.id}` }
+    : { viaLabel: 'Removed session' };
 }
 
 /**
@@ -1300,7 +1333,11 @@ export function decideApproval(
         .filter(Boolean)
         .join(' '),
     );
-    if (decision === 'approved') containIdentity(identity, request.reason);
+    // The approver is answerable for the containment (`currentActor` inside
+    // containIdentity), but the evidence they granted it on is the requester's
+    // replay. The session already reached the queue on the request -- before
+    // this it stopped there, and the containment cited nothing.
+    if (decision === 'approved') containIdentity(identity, request.reason, request.fromSessionId);
     return { ...request };
   });
 }
