@@ -78,6 +78,28 @@ function InventoryKpis() {
         delta={-0.8}
         deltaLabel="pts"
         deltaInverted
+        info={
+          <div className="space-y-2 text-[length:var(--fs-small)] text-text-secondary">
+            <p className="font-medium text-text">How privilege drift is measured</p>
+            <p>
+              <span className="tnum text-accent-text">{count(d.governanceDrift)}</span> identities
+              whose governance state is <span className="font-mono">drift</span>, over{' '}
+              <span className="tnum text-accent-text">{count(d.total)}</span> correlated identities
+              in scope.
+            </p>
+            <p>
+              Drift means an identity’s effective permissions no longer match the baseline its
+              governing policy set.
+            </p>
+            {/* ASSUMPTION: this wording is written to the shape of FRS §6, not derived
+                from it. Drift derivation is Architect-owned and the sentence is pending
+                confirmation. The UI displays the value and never computes it. */}
+            <p className="border-t border-border pt-2 text-text-tertiary">
+              Derivation is upstream (FRS §6). This surface displays the value; it never computes
+              it.
+            </p>
+          </div>
+        }
       />
       {/* Reads from the shared sync timestamp rather than a hardcoded string, so it
           cannot disagree with the dashboard's "as of" stamp. */}
