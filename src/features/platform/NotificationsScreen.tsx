@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Bell, BellOff, Check } from 'lucide-react';
 import { useMarkNotificationRead, useNotifications } from './queries';
 import type { NotificationItem } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -60,7 +61,7 @@ export function NotificationsScreen() {
 
   return (
     <div>
-      <ScreenHeader eyebrow="Platform" title="Notifications" description="Your notification preferences and recent activity." />
+      <ScreenHeader {...screenHeaderProps('/notifications')} description="Your notification preferences and recent activity." />
 
       <div className="grid gap-4 lg:grid-cols-[1fr_var(--rail-w)] lg:items-start">
         <Card>

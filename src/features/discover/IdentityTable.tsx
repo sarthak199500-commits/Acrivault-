@@ -21,13 +21,14 @@ import {
   CLOUD_LABELS,
   IDENTITY_STATUS_LABELS,
   NHI_TYPE_LABELS,
+  spannedClouds,
   type Identity,
   type SourceInstance,
 } from '@/mocks/types';
 import type { IdentitySort } from '@/mocks/api';
 import { NOW } from '@/mocks/dataset';
 import { cn } from '@/lib/cn';
-import { relativeDays } from '@/lib/format';
+import { pluralize, relativeDays } from '@/lib/format';
 import { announce } from '@/lib/a11y';
 import { RiskPill } from '@/components/ui/RiskPill';
 import { StatusDot } from '@/components/ui/StatusDot';
@@ -38,6 +39,25 @@ import { ProviderBadge } from '@/components/ui/ProviderBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const GRID = 'minmax(40px,40px) minmax(220px,2.2fr) minmax(150px,1.1fr) minmax(112px,0.9fr) minmax(120px,1fr) minmax(130px,1fr) minmax(130px,1fr) minmax(110px,0.9fr)';
+
+/*
+ * No sticky identity column here, and it is not an oversight — audit point 51
+ * asked for one and it cannot be done from CSS alone in this layout.
+ *
+ * `position: sticky` resolves against the NEAREST scrolling ancestor. The body
+ * cells have two: the rowgroup below, which owns `overflow-auto` so the
+ * virtualiser can scroll vertically, and the wrapper above it, which owns the
+ * horizontal pan. The rowgroup is nearer and never scrolls horizontally, so a
+ * `left-0` cell inside it has nothing to stick to and pans away with the row.
+ * Measured: with the wrapper scrolled 300px, a header cell held at offset 0
+ * while a body cell moved to -239.
+ *
+ * Freezing the column needs ONE scrollport owning both axes, which means moving
+ * the header inside the virtualiser's scroll element and making it `sticky
+ * top-0` there. That reshapes a virtualised treegrid carrying a roving tabindex
+ * and an axe-verified role tree, so it belongs in its own change with its own
+ * keyboard pass — not bolted onto a batch.
+ */
 
 type SortCol = IdentitySort['id'];
 
@@ -98,6 +118,30 @@ function SourceDetail({ identity }: { identity: Identity }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The cross-cloud finding, stated in the row.
+ *
+ * Spanning several providers is the correlation the product exists to do, and it
+ * previously read only as the grey "+N" in the Source cell — visually
+ * indistinguishable from a "list truncated" affordance. Stating the span count
+ * in the identity cell makes it a finding: it carries the info tone (notable,
+ * not risk — the palette reserves warn/critical for risk, and the brand green
+ * already means "selected" on this screen), and it sits beside the name rather
+ * than in the Source cell, so it reads as a property of the identity.
+ *
+ * Gated on the DISTINCT provider count rather than `identity.correlated`, so the
+ * badge can never claim a span of one.
+ */
+function CrossCloudBadge({ sources }: { sources: SourceInstance[] }) {
+  const spanned = spannedClouds(sources).length;
+  if (spanned < 2) return null;
+  return (
+    <span className="tnum shrink-0 rounded-[var(--r-xs)] bg-info-bg px-1.5 text-[length:var(--fs-micro)] font-medium text-info-fg">
+      {pluralize(spanned, 'cloud')}
+    </span>
   );
 }
 
@@ -342,8 +386,19 @@ export function IdentityTable({
                     onOpen(identity.id);
                   }}
                   className={cn(
-                    'grid cursor-pointer items-center gap-2 border-b border-border px-3 outline-none',
-                    'hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent',
+                    // `relative` + an explicit background: the frozen cells below
+                    // inherit this background, and the hover shadow needs a
+                    // stacking context to paint over the neighbouring rows.
+                    'relative grid cursor-pointer items-center gap-2 border-b border-border bg-surface px-3 outline-none',
+                    'focus-visible:bg-surface-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent',
+                    // A lift rather than a flat background swap. Shadow does the
+                    // work; the 1px offset is motion-safe only, and neither changes
+                    // the row's height — the virtualiser positions rows absolutely
+                    // and assumes every one is the same size.
+                    'transition-[background-color,box-shadow] duration-[var(--dur-1)]',
+                    'hover:z-[var(--z-raised)] hover:bg-surface-hover',
+                    'hover:shadow-[0_-1px_0_var(--border-strong),0_2px_6px_rgba(0,0,0,0.35)]',
+                    'motion-safe:hover:-translate-y-px',
                     isSelected && 'bg-accent-tint/40',
                   )}
                   style={{ gridTemplateColumns: GRID, paddingBlock: 'var(--row-py)' }}
@@ -388,6 +443,7 @@ export function IdentityTable({
                         </span>
                       </Tooltip>
                     )}
+                    <CrossCloudBadge sources={identity.sources} />
                   </div>
                   {/* type */}
                   <div role="gridcell" className="flex min-w-0 items-center gap-1.5 text-[length:var(--fs-small)] text-text-secondary">

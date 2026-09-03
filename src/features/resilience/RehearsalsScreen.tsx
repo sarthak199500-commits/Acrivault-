@@ -1,6 +1,7 @@
 import { ShieldCheck, Timer } from 'lucide-react';
 import { useRehearsals } from './queries';
 import type { RecoveryRehearsal } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -30,8 +31,7 @@ export function RehearsalsScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="Resilience · Wave 2 concept"
-        title="Recovery Rehearsals"
+        {...screenHeaderProps('/resilience/rehearsals')}
         description="How quickly the organization can get back to a usable state after a credential compromise."
         actions={<Badge tone="neutral">Concept</Badge>}
       />

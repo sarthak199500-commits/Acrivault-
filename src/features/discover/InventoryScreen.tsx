@@ -11,6 +11,7 @@ import type { IdentityListResult } from '@/mocks/api';
 import { useUiStore } from '@/stores/ui';
 import { useCan } from '@/components/ui/Can';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { KpiTile } from '@/components/ui/KpiTile';
@@ -20,7 +21,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { count, pluralize, relativeTime } from '@/lib/format';
-import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS } from '@/mocks/types';
+import { downloadFile, fileStamp, tenantLabel, toCsv, utcStamp } from '@/lib/csv';
+import { useActorEmail } from '@/lib/user';
+import { getDataset } from '@/mocks/dataset';
+import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS, type Identity } from '@/mocks/types';
 import { bandMeta } from '@/lib/risk';
 import { PROVIDER_LABEL } from '@/components/ui/ProviderBadge';
 import { toast } from '@/stores/toast';
@@ -74,6 +78,28 @@ function InventoryKpis() {
         delta={-0.8}
         deltaLabel="pts"
         deltaInverted
+        info={
+          <div className="space-y-2 text-[length:var(--fs-small)] text-text-secondary">
+            <p className="font-medium text-text">How privilege drift is measured</p>
+            <p>
+              <span className="tnum text-accent-text">{count(d.governanceDrift)}</span> identities
+              whose governance state is <span className="font-mono">drift</span>, over{' '}
+              <span className="tnum text-accent-text">{count(d.total)}</span> correlated identities
+              in scope.
+            </p>
+            <p>
+              Drift means an identity’s effective permissions no longer match the baseline its
+              governing policy set.
+            </p>
+            {/* ASSUMPTION: this wording is written to the shape of FRS §6, not derived
+                from it. Drift derivation is Architect-owned and the sentence is pending
+                confirmation. The UI displays the value and never computes it. */}
+            <p className="border-t border-border pt-2 text-text-tertiary">
+              Derivation is upstream (FRS §6). This surface displays the value; it never computes
+              it.
+            </p>
+          </div>
+        }
       />
       {/* Reads from the shared sync timestamp rather than a hardcoded string, so it
           cannot disagree with the dashboard's "as of" stamp. */}
@@ -84,15 +110,31 @@ function InventoryKpis() {
 
 function BulkBar({
   selected,
+  rows,
+  activeFilters,
   onClear,
 }: {
   selected: Set<string>;
+  /**
+   * The rows currently in view. The export writes the identities themselves, not
+   * their ids, and the whole point of the file is that it can be read without
+   * the console — so the values have to come from somewhere.
+   */
+  rows: Identity[];
+  /**
+   * Labels for the filters that produced `rows`. An evidence file that omits
+   * the filter its rows were drawn under invites exactly the "these numbers
+   * don't reconcile" challenge the manifest exists to answer: 20 identities
+   * with no record that the view was narrowed to Critical is unfalsifiable.
+   */
+  activeFilters: string[];
   onClear: () => void;
 }) {
   const canRotate = useCan('rotate.request');
   const canExport = useCan('export');
   const n = selected.size;
   const rotate = useRequestRotations();
+  const actorEmail = useActorEmail();
 
   const requestRotation = () => {
     rotate.mutate([...selected], {
@@ -107,7 +149,55 @@ function BulkBar({
     });
   };
   const exportSelected = () => {
-    toast(`Exported ${count(n)} ${n === 1 ? 'identity' : 'identities'}`, { description: 'Synthetic CSV export.' });
+    const chosen = rows.filter((r) => selected.has(r.id));
+    const at = new Date();
+    const csv = toCsv(
+      [
+        'id',
+        'name',
+        'type',
+        'clouds',
+        'risk_score',
+        'risk_band',
+        'status',
+        'owner',
+        'last_seen_utc',
+      ],
+      chosen.map((r) => [
+        r.id,
+        r.name,
+        NHI_TYPE_LABELS[r.type],
+        // One correlated identity spans several clouds; a single-cloud column
+        // would misreport exactly the identities that matter most.
+        [...new Set(r.sources.map((s) => s.cloud))].join(' '),
+        r.riskScore,
+        r.riskBand,
+        r.status,
+        r.owner ?? '',
+        r.lastSeen,
+      ]),
+      {
+        tenant: tenantLabel(getDataset().tenant.name),
+        actor: actorEmail,
+        generatedAt: utcStamp(at),
+        // Both facts, because either alone misleads: the rows were picked by
+        // hand (so the set is not reproducible from the filter), AND they were
+        // picked out of an already-narrowed view (so the filter is part of why
+        // these identities and not others are in the file).
+        filter:
+          activeFilters.length > 0
+            ? `hand-picked selection from a view filtered by ${activeFilters.join(', ')}`
+            : 'hand-picked selection from the unfiltered inventory',
+        rows: chosen.length,
+        // The population is the view the rows were picked from, not the tenant:
+        // "3 of 20" against the filter line above is the whole provenance.
+        of: rows.length,
+      },
+    );
+    downloadFile(`acrivault-identities-${fileStamp(at)}.csv`, csv);
+    toast(`Exported ${count(chosen.length)} ${chosen.length === 1 ? 'identity' : 'identities'}`, {
+      description: 'CSV file downloaded.',
+    });
   };
 
   return (
@@ -189,6 +279,10 @@ export function InventoryScreen() {
     ...(f.statuses ?? []).map((s) => IDENTITY_STATUS_LABELS[s]),
     ...(f.orphanedOnly ? ['Orphaned'] : []),
     ...(f.conflictsOnly ? ['Conflicts'] : []),
+    // Also feeds the CSV export's filter manifest, so a new flag that is not
+    // listed here would let an evidence file under-report the narrowing that
+    // chose its rows.
+    ...(f.crossCloudOnly ? ['Cross-cloud'] : []),
     ...(f.search ? [`“${f.search}”`] : []),
   ];
   const filterSummary =
@@ -210,8 +304,7 @@ export function InventoryScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow="See · Discover"
-        title="Identity Inventory"
+        {...screenHeaderProps('/discover')}
         description="Every correlated non-human identity. Filter, sort, and expand a row to inspect its source instances."
         actions={
           // The unfiltered "N identities" count is removed — it duplicated the
@@ -235,7 +328,14 @@ export function InventoryScreen() {
         <InventoryFilters filters={filters} counts={data?.counts} />
 
         {selected.size > 0 && filters.view === 'table' && (
-          <BulkBar selected={selected} onClear={() => setSelected(new Set())} />
+          <BulkBar
+            selected={selected}
+            rows={data?.rows ?? []}
+            // The full label list, not the truncated `filterSummary` the header
+            // shows: a manifest that says "+3" records nothing.
+            activeFilters={activeLabels}
+            onClear={() => setSelected(new Set())}
+          />
         )}
 
         <QueryBoundary

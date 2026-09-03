@@ -56,6 +56,21 @@ export interface AttributeConflict {
 
 export type GovernanceStatus = 'governed' | 'ungoverned' | 'drift';
 
+/**
+ * What put an identity into quarantine. The state is reachable three ways — a
+ * Govern policy action, an admin acting from the identity panel, and a session
+ * review — and a terminal state with no named producer is not auditable.
+ */
+export type QuarantineSource =
+  | { kind: 'policy'; policyId: string }
+  | { kind: 'user'; userId: string }
+  | { kind: 'session'; sessionId: string };
+
+export interface QuarantineRecord {
+  at: string;
+  by: QuarantineSource;
+}
+
 export interface Identity {
   id: string;
   name: string;
@@ -69,11 +84,31 @@ export interface Identity {
   riskBand: RiskBand; // derived from score, display mapping
   governanceStatus: GovernanceStatus; // derived
   status: IdentityStatus; // lifecycle state (derived) // ASSUMPTION: derived upstream
+  /** Present only while `status` is 'quarantined'. */
+  quarantine?: QuarantineRecord;
   owner?: string;
   relationships: { identityId: string; kind: string }[];
   riskSeries: { t: string; score: number }[]; // for the per-identity timeline
   createdAt: string;
   lastSeen: string;
+}
+
+/**
+ * The DISTINCT providers an identity was correlated from.
+ *
+ * `Identity.correlated` only says there is more than one source instance, and
+ * two instances inside one provider are a dedupe result, not a cross-cloud
+ * finding. Everything that claims a span — the Cross-cloud filter, its facet
+ * count, and the per-row badge — reads this one predicate, so the badge can
+ * never print "1 clouds" on a row the filter admitted.
+ */
+export function spannedClouds(sources: SourceInstance[]): Cloud[] {
+  return [...new Set(sources.map((s) => s.cloud))];
+}
+
+/** True when an identity's sources span more than one provider. */
+export function isCrossCloud(identity: Pick<Identity, 'sources'>): boolean {
+  return spannedClouds(identity.sources).length > 1;
 }
 
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
@@ -370,11 +405,189 @@ export interface MonitoringBaseline {
   windowDays: number;
 }
 
+/* ------------------------------------------------------------------ approvals */
+
+export type ApprovalStatus = 'pending' | 'approved' | 'declined';
+
+/**
+ * A proposed quarantine waiting on a second pair of hands.
+ *
+ * This is the ONE action Wave 1's permission model splits into propose and
+ * execute: an Analyst holds `session.quarantineRecommend` and a Security Admin
+ * and above holds `session.quarantine` (lib/permissions.ts). The queue exists to
+ * make that split visible — a recommendation used to write an audit line saying
+ * "Awaiting an admin decision" and then go nowhere a human could find.
+ *
+ * There is deliberately NO `kind` discriminant. Rotation looks like the obvious
+ * second member and is not one: `rotate.request` is held by the Analyst and
+ * WITHHELD from the Security Admin (permissions.ts EXCEPTION 2), so no role can
+ * both propose and receive a rotation proposal, and `requestRotation` in api.ts
+ * creates the job outright with no propose/execute split to surface. A
+ * single-member union would put a column of one repeated value on the screen and
+ * a one-entry Record behind it — machinery with no payer, and a claim that the
+ * product has a general approvals mechanism when it has exactly one gated action.
+ *
+ * // ASSUMPTION: the audit finding reads "every state-changing action requires
+ * // approval by design". The FRS does not say that, and universal two-person
+ * // control is a new REQUIREMENT rather than a missing UI. Widening this beyond
+ * // quarantine — which actions, which approver ranks, what happens to an action
+ * // whose approver is the only person who can perform it — is Architect-owned.
+ * // Until that lands, the type models one action and the screen's empty state
+ * // says so outright.
+ */
+export interface ApprovalRequest {
+  id: string;
+  /** The identity a containment is proposed for. */
+  identityId: string;
+  /** The proposing user's id, resolved to a name and role only on read. */
+  requestedBy: string;
+  requestedAt: string;
+  /** The requester's own words. Optional — the audit trail records it either way. */
+  reason?: string;
+  /**
+   * The session that evidenced the proposal, when it was raised from a replay.
+   * Carried on the request rather than only stamped on the session so the
+   * approver can reach the evidence from the queue, and so a decision can find
+   * the session whose "awaiting a decision" marker it has just answered.
+   */
+  fromSessionId?: string;
+  status: ApprovalStatus;
+  /**
+   * Who decided, and when. Nested so the two can never disagree, and absent
+   * exactly while `status` is 'pending' — the same status/record pairing
+   * `Identity.status === 'quarantined'` has with `Identity.quarantine`.
+   * Asserted in approvals.test.ts so the invariant is not left to convention.
+   */
+  decided?: { by: string; at: string };
+}
+
+export const AUDIT_OBJECTS = ['identity', 'session', 'policy', 'user', 'cloud', 'tenant'] as const;
+export type AuditObject = (typeof AUDIT_OBJECTS)[number];
+
+/**
+ * Every action the product writes to the log, as a closed set.
+ *
+ * A union rather than a string: ACTION_OBJECT below is a Record over it, so the
+ * compiler refuses a new action nobody has classified. That is what stops the
+ * object filter silently under-reporting — an unclassified action would land in
+ * no bucket and simply vanish from a filtered view.
+ *
+ * Derived from every `appendAudit()` call site in api.ts plus the seeded action
+ * tuples in generators.ts. `requested rotation` and `executed emergency
+ * rotation` are seed-only today; the live rotation path does not yet write the
+ * log, which is why they appear here but not in api.ts.
+ */
+export const AUDIT_ACTIONS = [
+  'acknowledged alert',
+  'resolved alert',
+  'assigned owner',
+  'requested rotation',
+  'executed emergency rotation',
+  'quarantined agent',
+  'recommended agent quarantine',
+  'approved quarantine request',
+  'declined quarantine request',
+  'released agent from quarantine',
+  'reviewed agent session',
+  'confirmed held step',
+  'overrode held step',
+  'tested policy',
+  'activated policy',
+  'reactivated policy',
+  'suspended policy',
+  'archived policy',
+  'edited user',
+  'deleted user',
+  'suspended user',
+  'reactivated user',
+  'changed user role',
+  'assigned role',
+  'synced users from Entra',
+  'connected cloud',
+  'updated SSO config',
+  'saved SAML configuration',
+  'tested SAML sign-in',
+  'issued SCIM token',
+  'enabled password sign-in',
+  'disabled password sign-in',
+  'updated session policy',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+/**
+ * What kind of thing each action acts on. Exhaustive by construction.
+ *
+ * The held-step decisions and the session review classify as `session` even
+ * though their target names an identity: the reader filtering for sessions is
+ * looking for what happened inside a session, not for the agent's own record.
+ */
+export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
+  'acknowledged alert': 'identity',
+  'resolved alert': 'identity',
+  'assigned owner': 'identity',
+  'requested rotation': 'identity',
+  'executed emergency rotation': 'identity',
+  'quarantined agent': 'identity',
+  'recommended agent quarantine': 'identity',
+  // Both decisions file under `identity`, not `session`: unlike the held-step
+  // decisions below, what an approval decides is whether the AGENT is contained.
+  // A reader filtering for identity changes has to see the authorization next to
+  // the containment it authorized, or the containment reads as unilateral.
+  'approved quarantine request': 'identity',
+  'declined quarantine request': 'identity',
+  'released agent from quarantine': 'identity',
+  'reviewed agent session': 'session',
+  'confirmed held step': 'session',
+  'overrode held step': 'session',
+  'tested policy': 'policy',
+  'activated policy': 'policy',
+  'reactivated policy': 'policy',
+  'suspended policy': 'policy',
+  'archived policy': 'policy',
+  'edited user': 'user',
+  'deleted user': 'user',
+  'suspended user': 'user',
+  'reactivated user': 'user',
+  'changed user role': 'user',
+  'assigned role': 'user',
+  'synced users from Entra': 'user',
+  'connected cloud': 'cloud',
+  'updated SSO config': 'tenant',
+  'saved SAML configuration': 'tenant',
+  'tested SAML sign-in': 'tenant',
+  'issued SCIM token': 'tenant',
+  'enabled password sign-in': 'tenant',
+  'disabled password sign-in': 'tenant',
+  'updated session policy': 'tenant',
+};
+
+export const AUDIT_OBJECT_LABELS: Record<AuditObject, string> = {
+  identity: 'Identity',
+  session: 'Session',
+  policy: 'Policy',
+  user: 'User',
+  cloud: 'Cloud',
+  tenant: 'Tenant',
+};
+
+/**
+ * How long entries are retained before archival.
+ *
+ * Signed off at 12 months (3 Sep 2026). It reached the UI as a placeholder and
+ * was confirmed as the tenant's policy — the Audit Log banner states it to
+ * readers, so it is a commitment, not a description. Nothing here enforces it:
+ * retention is upstream, and this constant is only the claim the product makes.
+ * Changing the policy means changing this one string; every surface follows.
+ */
+export const AUDIT_RETENTION_LABEL = '12 months';
+
 export interface AuditEntry {
   id: string;
   at: string;
   actor: string;
-  action: string;
+  action: AuditAction;
+  /** What kind of thing the action acted on. Derived from `action`. */
+  object: AuditObject;
   target: string;
   detail?: string;
 } // append-only
@@ -392,6 +605,27 @@ export interface CloudConnection {
   cloud: Cloud;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   counts?: Record<NhiType, number>;
+  /** ISO timestamp of this source's last SUCCESSFUL sync. Absent if never synced. */
+  lastSyncAt?: string;
+  /** Present only while `status` is 'error'. */
+  error?: { code: string; message: string; since: string };
+}
+
+/** A connection's reported instances summed across every NHI type. Absent counts read as 0. */
+export function totalFor(connection: CloudConnection): number {
+  return connection.counts ? Object.values(connection.counts).reduce((a, b) => a + b, 0) : 0;
+}
+
+/**
+ * Tenant-wide connector coverage for the persistent chrome indicator. A count of
+ * healthy sources plus the age of the OLDEST successful sync — never the newest,
+ * which is what would let a partial dataset present itself as fresh.
+ */
+export interface SourceHealth {
+  healthy: number;
+  total: number;
+  oldestSyncAt?: string;
+  degraded: Cloud[];
 }
 
 /* --------------------------------------------------- users, tenants, groups */
@@ -450,6 +684,22 @@ export interface ScimConfig {
   usersReceived: number;
 }
 
+/**
+ * Tenant session and step-up policy.
+ *
+ * `mfaByRole` is deliberately absent: MFA requirement per role presupposes a
+ * finalised permission matrix, which is still open, so the surface states the
+ * intended policy read-only rather than letting an admin save one the
+ * enforcement layer cannot honour.
+ * // ASSUMPTION: enforcement is upstream; this records the policy, never applies it.
+ */
+export interface SessionPolicy {
+  idleTimeoutMinutes: number;
+  absoluteSessionHours: number;
+  /** Re-authenticate before a sensitive action — distinct from merely confirming it. */
+  stepUpOnSensitive: boolean;
+}
+
 export interface Tenant {
   id: string;
   name: string;
@@ -460,6 +710,7 @@ export interface Tenant {
   scim: ScimConfig;
   /** Password sign-in for accounts Entra does not manage. The way back in. */
   passwordFallback: boolean;
+  sessionPolicy: SessionPolicy;
   createdAt: string;
 }
 

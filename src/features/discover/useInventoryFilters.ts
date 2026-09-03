@@ -12,6 +12,14 @@ function parseList<T extends string>(raw: string | null): T[] {
 }
 
 /**
+ * Every URL key the filter owns. Listed once because `applyFilter` and
+ * `clearAll` both have to wipe the whole set: two hand-maintained copies drift,
+ * and a key missing from one of them leaves a filter silently stuck on — a
+ * "Clear" that doesn't clear is worse than no Clear.
+ */
+const FILTER_KEYS = ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts', 'crosscloud'];
+
+/**
  * Inventory filter + sort state, kept in the URL so dashboard drill-downs,
  * shareable links, and saved views all work. The URL is the single source of truth.
  */
@@ -28,6 +36,7 @@ export function useInventoryFilters() {
       statuses: parseList<IdentityStatus>(params.get('status')),
       orphanedOnly: params.get('orphaned') === '1',
       conflictsOnly: params.get('conflicts') === '1',
+      crossCloudOnly: params.get('crosscloud') === '1',
     };
     return f;
   }, [params]);
@@ -104,7 +113,7 @@ export function useInventoryFilters() {
   const applyFilter = useCallback(
     (next: IdentityFilter) =>
       update((n) => {
-        ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts'].forEach((k) => n.delete(k));
+        FILTER_KEYS.forEach((k) => n.delete(k));
         if (next.search) n.set('q', next.search);
         if (next.types?.length) n.set('type', next.types.join(','));
         if (next.bands?.length) n.set('band', next.bands.join(','));
@@ -113,12 +122,13 @@ export function useInventoryFilters() {
         if (next.statuses?.length) n.set('status', next.statuses.join(','));
         if (next.orphanedOnly) n.set('orphaned', '1');
         if (next.conflictsOnly) n.set('conflicts', '1');
+        if (next.crossCloudOnly) n.set('crosscloud', '1');
       }),
     [update],
   );
 
   const clearAll = useCallback(
-    () => update((n) => ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts'].forEach((k) => n.delete(k))),
+    () => update((n) => FILTER_KEYS.forEach((k) => n.delete(k))),
     [update],
   );
 
@@ -130,7 +140,8 @@ export function useInventoryFilters() {
     (filter.governance?.length ?? 0) +
     (filter.statuses?.length ?? 0) +
     (filter.orphanedOnly ? 1 : 0) +
-    (filter.conflictsOnly ? 1 : 0);
+    (filter.conflictsOnly ? 1 : 0) +
+    (filter.crossCloudOnly ? 1 : 0);
 
   return {
     filter,
@@ -145,6 +156,7 @@ export function useInventoryFilters() {
     toggleStatus: (s: IdentityStatus) => toggleInList('status', s),
     toggleOrphaned: () => toggleFlag('orphaned'),
     toggleConflicts: () => toggleFlag('conflicts'),
+    toggleCrossCloud: () => toggleFlag('crosscloud'),
     setSort,
     applyFilter,
     clearAll,

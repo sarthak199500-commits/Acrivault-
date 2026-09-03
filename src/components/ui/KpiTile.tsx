@@ -1,8 +1,9 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, ArrowUpRight } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Info } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { count } from '@/lib/format';
+import { Popover, PopoverContent, PopoverTrigger } from './Popover';
 import { Sparkline } from './Sparkline';
 
 export interface KpiTileProps {
@@ -17,6 +18,12 @@ export interface KpiTileProps {
    * of a whole. Not a trend: no arrow, no favourable/unfavourable colour.
    */
   caption?: ReactNode;
+  /**
+   * Methodology behind a derived figure, shown in a popover from the tile's icon
+   * chip. Any tile printing a computed percentage should carry one — an
+   * unexplained percentage is the first thing challenged in a security review.
+   */
+  info?: ReactNode;
   /** When true, an upward delta is unfavorable (warn) and down is good — for "lower is better" metrics. */
   deltaInverted?: boolean;
   sparkline?: number[];
@@ -39,6 +46,7 @@ export function KpiTile({
   delta,
   deltaLabel,
   caption,
+  info,
   deltaInverted = false,
   sparkline,
   icon,
@@ -67,23 +75,26 @@ export function KpiTile({
       ? `, ${deltaDir === 'up' ? 'up' : 'down'} ${Math.abs(delta)}${deltaLabel ? ` ${deltaLabel}` : ''}`
       : '';
 
+  const chipClass = cn(
+    'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-sm)]',
+    // Theme split lives in the --chip-* tokens: calm muted chips on
+    // dark, solid brand/critical fills with a white glyph on light.
+    risk
+      ? 'bg-chip-risk text-chip-risk-fg'
+      : prominent
+        ? 'bg-chip-prominent text-chip-prominent-fg'
+        : 'bg-chip text-chip-fg',
+  );
+
   const body = (
     <>
       <div className="flex items-start justify-between gap-2">
         <span className="text-[length:var(--fs-small)] text-text-secondary">{label}</span>
         {icon ? (
-          <span
-            className={cn(
-              'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--r-sm)]',
-              // Theme split lives in the --chip-* tokens: calm muted chips on
-              // dark, solid brand/critical fills with a white glyph on light.
-              risk
-                ? 'bg-chip-risk text-chip-risk-fg'
-                : prominent
-                  ? 'bg-chip-prominent text-chip-prominent-fg'
-                  : 'bg-chip text-chip-fg',
-            )}
-          >
+          // With `info`, this chip is only a placeholder holding the slot open:
+          // the real control is a button rendered OUTSIDE the tile's link, since
+          // a button inside a link is an invalid nested interactive.
+          <span className={cn(chipClass, info && 'invisible')} aria-hidden={info ? true : undefined}>
             {icon}
           </span>
         ) : (
@@ -153,12 +164,41 @@ export function KpiTile({
     to && 'hover:border-border-strong focus-visible:border-accent hover:bg-surface-hover-brand',
   );
 
-  if (to) {
-    return (
-      <Link to={to} className={baseClass} aria-label={`${label}: ${valueAria}${trendAria}. View details.`}>
-        {body}
-      </Link>
-    );
-  }
-  return <div className={baseClass}>{body}</div>;
+  const tile = to ? (
+    <Link to={to} className={baseClass} aria-label={`${label}: ${valueAria}${trendAria}. View details.`}>
+      {body}
+    </Link>
+  ) : (
+    <div className={baseClass}>{body}</div>
+  );
+
+  if (!info) return tile;
+
+  return (
+    <div className="relative h-full">
+      {tile}
+      {/* Sits exactly over the placeholder chip in `body`. Kept a sibling of the
+          tile rather than a child so the drill-down link and the methodology
+          control never nest. `top-4 right-4` mirrors the tile's own p-4. */}
+      <div className="absolute right-4 top-4">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`How ${label} is measured`}
+              className={cn(
+                chipClass,
+                'outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent)_35%,transparent)]',
+              )}
+            >
+              <Info className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" ariaLabel={`How ${label} is measured`} className="w-72">
+            {info}
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
 }

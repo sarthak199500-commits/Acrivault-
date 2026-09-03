@@ -231,6 +231,7 @@ describe('archiveRecords', () => {
     at: '2026-06-01T09:00:00.000Z',
     actor: 'alex.kim@acme.com',
     action: 'archived policy',
+    object: 'policy',
     ...over,
   });
 

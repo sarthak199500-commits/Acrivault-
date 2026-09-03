@@ -24,6 +24,30 @@ describe('inventory filtering and sorting', () => {
     expect(conflicts.rows.every((r) => r.conflicts.length > 0)).toBe(true);
   });
 
+  it('cross-cloud filter narrows to identities spanning more than one cloud', async () => {
+    const res = await listIdentities({ filter: { crossCloudOnly: true }, limit: 100_000 });
+    expect(res.rows.length).toBeGreaterThan(0);
+    expect(res.rows.every((r) => r.correlated)).toBe(true);
+    // Not just `correlated`: the flag claims a span, so every row must actually
+    // report two or more DISTINCT providers. The row badge prints this number.
+    expect(res.rows.every((r) => new Set(r.sources.map((s) => s.cloud)).size > 1)).toBe(true);
+  });
+
+  it('cross-cloud facet count reconciles with the cross-cloud filter', async () => {
+    const all = await listIdentities({ limit: 1 });
+    const crossCloud = await listIdentities({ filter: { crossCloudOnly: true }, limit: 1 });
+    expect(crossCloud.total).toBe(all.counts.crossCloud);
+  });
+
+  it('cross-cloud facet count reflects other active filters', async () => {
+    const onlyAgents = await listIdentities({ filter: { types: ['ai-agent'] }, limit: 1 });
+    const crossCloudAgents = await listIdentities({
+      filter: { types: ['ai-agent'], crossCloudOnly: true },
+      limit: 1,
+    });
+    expect(onlyAgents.counts.crossCloud).toBe(crossCloudAgents.total);
+  });
+
   it('filters by status', async () => {
     const res = await listIdentities({ filter: { statuses: ['quarantined'] }, limit: 100_000 });
     expect(res.rows.every((r) => r.status === 'quarantined')).toBe(true);

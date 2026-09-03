@@ -7,8 +7,8 @@ import {
   listSessions,
   markSessionReviewed,
   quarantineAgent,
-  recommendQuarantine,
   releaseQuarantine,
+  requestApproval,
 } from './api';
 import { isFlaggedStep } from './types';
 import { useUiStore } from '@/stores/ui';
@@ -141,9 +141,11 @@ describe('session actions', () => {
     await expect(releaseQuarantine(target.identityId)).rejects.toThrow(/not quarantined/i);
   });
 
+  // Raising is now `requestApproval` — the recommendation creates a real pending
+  // request in Act > Approvals rather than only an audit line (see api.ts).
   it('records an analyst recommendation without containing the agent', async () => {
     const target = await pickActiveSession();
-    await recommendQuarantine(target.identityId, target.id);
+    await requestApproval({ identityId: target.identityId, fromSessionId: target.id });
 
     expect((await getIdentity(target.identityId))?.status).not.toBe('quarantined');
     expect((await listAudit())[0].action).toBe('recommended agent quarantine');

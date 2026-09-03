@@ -101,6 +101,18 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import('@/features/rotate/RotateScreen')).RotateScreen }),
       },
       {
+        path: 'act/quarantine',
+        lazy: async () => ({
+          Component: (await import('@/features/act/QuarantineScreen')).QuarantineScreen,
+        }),
+      },
+      {
+        path: 'act/approvals',
+        lazy: async () => ({
+          Component: (await import('@/features/act/ApprovalsScreen')).ApprovalsScreen,
+        }),
+      },
+      {
         path: 'rotate/:jobId',
         lazy: async () => ({ Component: (await import('@/features/rotate/RotationJobDetail')).RotationJobDetail }),
       },
@@ -116,6 +128,10 @@ export const router = createBrowserRouter([
       {
         path: 'settings/users',
         lazy: async () => ({ Component: (await import('@/features/admin/UsersScreen')).UsersScreen }),
+      },
+      {
+        path: 'settings/sources',
+        lazy: async () => ({ Component: (await import('@/features/platform/SourcesScreen')).SourcesScreen }),
       },
       {
         path: 'audit',

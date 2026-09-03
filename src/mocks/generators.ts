@@ -3,13 +3,16 @@
 // an // ASSUMPTION note; see the assumptions log in the README.
 
 import {
+  ACTION_OBJECT,
   CLOUDS,
   CLOUD_LABELS,
   NHI_TYPES,
   SSO_PROVIDER_LABELS,
   type AgentSession,
   type Alert,
+  type ApprovalRequest,
   type AttributeConflict,
+  type AuditAction,
   type AuditEntry,
   type Cloud,
   type CloudConnection,
@@ -32,6 +35,7 @@ import {
   type User,
 } from './types';
 import { riskBand } from '@/lib/risk';
+import { can } from '@/lib/permissions';
 import { generatedCode, matchesPolicy, plainEnglish } from './policy';
 
 /* ----------------------------------------------------------------- seeded RNG */
@@ -767,7 +771,7 @@ export function generateAudit(
   // never an internal id. A seeded row and a row the user just generated have to
   // be indistinguishable in kind, and an identity id is meaningless against a
   // role change or an SSO edit in any case.
-  const actions: ReadonlyArray<[string, () => string]> = [
+  const actions: ReadonlyArray<[AuditAction, () => string]> = [
     ['acknowledged alert', () => rng.pick(identities).name],
     ['resolved alert', () => rng.pick(identities).name],
     ['activated policy', () => rng.pick(policies).name],
@@ -796,6 +800,9 @@ export function generateAudit(
       at: new Date(at).toISOString(),
       actor: rng.pick(actors),
       action,
+      // Same derivation as the live appendAudit path, so a seeded row and a row
+      // the user just generated fall under the same object filter.
+      object: ACTION_OBJECT[action],
       target: target(),
       detail: rng.bool(0.4) ? 'Synthetic event for demonstration.' : undefined,
     });
@@ -823,7 +830,7 @@ export function generateNotifications(seed: number, now: Date): NotificationItem
   }));
 }
 
-export function generateConnections(identities: Identity[]): CloudConnection[] {
+export function generateConnections(identities: Identity[], now: Date): CloudConnection[] {
   const byCloud: Record<Cloud, Record<NhiType, number>> = {
     aws: emptyCounts(),
     gcp: emptyCounts(),
@@ -834,10 +841,13 @@ export function generateConnections(identities: Identity[]): CloudConnection[] {
       byCloud[source.cloud][identity.type] += 1;
     }
   }
+  // Staggered sync ages, so the coverage chip has a real oldest-sync to report.
+  const ageMinutes: Record<Cloud, number> = { aws: 6, gcp: 11, azure: 4 };
   return CLOUDS.map((cloud) => ({
     cloud,
     status: 'connected' as const,
     counts: byCloud[cloud],
+    lastSyncAt: new Date(now.getTime() - ageMinutes[cloud] * 60000).toISOString(),
   }));
 }
 
@@ -934,6 +944,7 @@ export function generateTenant(now: Date): Tenant {
       usersReceived: 11,
     },
     passwordFallback: true,
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: iso(now, 420 * DAY),
   };
 }
@@ -977,5 +988,250 @@ export function generateUsers(now: Date): User[] {
     { ...base, ...entra, id: 'usr_10', name: 'Jamie Fox', email: 'jamie.fox@acme.com', role: null, status: 'active', addedAt: iso(now, 3 * HOUR) },
     { ...base, ...entra, id: 'usr_11', name: 'Lea Brandt', email: 'lea.brandt@acme.com', role: 'viewer', status: 'suspended-idp', addedAt: iso(now, 150 * DAY), lastLogin: iso(now, 12 * DAY) },
   ];
+}
+
+/* ------------------------------------------------------- quarantine provenance */
+
+/**
+ * Attach a producer to every quarantined identity. Runs as a post-pass, called
+ * from `dataset.ts` after policies, users and sessions all exist — containment
+ * is decided in `makeIdentity` (an orphaned, high-risk identity, by dice roll)
+ * before any of the things that could have named it are built.
+ *
+ * Each candidate producer is constrained to one that could plausibly have done
+ * it, not picked uniformly at random:
+ *  - `policy`  — only an ACTIVE or SUSPENDED rule (matching
+ *    generatePolicyActions's own `enforcing` filter: a draft has never run,
+ *    a tested one hasn't gone live, and an archived one no longer applies)
+ *    whose OWN action is quarantine AND whose conditions actually match this
+ *    identity. No fallback to "any quarantine policy" — a rule that never
+ *    enforced, or doesn't match, could not have produced this, and naming
+ *    one anyway would be worse than naming none.
+ *  - `user`    — only an active account holding `session.quarantine`; a
+ *    suspended admin couldn't have acted, and Analysts can only recommend.
+ *  - `session` — only one of the IDENTITY'S OWN sessions, and only when it has
+ *    one (an agent). A session review cannot explain a service account's
+ *    containment, and linking to a stranger's session would be a broken story.
+ *
+ * The preferred kind cycles by index so the fixture demonstrates all three
+ * producers rather than whichever the dice favours, falling through to the
+ * next-preferred kind when this identity can't support it.
+ */
+export function attachQuarantineProvenance(
+  identities: Identity[],
+  policies: Policy[],
+  users: User[],
+  sessions: AgentSession[],
+  seed: number,
+  now: Date,
+): void {
+  const rng = new Rng(seed ^ 0x51a7e5);
+  const quarantined = identities.filter((i) => i.status === 'quarantined');
+  if (quarantined.length === 0) return;
+
+  // Only a policy that has actually enforced could have produced this --
+  // matches generatePolicyActions's own `enforcing` filter above.
+  const quarantinePolicies = policies.filter(
+    (p) =>
+      (p.status === 'active' || p.status === 'suspended') &&
+      p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'quarantine'),
+  );
+  const admins = users.filter(
+    (u) => u.status === 'active' && u.role !== null && can(u.role, 'session.quarantine'),
+  );
+  const sessionsByIdentity = new Map<string, AgentSession[]>();
+  for (const session of sessions) {
+    const list = sessionsByIdentity.get(session.identityId);
+    if (list) list.push(session);
+    else sessionsByIdentity.set(session.identityId, [session]);
+  }
+
+  const ORDERS: Record<number, readonly ('policy' | 'session' | 'user')[]> = {
+    0: ['policy', 'session', 'user'],
+    1: ['user', 'policy', 'session'],
+    2: ['session', 'user', 'policy'],
+  };
+
+  quarantined.forEach((identity, i) => {
+    const at = new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString();
+    const ownSessions = sessionsByIdentity.get(identity.id) ?? [];
+    // No fallback to "any quarantine policy": a policy whose own conditions do
+    // not match this identity could not have quarantined it, and naming one
+    // anyway is worse than naming none -- it reads as authoritative and isn't.
+    // The ORDERS loop below already falls through to the next kind when this
+    // is empty, same as it does for session.
+    const eligiblePolicies = quarantinePolicies.filter((p) => matchesPolicy(identity, p.tokens));
+
+    for (const kind of ORDERS[i % 3]) {
+      if (kind === 'session' && ownSessions.length > 0) {
+        identity.quarantine = { at, by: { kind: 'session', sessionId: rng.pick(ownSessions).id } };
+        return;
+      }
+      if (kind === 'policy' && eligiblePolicies.length > 0) {
+        identity.quarantine = { at, by: { kind: 'policy', policyId: rng.pick(eligiblePolicies).id } };
+        return;
+      }
+      if (kind === 'user' && admins.length > 0) {
+        identity.quarantine = { at, by: { kind: 'user', userId: rng.pick(admins).id } };
+        return;
+      }
+    }
+    // Every pool this identity was eligible for was empty (a degenerate fixture,
+    // e.g. no users at all) — name whoever exists rather than leave it silent.
+    identity.quarantine = { at, by: { kind: 'user', userId: users[0]?.id ?? 'usr_0' } };
+  });
+
+  promoteSessionReviewCandidate(identities, quarantined, sessionsByIdentity, rng, now);
+}
+
+/**
+ * Categorically different work from the main loop above: that loop attaches a
+ * producer to identities ALREADY decided to be quarantined; this one decides
+ * to quarantine one that wasn't.
+ *
+ * At the default seed/size, containment (`makeIdentity`'s dice roll) never lands
+ * on an ai-agent, so `session` never gets a legitimate candidate in the main
+ * loop -- a session review can only explain the agent whose session it is, and
+ * no quarantined identity has any. Rather than loosen that rule (linking a
+ * service account's containment to a stranger's session would be a broken
+ * story), this promotes one real ai-agent that already has a session of its
+ * own, so the fixture -- and the screen it feeds -- demonstrates all three paths.
+ */
+function promoteSessionReviewCandidate(
+  identities: Identity[],
+  quarantined: Identity[],
+  sessionsByIdentity: Map<string, AgentSession[]>,
+  rng: Rng,
+  now: Date,
+): void {
+  const hasSessionProducer = quarantined.some((i) => i.quarantine?.by.kind === 'session');
+  if (hasSessionProducer) return;
+
+  // Restricted to ACTIVE candidates (not merely "not already quarantined"):
+  // an inactive identity's `lastSeen` is weeks stale by definition, and flipping
+  // it straight to quarantined would claim it was contained days ago while its
+  // own lastSeen says it hadn't been seen in a month. An active one needs no
+  // such reconciling.
+  const candidates = identities.flatMap((i) => {
+    if (i.type !== 'ai-agent' || i.status !== 'active') return [];
+    const own = sessionsByIdentity.get(i.id);
+    return own && own.length > 0 ? [[i, own] as const] : [];
+  });
+  if (candidates.length === 0) return;
+
+  const [promoted, ownSessions] = rng.pick(candidates);
+  // Containment (`makeIdentity`, above) is `orphaned && riskScore >= 70` --
+  // every naturally-quarantined identity satisfies it, so a promoted one must
+  // too, or it becomes the one contained identity in the dataset that isn't a
+  // high-risk orphan. Reachable in the UI: IdentityDetailPanel renders the
+  // Orphaned badge and RiskPill straight off these fields.
+  promoted.orphaned = true;
+  promoted.orphanReason = rng.pick([
+    'No owner assigned',
+    'No legitimate use in 90 days',
+    'Creator account deactivated',
+  ]);
+  // Orphans are capped below the critical threshold elsewhere in this file
+  // (see makeIdentity) -- matched here rather than reaching for 80-100.
+  promoted.riskScore = rng.int(70, 79);
+  // Never hand-write the band: derive it the same way makeIdentity does, so a
+  // future change to the band thresholds can't leave this fixture behind.
+  promoted.riskBand = riskBand(promoted.riskScore).band;
+  promoted.status = 'quarantined';
+  promoted.quarantine = {
+    at: new Date(now.getTime() - rng.int(1, 240) * 3600000).toISOString(),
+    by: { kind: 'session', sessionId: rng.pick(ownSessions).id },
+  };
+}
+
+/* ------------------------------------------------------------------ approvals */
+
+/** How many pending requests the queue is seeded with. Enough to read as a queue. */
+const SEEDED_APPROVALS = 3;
+
+/**
+ * A pending propose-and-approve queue, so Act > Approvals and its rail count are
+ * non-empty on first load rather than demonstrating the guarantee with an empty
+ * table.
+ *
+ * Both ends of every row have to be coherent, the same rule
+ * attachQuarantineProvenance above is built around:
+ *
+ *  - REQUESTER — an ACTIVE user actually holding `session.quarantineRecommend`.
+ *    Read off the permission matrix rather than hardcoding 'analyst', so the two
+ *    cannot drift: Security Admin holds it too, and if the matrix ever moves the
+ *    capability the fixture follows. A suspended account could not have raised
+ *    anything, and a role without the capability could not have either.
+ *
+ *  - TARGET — an ACTIVE, orphaned identity scoring at or above the containment
+ *    threshold. `makeIdentity` contains only `orphaned && riskScore >= 70` and
+ *    only a quarter of those, so uncontained high-risk orphans are exactly the
+ *    population an analyst is left looking at. Already-quarantined identities are
+ *    excluded because there is nothing left to propose for them, and low-risk or
+ *    owned ones because the reason on the row would then be a fabrication.
+ *
+ *  - REASON — derived from the identity's OWN `orphanReason`, not picked from a
+ *    pool. A row that says "no accountable owner" about an identity that has one
+ *    is the kind of detail that reads as authoritative and isn't.
+ *
+ * Returns fewer rows (or none) rather than relaxing any of the above: a
+ * degenerate fixture should show an honest empty queue, not an incoherent one.
+ */
+export function generateApprovals(
+  identities: Identity[],
+  users: User[],
+  seed: number,
+  now: Date,
+): ApprovalRequest[] {
+  const rng = new Rng(seed ^ 0x0a99a1);
+  const proposers = users.filter(
+    (u) => u.status === 'active' && u.role !== null && can(u.role, 'session.quarantineRecommend'),
+  );
+  if (proposers.length === 0) return [];
+
+  const candidates = identities.filter(
+    (i) => i.status === 'active' && i.orphaned && i.riskScore >= 70,
+  );
+
+  // Spread across the population rather than taking the first N: consecutive ids
+  // would put three near-identical neighbours on screen and imply the queue only
+  // ever sees the low end of the inventory.
+  const stride = Math.max(1, Math.floor(candidates.length / SEEDED_APPROVALS));
+  const targets = Array.from({ length: SEEDED_APPROVALS }, (_, i) => candidates[i * stride]).filter(
+    (i): i is Identity => Boolean(i),
+  );
+
+  return targets.map((identity, i) => ({
+    id: `apr_${i.toString(36).padStart(4, '0')}`,
+    identityId: identity.id,
+    // Cycled, not random: with two seeded Analysts a random pick can land on one
+    // of them three times and the screen stops showing that requesters differ.
+    requestedBy: proposers[i % proposers.length].id,
+    // Minutes apart and all within the hour, so the queue reads as live work
+    // rather than a backlog nobody has looked at.
+    requestedAt: new Date(now.getTime() - rng.int(4, 20) * (i + 1) * 60000).toISOString(),
+    reason: approvalReason(identity),
+    status: 'pending' as const,
+  }));
+}
+
+/**
+ * The requester's stated case, in their voice, derived from the identity's own
+ * facts. `orphanReason` is set for every orphan (see makeIdentity), and the
+ * generator only ever targets orphans — the risk-only sentence is the honest
+ * fallback if that ever stops holding, not a second code path to maintain.
+ */
+function approvalReason(identity: Identity): string {
+  const risk = `Risk ${identity.riskScore} and no containment yet.`;
+  switch (identity.orphanReason) {
+    case 'No owner assigned':
+      return `Spans ${identity.sources.length === 1 ? 'one cloud' : `${identity.sources.length} clouds`} with no accountable owner. ${risk}`;
+    case 'No legitimate use in 90 days':
+      return `No legitimate use in 90 days, and it still holds live credentials. ${risk}`;
+    case 'Creator account deactivated':
+      return `The account that created it is gone, so nobody can vouch for it. ${risk}`;
+    default:
+      return risk;
+  }
 }
 

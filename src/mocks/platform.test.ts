@@ -42,11 +42,18 @@ describe('platform', () => {
     expect(updated.read).toBe(true);
   });
 
-  it('audit search filters by actor or action', async () => {
+  // Search covers target and detail as well as actor and action (point 42c):
+  // a user's trail is reachable only by their email, which lives in `target`.
+  it('audit search matches actor, action, target, or detail', async () => {
     const all = await listAudit();
     expect(all.length).toBeGreaterThan(0);
-    const filtered = await listAudit('system');
-    expect(filtered.every((e) => e.actor.includes('system') || e.action.includes('system'))).toBe(true);
+    const filtered = await listAudit({ search: 'system' });
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(
+      filtered.every((e) =>
+        `${e.actor} ${e.action} ${e.target} ${e.detail ?? ''}`.toLowerCase().includes('system'),
+      ),
+    ).toBe(true);
   });
 
   // An append-only trail is evidence (FRS §3.10): time may not appear to move

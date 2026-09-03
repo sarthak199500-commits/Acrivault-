@@ -7,6 +7,7 @@ import {
   type ScenarioConfig,
   type ScenarioState,
   type SignInMethod,
+  type SourceScenario,
 } from '@/mocks/scenarios';
 
 export type Theme = 'dark' | 'light';
@@ -35,6 +36,7 @@ interface UiState {
   setLatency: (ms: number) => void;
   setAuthScenario: (auth: AuthScenario) => void;
   setSignIn: (signIn: SignInMethod) => void;
+  setSources: (value: SourceScenario) => void;
   resetScenario: () => void;
 }
 
@@ -84,6 +86,7 @@ export const useUiStore = create<UiState>()(
       setLatency: (latencyMs) => set((s) => ({ scenario: { ...s.scenario, latencyMs } })),
       setAuthScenario: (auth) => set((s) => ({ scenario: { ...s.scenario, auth } })),
       setSignIn: (signIn) => set((s) => ({ scenario: { ...s.scenario, signIn } })),
+      setSources: (sources) => set((s) => ({ scenario: { ...s.scenario, sources } })),
       resetScenario: () => set({ scenario: DEFAULT_SCENARIO }),
     }),
     {

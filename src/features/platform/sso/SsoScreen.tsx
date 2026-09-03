@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -142,8 +143,7 @@ export function SsoScreen() {
   return (
     <div className="mx-auto max-w-3xl">
       <ScreenHeader
-        eyebrow="Platform · Single sign-on"
-        title="Single sign-on"
+        {...screenHeaderProps('/settings/sso')}
         description="Microsoft Entra ID signs your people in and sends them to Acrivault."
         actions={
           <Button

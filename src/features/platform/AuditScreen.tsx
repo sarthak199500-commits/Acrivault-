@@ -1,29 +1,144 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Download, Lock, ScrollText, Search } from 'lucide-react';
 import { useAudit } from './queries';
-import type { AuditEntry } from '@/mocks/types';
+import {
+  AUDIT_OBJECTS,
+  AUDIT_OBJECT_LABELS,
+  AUDIT_RETENTION_LABEL,
+  type AuditEntry,
+  type AuditObject,
+} from '@/mocks/types';
+import { getDataset } from '@/mocks/dataset';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Banner } from '@/components/ui/Banner';
 import { Button } from '@/components/ui/Button';
+import { FilterMenu } from '@/components/ui/FilterMenu';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { ScrollableTable } from '@/components/ui/ScrollableTable';
 import { useCan } from '@/components/ui/Can';
 import { toast } from '@/stores/toast';
-import { dateTime } from '@/lib/format';
+import { count, dateTime } from '@/lib/format';
+import { downloadFile, fileStamp, tenantLabel, toCsv, utcStamp } from '@/lib/csv';
+import { useActorEmail } from '@/lib/user';
+
+/**
+ * Relative windows rather than a date picker: every question an auditor brings
+ * to this screen is "what happened recently", and two absolute dates are four
+ * more chances to typo a bound. `days: 0` is the unbounded case.
+ */
+const RANGES: ReadonlyArray<{ value: string; label: string; days: number }> = [
+  { value: 'all', label: 'All time', days: 0 },
+  { value: '7', label: 'Last 7 days', days: 7 },
+  { value: '30', label: 'Last 30 days', days: 30 },
+  { value: '90', label: 'Last 90 days', days: 90 },
+];
+
+/**
+ * `?object=` from a link, or nothing if it names something outside the closed
+ * set. A bogus value would show an active filter chip matching zero rows and
+ * read as "this user has no history", which is the opposite of the truth.
+ */
+function objectParam(raw: string | null): AuditObject[] {
+  const found = AUDIT_OBJECTS.find((o) => o === raw);
+  return found ? [found] : [];
+}
+
+/**
+ * Empty-state copy that names the filter which produced it.
+ *
+ * "Try a different search term" is advice a reader who arrived from a user
+ * row's View audit trail cannot act on — they never typed one. And "no history
+ * for this target" is a different fact from "no match for your search": the
+ * first is an answer, the second is a dead end.
+ */
+export function auditEmptyCopy(filter: {
+  search: string;
+  objects: AuditObject[];
+  days: number;
+}): { headline: string; guidance: string } {
+  const { search, objects, days } = filter;
+  const narrowings = [
+    objects.length > 0
+      ? `the ${objects.map((o) => AUDIT_OBJECT_LABELS[o].toLowerCase()).join(' and ')} filter`
+      : null,
+    days > 0 ? `the last ${days} days` : null,
+  ].filter((v): v is string => v !== null);
+
+  if (search) {
+    return {
+      headline: `No audit entries for “${search}”`,
+      guidance:
+        narrowings.length > 0
+          ? `Nothing under ${narrowings.join(' or ')} names it. Widen the filters to search the whole log.`
+          : 'Nothing in the log names it as an actor, action, target, or detail.',
+    };
+  }
+  if (narrowings.length > 0) {
+    return {
+      headline: 'No audit entries in this view',
+      guidance: `Nothing was recorded under ${narrowings.join(' or ')}.`,
+    };
+  }
+  // Reachable only when the log itself is empty — a tenant before its first
+  // action, or the Scenario Switcher's forced empty state.
+  return {
+    headline: 'No audit entries yet',
+    guidance: 'Actions taken in the console are recorded here as they happen.',
+  };
+}
 
 export function AuditScreen() {
-  const [input, setInput] = useState('');
-  const [search, setSearch] = useState('');
-  const query = useAudit(search || undefined);
+  // Seeded from the query string so a link can land pre-filtered — the Users
+  // screen sends `?object=user&target=<email>` to reach one person's trail
+  // (point 38). Read once, at mount: the filters are the user's from then on,
+  // and writing state back to the URL would fight the controls.
+  const [params] = useSearchParams();
+  const [input, setInput] = useState(() => params.get('target') ?? '');
+  const [search, setSearch] = useState(() => params.get('target') ?? '');
+  const [objects, setObjects] = useState<AuditObject[]>(() => objectParam(params.get('object')));
+  const [range, setRange] = useState('all');
+
+  const days = RANGES.find((r) => r.value === range)?.days ?? 0;
+  // Recomputed on every render would give the query a new `from` each time and
+  // refetch forever, so the bound is pinned to the chosen window.
+  const from = useMemo(
+    () => (days > 0 ? new Date(Date.now() - days * 86400000).toISOString() : undefined),
+    [days],
+  );
+
+  const query = useAudit({ search: search || undefined, objects, from });
+  // The unfiltered log, for the per-object counts and for the honest "N of M"
+  // in the header and the export manifest. Same in-memory dataset, so this is
+  // a second read of already-resident data rather than a second round trip.
+  const population = useAudit();
+
   // The Auditor exports the log as their evidence package; Analyst and Security
   // Admin read it without exporting (spec §4, Audit Log row).
   const canExport = useCan('audit.export');
+  const actorEmail = useActorEmail();
+
+  const filtered = objects.length > 0 || days > 0 || search.length > 0;
   const exportable = query.data?.length ?? 0;
+  const total = population.data?.length ?? 0;
+
+  // Counts against the whole log, not the filtered view: a menu that renumbered
+  // itself as you ticked boxes could not tell you what else is in there.
+  const objectCounts = useMemo(() => {
+    const rows = population.data ?? [];
+    return AUDIT_OBJECTS.map((o) => ({
+      value: o,
+      label: AUDIT_OBJECT_LABELS[o],
+      count: rows.filter((e) => e.object === o).length,
+    }));
+  }, [population.data]);
 
   // Debounce the search into the query.
   useEffect(() => {
@@ -31,17 +146,43 @@ export function AuditScreen() {
     return () => clearTimeout(t);
   }, [input]);
 
+  /** What the export was narrowed by, in a form that still means something in a
+   *  spreadsheet six weeks later. */
+  const filterSummary = [
+    search ? `search="${search}"` : null,
+    objects.length > 0 ? `object=${objects.join('|')}` : null,
+    days > 0 ? `last ${days} days` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   const exportLog = () => {
-    toast(`Exported ${exportable} audit ${exportable === 1 ? 'entry' : 'entries'}`, {
-      description: search ? `Synthetic CSV export, filtered by "${search}".` : 'Synthetic CSV export.',
+    const entries = query.data ?? [];
+    const at = new Date();
+    const csv = toCsv(
+      ['at_utc', 'actor', 'object', 'action', 'target', 'detail'],
+      entries.map((e) => [e.at, e.actor, e.object, e.action, e.target, e.detail ?? '']),
+      {
+        tenant: tenantLabel(getDataset().tenant.name),
+        actor: actorEmail,
+        generatedAt: utcStamp(at),
+        filter: filterSummary || undefined,
+        rows: entries.length,
+        // Stated only when this is a subset, so the reader can tell a partial
+        // extract from the whole log without asking.
+        of: filtered ? total : undefined,
+      },
+    );
+    downloadFile(`acrivault-audit-${fileStamp(at)}.csv`, csv);
+    toast(`Exported ${count(entries.length)} audit ${entries.length === 1 ? 'entry' : 'entries'}`, {
+      description: filterSummary ? `CSV downloaded — filtered by ${filterSummary}.` : 'CSV downloaded.',
     });
   };
 
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Audit Log"
+        {...screenHeaderProps('/audit')}
         description="An append-only record of who did what and when. Everyone can read it; no one can edit it."
         actions={
           <div className="flex items-center gap-2">
@@ -63,34 +204,80 @@ export function AuditScreen() {
 
       <Banner tone="info" className="mb-4">
         This log is append-only. Entries are never modified or deleted — auditors depend on it.
+        Retained <span className="font-medium">{AUDIT_RETENTION_LABEL}</span>, then archived to cold
+        storage.
       </Banner>
 
-      <div className="mb-3 max-w-sm">
-        <Input
-          label="Search audit"
-          hideLabel
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Search action or actor…"
-          prefix={<Search className="h-4 w-4" />}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="min-w-64 flex-1">
+          <Input
+            label="Search audit"
+            hideLabel
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Search actor, action, target, or detail…"
+            prefix={<Search className="h-4 w-4" />}
+          />
+        </div>
+        <FilterMenu
+          label="Object"
+          options={objectCounts}
+          selected={objects}
+          onToggle={(v) =>
+            setObjects((prev) =>
+              prev.includes(v as AuditObject)
+                ? prev.filter((o) => o !== v)
+                : [...prev, v as AuditObject],
+            )
+          }
+          onClear={() => setObjects([])}
+        />
+        <Select
+          value={range}
+          onValueChange={setRange}
+          options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
+          ariaLabel="Date range"
+          size="sm"
         />
       </div>
 
       <QueryBoundary
         query={query}
-        loadingFallback={<Card><SkeletonTableRows rows={10} cols={4} /></Card>}
+        loadingFallback={<Card><SkeletonTableRows rows={10} cols={5} /></Card>}
         isEmpty={(d) => d.length === 0}
-        empty={<Card><EmptyState icon={<ScrollText className="h-5 w-5" />} headline="No matching audit entries" guidance="Try a different search term." /></Card>}
+        empty={
+          <Card>
+            <EmptyState
+              icon={<ScrollText className="h-5 w-5" />}
+              {...auditEmptyCopy({ search, objects, days })}
+            />
+          </Card>
+        }
       >
         {(entries: AuditEntry[]) => (
           <Card>
-            <CardHeader title={`${entries.length} entries`} />
+            <CardHeader
+              title={
+                filtered ? (
+                  <>
+                    <span className="tnum">{count(entries.length)}</span> of{' '}
+                    <span className="tnum">{count(total)}</span> entries
+                  </>
+                ) : (
+                  <>
+                    <span className="tnum">{count(entries.length)}</span> entries
+                  </>
+                )
+              }
+              description={filterSummary || undefined}
+            />
             <ScrollableTable label="Audit entries">
               <table className="w-full text-left text-[length:var(--fs-small)]">
                 <thead>
                   <tr className="border-y border-border text-text-tertiary">
                     <th scope="col" className="px-4 py-2 font-medium">When</th>
                     <th scope="col" className="px-4 py-2 font-medium">Actor</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Object</th>
                     <th scope="col" className="px-4 py-2 font-medium">Action</th>
                     <th scope="col" className="px-4 py-2 font-medium">Target</th>
                   </tr>
@@ -100,6 +287,9 @@ export function AuditScreen() {
                     <tr key={e.id} className="border-b border-border last:border-b-0 align-top">
                       <td className="tnum whitespace-nowrap px-4 py-2 text-text-secondary">{dateTime(e.at)}</td>
                       <td className="whitespace-nowrap px-4 py-2 font-mono text-text-tertiary">{e.actor}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-text-secondary">
+                        {AUDIT_OBJECT_LABELS[e.object]}
+                      </td>
                       <td className="px-4 py-2 text-text">{e.action}</td>
                       <td className="px-4 py-2 font-mono text-text-tertiary">{e.target}</td>
                     </tr>

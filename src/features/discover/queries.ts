@@ -4,7 +4,6 @@ import {
   getIdentity,
   listIdentities,
   quarantineAgent,
-  recommendQuarantine,
   releaseQuarantine,
   requestRotation,
   type IdentityFilter,
@@ -60,8 +59,11 @@ export function useAssignOwner() {
 
 /**
  * Enforcement lives on the identity, so quarantine and release are identity mutations
- * even when raised from a session replay. Both invalidate the session caches too: an
- * agent's containment shows on every session it ever ran, not just the one in view.
+ * even when raised from a session replay. Invalidates the session caches too: an
+ * agent's containment shows on every session it ever ran, not just the one in view --
+ * and `quarantined`, since Act > Quarantine reads the exact same mutations (this is
+ * the single hook backing both quarantine/release call sites; see useReleaseQuarantine
+ * below, which QuarantineScreen also uses).
  */
 function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string }>) {
   const qc = useQueryClient();
@@ -73,6 +75,7 @@ function useEnforcement<TArgs>(mutationFn: (args: TArgs) => Promise<{ id: string
       qc.invalidateQueries({ queryKey: ['sessions'] });
       qc.invalidateQueries({ queryKey: ['session'] });
       qc.invalidateQueries({ queryKey: ['audit'] });
+      qc.invalidateQueries({ queryKey: ['quarantined'] });
     },
   });
 }
@@ -88,8 +91,8 @@ export function useReleaseQuarantine() {
   return useEnforcement((identityId: string) => releaseQuarantine(identityId));
 }
 
-export function useRecommendQuarantine() {
-  return useEnforcement(({ identityId, fromSessionId }: { identityId: string; fromSessionId?: string }) =>
-    recommendQuarantine(identityId, fromSessionId),
-  );
-}
+// Recommending a quarantine used to live here as `useRecommendQuarantine`, built
+// on useEnforcement. It was never an enforcement -- it changes nothing about the
+// identity -- and the call it wrapped created nothing to approve. Both call sites
+// now raise a real request through useRequestApproval in @/features/act/queries,
+// which is where the queue that receives it lives.

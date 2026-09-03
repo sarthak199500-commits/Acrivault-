@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Check, CheckCircle2, LifeBuoy, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { CLOUDS, CLOUD_LABELS, NHI_TYPES, NHI_TYPE_LABELS, type Cloud as CloudT, type NhiType } from '@/mocks/types';
 import { discoveryScanTargets, getDataset } from '@/mocks/dataset';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader, CardFooter } from '@/components/ui/Card';
 import { Button, buttonClasses } from '@/components/ui/Button';
@@ -259,7 +260,6 @@ export function OnboardingScreen() {
   const navigate = useNavigate();
   const canConnect = useCan('connector.manage');
   const setDiscovered = useUiStore((s) => s.setDiscovered);
-  const role = useUiStore((s) => s.role);
   const [step, setStep] = useState(0);
   const [conn, setConn] = useState<Record<CloudT, ConnState>>({
     aws: 'disconnected',
@@ -373,25 +373,14 @@ export function OnboardingScreen() {
     </Button>
   );
 
-  // Exactly what "Include my setup details" attaches — enumerated so the checkbox
-  // can show it rather than asking anyone to trust a summary.
-  const helpContext = [
-    { label: 'Screen', value: 'Onboarding & Connect' },
-    { label: 'Step', value: STEPS[step].label },
-    { label: 'Clouds', value: CLOUDS.map((c) => `${PROVIDER_LABEL[c]} ${conn[c]}`).join(', ') },
-    { label: 'Viewing as', value: role },
-  ];
-
-  const helpDialog = (
-    <HelpRequestDialog open={helpOpen} onOpenChange={setHelpOpen} context={helpContext} />
-  );
+  const helpDialog = <HelpRequestDialog open={helpOpen} onOpenChange={setHelpOpen} />;
 
   // Onboarding is admin-only: a person reaches it only with the Connect capability
   // (Tenant Admin or Security Admin). Everyone else is gated out, not walked through.
   if (!canConnect) {
     return (
       <div className="mx-auto max-w-3xl">
-        <ScreenHeader eyebrow="Get started" title="Onboarding & Connect" description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
+        <ScreenHeader {...screenHeaderProps('/onboarding')} description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
         <Card>
           <CardBody className="space-y-4 pt-5">
             {/* This card has no stepper header to hang the action off, so the button
@@ -427,7 +416,7 @@ export function OnboardingScreen() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <ScreenHeader eyebrow="Get started" title="Onboarding & Connect" description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
+      <ScreenHeader {...screenHeaderProps('/onboarding')} description="Connect your clouds, run a discovery scan, and review what Acrivault found." />
 
       <Card elevated>
         <CardHeader

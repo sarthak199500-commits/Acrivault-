@@ -8,6 +8,7 @@ import { currentActor } from '@/stores/auth';
 import {
   conflictsCount,
   getDataset,
+  NOW,
   orphanedCount,
   riskBreakdown,
   sourceInstanceCount,
@@ -19,11 +20,15 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { isFlaggedStep } from './types';
+import { ACTION_OBJECT, isCrossCloud, isFlaggedStep } from './types';
 import type {
   Alert,
   AgentSession,
+  ApprovalRequest,
+  ApprovalStatus,
+  AuditAction,
   AuditEntry,
+  AuditObject,
   BlastRadius,
   Cloud,
   CloudConnection,
@@ -37,11 +42,14 @@ import type {
   PolicyAction,
   PolicyActionOutcome,
   PolicyToken,
+  QuarantineRecord,
   ReachEdge,
   ReachNode,
   RiskBand,
   RotationHistoryEntry,
   RotationJob,
+  SourceHealth,
+  SessionPolicy,
   Tenant,
   User,
   UserStatus,
@@ -218,6 +226,13 @@ export interface IdentityFilter {
   statuses?: IdentityStatus[];
   orphanedOnly?: boolean;
   conflictsOnly?: boolean;
+  /**
+   * Correlated across more than one cloud — the deduplication differentiator.
+   * Deliberately narrower than the `correlated` boolean, which only says an
+   * identity has several source instances: two instances in the same provider
+   * are a dedupe result, not a cross-cloud finding. See `spannedClouds`.
+   */
+  crossCloudOnly?: boolean;
 }
 
 export interface IdentitySort {
@@ -240,6 +255,7 @@ export interface IdentityFacetCounts {
   byStatus: Record<IdentityStatus, number>;
   orphaned: number;
   conflicts: number;
+  crossCloud: number;
 }
 
 export interface IdentityListResult {
@@ -276,6 +292,7 @@ function matchesExcept(
     return false;
   if (skip !== 'orphanedOnly' && filter.orphanedOnly && !identity.orphaned) return false;
   if (skip !== 'conflictsOnly' && filter.conflictsOnly && identity.conflicts.length === 0) return false;
+  if (skip !== 'crossCloudOnly' && filter.crossCloudOnly && !isCrossCloud(identity)) return false;
   return true;
 }
 
@@ -322,13 +339,15 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
   }
   let orphaned = 0;
   let conflicts = 0;
+  let crossCloud = 0;
   let total = 0;
   for (const identity of identities) {
     if (matchesExcept(identity, filter, 'orphanedOnly') && identity.orphaned) orphaned += 1;
     if (matchesExcept(identity, filter, 'conflictsOnly') && identity.conflicts.length > 0) conflicts += 1;
+    if (matchesExcept(identity, filter, 'crossCloudOnly') && isCrossCloud(identity)) crossCloud += 1;
     if (matchesExcept(identity, filter, null)) total += 1;
   }
-  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts };
+  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud };
 }
 
 function emptyTypeCounts(): Record<NhiType, number> {
@@ -363,6 +382,7 @@ export function listIdentities(params: IdentityListParams = {}): Promise<Identit
           byStatus: emptyStatusCounts(),
           orphaned: 0,
           conflicts: 0,
+          crossCloud: 0,
         },
       };
     }
@@ -928,31 +948,50 @@ export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentit
  * "open" after it had supposedly been contained.
  */
 export function quarantineAgent(identityId: string, note?: string): Promise<Identity> {
-  return respond(() => {
-    const identity = findAgent(identityId);
-    identity.status = 'quarantined';
-    const trimmed = note?.trim();
-    appendAudit(
-      'quarantined agent',
-      identity.name,
-      [
-        'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
-        trimmed ? `Note: ${trimmed}` : null,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    );
-    // UC-04 main flow step 4: notify the identity's owner. An orphaned agent has no one
-    // to tell, which is itself worth surfacing rather than silently skipping.
-    pushNotification({
-      severity: 'critical',
-      title: identity.owner
-        ? `${identity.name} quarantined — ${identity.owner} notified`
-        : `${identity.name} quarantined — no owner to notify`,
-      href: `/discover/${identity.id}`,
-    });
-    return { ...identity };
+  return respond(() => containIdentity(findAgent(identityId), note));
+}
+
+/**
+ * The containment itself: status, named provenance, audit line, owner
+ * notification. Extracted from `quarantineAgent` as a SYNCHRONOUS core so the
+ * approvals path (`decideApproval`) can reuse it from inside its own `respond`
+ * body — an approved request has to produce exactly the same state a direct
+ * quarantine does, and a second implementation is how one of them would end up
+ * without the `quarantine` record or without notifying the owner.
+ *
+ * The provenance is always `currentActor()`, which is what makes the APPROVER —
+ * not the analyst who recommended it — answerable for the state they produced.
+ */
+function containIdentity(identity: Identity, note?: string): Identity {
+  identity.status = 'quarantined';
+  // Named provenance (Act > Quarantine, audit point 5): without this, a live
+  // containment would be the one row on that screen with no producer, even
+  // though every seeded row has one.
+  identity.quarantine = {
+    at: new Date().toISOString(),
+    by: { kind: 'user', userId: currentActor().id },
+  };
+  const trimmed = note?.trim();
+  appendAudit(
+    'quarantined agent',
+    identity.name,
+    [
+      'Blocked from acting pending investigation. Synthetic — no upstream state changes.',
+      trimmed ? `Note: ${trimmed}` : null,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  // UC-04 main flow step 4: notify the identity's owner. An orphaned agent has no one
+  // to tell, which is itself worth surfacing rather than silently skipping.
+  pushNotification({
+    severity: 'critical',
+    title: identity.owner
+      ? `${identity.name} quarantined — ${identity.owner} notified`
+      : `${identity.name} quarantined — no owner to notify`,
+    href: `/discover/${identity.id}`,
   });
+  return { ...identity };
 }
 
 /**
@@ -996,38 +1035,273 @@ export function decideBlockedStep(
   });
 }
 
-/**
- * Analyst path: propose a quarantine for an admin to carry out (spec §5).
- *
- * The proposal is against the agent; `fromSessionId` records which session evidenced
- * it, when the analyst raised it from a replay. The audit trail is the system of record
- * either way — that is what an admin reviews before deciding.
- */
-export function recommendQuarantine(identityId: string, fromSessionId?: string): Promise<Identity> {
-  return respond(() => {
-    const identity = findAgent(identityId);
-    if (fromSessionId) findSession(fromSessionId).quarantineRecommendedAt = new Date().toISOString();
-    appendAudit(
-      'recommended agent quarantine',
-      identity.name,
-      fromSessionId
-        ? `Proposed from session ${fromSessionId}. Awaiting an admin decision.`
-        : 'Awaiting an admin decision.',
-    );
-    return { ...identity };
-  });
-}
-
 /** Release from quarantine — Tenant Owner / Tenant Admin only (spec §5). */
 export function releaseQuarantine(identityId: string): Promise<Identity> {
   return respond(() => {
+    assertActorCan('session.quarantineRelease');
     const identity = findAgent(identityId);
     if (identity.status !== 'quarantined') {
       throw new MockApiError('This identity is not quarantined.');
     }
     identity.status = 'active';
+    identity.quarantine = undefined;
     appendAudit('released agent from quarantine', identity.name, 'The agent can act again.');
     return { ...identity };
+  });
+}
+
+/* ------------------------------------------------------------- act > quarantine */
+
+export interface QuarantinedIdentity {
+  id: string;
+  name: string;
+  type: NhiType;
+  at: string;
+  /** Resolved producer, e.g. "Policy · Orphaned AI agents". */
+  byLabel: string;
+  /** Where the producer lives, for the link back. Absent when it has no screen. */
+  byHref?: string;
+}
+
+/** Resolve a QuarantineRecord's producer to a human label and, where one exists, a link back to it. */
+function quarantineLabel(record: QuarantineRecord): { byLabel: string; byHref?: string } {
+  const ds = getDataset();
+  // Bound to a local const: narrowing `record.by.kind` doesn't survive into the
+  // `.find()` closures below (TS re-widens a narrowed property access across a
+  // function boundary), but narrowing a local `const` does.
+  const by = record.by;
+  if (by.kind === 'policy') {
+    const policy = ds.policies.find((p) => p.id === by.policyId);
+    return {
+      byLabel: `Policy · ${policy?.name ?? 'removed policy'}`,
+      byHref: policy ? `/govern/builder/${policy.id}` : undefined,
+    };
+  }
+  if (by.kind === 'user') {
+    const user = ds.users.find((u) => u.id === by.userId);
+    // A user is soft-deleted (status flips to 'deleted'; deleteUser never
+    // removes the record -- see mocks/api.ts), so `!user` alone never catches
+    // a removed producer. Suspended renders normally: the account still
+    // exists, and having quarantined this identity is a true historical fact
+    // either way. No href: a user has no standalone screen to link back to.
+    if (!user || user.status === 'deleted') return { byLabel: 'Removed user' };
+    return { byLabel: user.role ? `${user.name} · ${ROLE_LABELS[user.role]}` : user.name };
+  }
+  const session = ds.sessions.find((s) => s.id === by.sessionId);
+  return {
+    byLabel: session ? `Session review · ${session.id}` : 'Removed session',
+    byHref: session ? `/intelligence/${session.id}` : undefined,
+  };
+}
+
+/**
+ * Every contained identity, newest-first, with its producer resolved for display.
+ * An identity can read `status === 'quarantined'` with no `quarantine` record only
+ * in a contrived edge case (see act.test.ts) — skip it rather than show a blank
+ * producer, which would be worse than not listing the row at all.
+ */
+export function listQuarantined(): Promise<QuarantinedIdentity[]> {
+  return respond(() =>
+    getDataset()
+      .identities.filter((i): i is Identity & { quarantine: QuarantineRecord } =>
+        i.status === 'quarantined' && Boolean(i.quarantine),
+      )
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        type: i.type,
+        at: i.quarantine.at,
+        ...quarantineLabel(i.quarantine),
+      }))
+      .sort((a, b) => b.at.localeCompare(a.at)),
+  );
+}
+
+/* ------------------------------------------------------------- act > approvals */
+
+/**
+ * A request with the things the queue has to show resolved: an admin deciding
+ * cannot act on two user ids and an identity id.
+ *
+ * The requester's name and role are resolved on READ rather than stamped at
+ * request time, unlike `PolicyAction.policyName` / `accountable`. The difference
+ * is that those record what already happened and must not be rewritten, whereas
+ * a pending request is a live question — "who is asking, and what may they do" —
+ * and the answer that matters is the one true when the admin decides it. An
+ * analyst suspended since raising it is exactly what the approver needs to see.
+ */
+export interface ApprovalWithContext extends ApprovalRequest {
+  identityName: string;
+  identityType: NhiType;
+  requesterName: string;
+  /** Display label, or an em dash where Entra sent a person but nobody has given them a role. */
+  requesterRole: string;
+}
+
+function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
+  const ds = getDataset();
+  const identity = ds.identityById.get(request.identityId);
+  const user = ds.users.find((u) => u.id === request.requestedBy);
+  return {
+    ...request,
+    identityName: identity?.name ?? request.identityId,
+    // A request always names a real identity (requestApproval refuses otherwise),
+    // so this fallback is unreachable in practice; picked over a cast because a
+    // non-null assertion is banned and a wrong-looking type is worse than a
+    // conservative default.
+    identityType: identity?.type ?? 'service-account',
+    // Soft-deleted users keep their record (deleteUser flips status), so `!user`
+    // alone never catches a removed requester — same reasoning as
+    // quarantineLabel above.
+    requesterName: !user || user.status === 'deleted' ? 'Removed user' : user.name,
+    requesterRole: user && user.role ? ROLE_LABELS[user.role] : '—',
+  };
+}
+
+/**
+ * The queue, newest-first. `status` omitted returns every request, whatever its
+ * state, so a decided one stays auditable rather than vanishing.
+ */
+export function listApprovals(status?: ApprovalStatus): Promise<ApprovalWithContext[]> {
+  return respond(() => {
+    if (isEmptyForced()) return [];
+    return getDataset()
+      .approvals.filter((a) => !status || a.status === status)
+      .map(withApprovalContext)
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  });
+}
+
+/**
+ * Propose a containment for an admin to decide (spec §5). The Analyst path.
+ *
+ * This REPLACED `recommendQuarantine`, which wrote an audit line reading
+ * "Awaiting an admin decision." and then created nothing to await — the
+ * recommendation existed only as a sentence in the log. Kept as one function
+ * rather than added beside it: two ways to propose the same containment is how
+ * the queue would end up missing the proposals raised through the other one.
+ *
+ * `fromSessionId` records which session evidenced the proposal, when raised from
+ * a replay; the audit trail remains the system of record either way.
+ */
+export function requestApproval(input: {
+  identityId: string;
+  reason?: string;
+  fromSessionId?: string;
+}): Promise<ApprovalRequest> {
+  return respond(() => {
+    assertActorCan('session.quarantineRecommend');
+    const ds = getDataset();
+    const identity = findAgent(input.identityId);
+    // Both guards are races a real queue hits immediately: two analysts looking
+    // at the same high-risk orphan, or one raising a request against something
+    // a policy contained a second earlier. Either would put a row on the screen
+    // proposing work that is already done or already asked for.
+    if (identity.status === 'quarantined') {
+      throw new MockApiError(`${identity.name} is already quarantined.`, 'ALREADY_QUARANTINED');
+    }
+    if (ds.approvals.some((a) => a.status === 'pending' && a.identityId === identity.id)) {
+      throw new MockApiError(
+        `A quarantine is already pending approval for ${identity.name}.`,
+        'ALREADY_PENDING',
+      );
+    }
+
+    const reason = input.reason?.trim();
+    const request: ApprovalRequest = {
+      id: `apr_${Math.random().toString(36).slice(2, 8)}`,
+      identityId: identity.id,
+      requestedBy: currentActor().id,
+      requestedAt: new Date().toISOString(),
+      ...(reason ? { reason } : {}),
+      ...(input.fromSessionId ? { fromSessionId: input.fromSessionId } : {}),
+      status: 'pending',
+    };
+    // Resolved BEFORE the request is stored, so a bad session id rejects the
+    // whole call instead of leaving an orphan request pointing at nothing.
+    const source = input.fromSessionId ? findSession(input.fromSessionId) : null;
+    ds.approvals.unshift(request);
+    if (source) source.quarantineRecommendedAt = request.requestedAt;
+    appendAudit(
+      'recommended agent quarantine',
+      identity.name,
+      [
+        input.fromSessionId ? `Proposed from session ${input.fromSessionId}.` : null,
+        'Awaiting an admin decision in Act > Approvals.',
+        reason ? `Reason: ${reason}` : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    return { ...request };
+  });
+}
+
+/**
+ * Approve or decline a pending request — the second pair of hands.
+ *
+ * Approving runs the SAME containment a direct quarantine does (containIdentity
+ * above), which is what makes the approver the identity's recorded producer:
+ * they are who produced the state, not the analyst who asked for it.
+ * Declining does not touch the identity at all — the request is answered and
+ * nothing is enforced.
+ */
+export function decideApproval(
+  id: string,
+  decision: 'approved' | 'declined',
+): Promise<ApprovalRequest> {
+  return respond(() => {
+    const ds = getDataset();
+    const request = ds.approvals.find((a) => a.id === id);
+    if (!request) throw new MockApiError('Approval request not found.', 'NOT_FOUND');
+    if (request.status !== 'pending') {
+      throw new MockApiError(
+        `This request was already decided (${request.status}).`,
+        'ALREADY_DECIDED',
+      );
+    }
+    assertActorCan('session.quarantine');
+    const identity = findAgent(request.identityId);
+
+    // Approving an already-contained identity would overwrite its existing
+    // QuarantineRecord and reassign responsibility for a containment this
+    // approver did not produce. Declining stays available, and is how the stale
+    // row gets cleared.
+    if (decision === 'approved' && identity.status === 'quarantined') {
+      throw new MockApiError(
+        `${identity.name} is already quarantined. Decline this request to clear it.`,
+        'ALREADY_QUARANTINED',
+      );
+    }
+
+    request.status = decision;
+    request.decided = { by: currentActor().id, at: new Date().toISOString() };
+
+    // `AgentSession.quarantineRecommendedAt` marks an OPEN recommendation — the
+    // replay screen renders it as "awaiting a decision in Act > Approvals".
+    // Left set after a decision, that banner would claim a decision is still
+    // pending forever, and a DECLINED request would be the worst case: nothing
+    // is waiting and nothing ever will. The fact itself survives in the audit
+    // log and on this request, which keeps its requestedAt and its outcome.
+    const source = request.fromSessionId
+      ? ds.sessions.find((s) => s.id === request.fromSessionId)
+      : undefined;
+    if (source) source.quarantineRecommendedAt = undefined;
+
+    // The authorization is written BEFORE the containment so the log, which is
+    // newest-first, reads containment-above-decision — the order they happened.
+    appendAudit(
+      decision === 'approved' ? 'approved quarantine request' : 'declined quarantine request',
+      identity.name,
+      [
+        `Request ${request.id}, raised by ${ds.users.find((u) => u.id === request.requestedBy)?.email ?? 'a removed user'}.`,
+        decision === 'declined' ? 'The identity was left as it was.' : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    if (decision === 'approved') containIdentity(identity, request.reason);
+    return { ...request };
   });
 }
 
@@ -1256,21 +1530,98 @@ export function requestRotation(identityId: string, mode: 'standard' | 'emergenc
 
 /* ---------------------------------------------------- platform / connections */
 
-export function getConnections(): Promise<CloudConnection[]> {
-  return respond(() => getDataset().connections.map((c) => ({ ...c })));
+/**
+ * The degraded fixture, applied on read rather than baked into the dataset so the
+ * seeded store stays one healthy source of truth and the Scenario Switcher can
+ * flip it back without a rebuild.
+ * // ASSUMPTION: real connector error reporting is upstream.
+ */
+const DEGRADED_CLOUD: Cloud = 'azure';
+const DEGRADED_AGE_MINUTES = 192;
+
+/**
+ * Anchored to the dataset's NOW, not to Date.now(): getConnections and
+ * getSourceHealth both report this instant, and a fresh Date.now() per call made
+ * them disagree by a few milliseconds on the same "last success".
+ */
+function degradedSince(): string {
+  return new Date(NOW.getTime() - DEGRADED_AGE_MINUTES * 60000).toISOString();
 }
 
-export function listAudit(search?: string): Promise<AuditEntry[]> {
+function sourcesDegraded(): boolean {
+  return currentScenario().sources === 'degraded';
+}
+
+export function getConnections(): Promise<CloudConnection[]> {
+  return respond(() =>
+    getDataset().connections.map((c) => {
+      if (!sourcesDegraded() || c.cloud !== DEGRADED_CLOUD) return { ...c };
+      const since = degradedSince();
+      return {
+        ...c,
+        status: 'error' as const,
+        // Last SUCCESS, not last attempt: the chip reports how stale the data is.
+        lastSyncAt: since,
+        error: {
+          code: 'AuthorizationFailed',
+          message:
+            'The app registration lost Directory.Read.All. Counts on Dashboard and Inventory exclude this source until it clears.',
+          since,
+        },
+      };
+    }),
+  );
+}
+
+export function getSourceHealth(): Promise<SourceHealth> {
+  return respond(() => {
+    const degraded = sourcesDegraded() ? [DEGRADED_CLOUD] : [];
+    const syncs = getDataset()
+      .connections.map((c) => (degraded.includes(c.cloud) ? degradedSince() : c.lastSyncAt))
+      .filter((t): t is string => Boolean(t))
+      .sort();
+    return {
+      healthy: getDataset().connections.length - degraded.length,
+      total: getDataset().connections.length,
+      oldestSyncAt: syncs[0],
+      degraded,
+    };
+  });
+}
+
+export interface AuditFilter {
+  /** Matches actor, action, target, or detail. */
+  search?: string;
+  objects?: AuditObject[];
+  /** Inclusive ISO bounds on `at`. */
+  from?: string;
+  to?: string;
+}
+
+export function listAudit(filter: AuditFilter = {}): Promise<AuditEntry[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
-    let rows = getDataset().audit;
-    if (search) {
-      const q = search.toLowerCase();
-      rows = rows.filter(
-        (a) => a.action.toLowerCase().includes(q) || a.actor.toLowerCase().includes(q),
+    let rows = [...getDataset().audit];
+    // An empty array is "no object filter", not "match nothing" — the FilterMenu
+    // holds [] when nothing is ticked, and that state must show the whole log.
+    const objects = filter.objects;
+    if (objects && objects.length > 0) {
+      rows = rows.filter((a) => objects.includes(a.object));
+    }
+    // Inclusive at both ends: a reader who picks one day means that whole day.
+    const { from, to } = filter;
+    if (from) rows = rows.filter((a) => a.at >= from);
+    if (to) rows = rows.filter((a) => a.at <= to);
+    if (filter.search) {
+      // Target and detail included: a user's trail is reachable only by their
+      // email, which lives in `target` (point 38), and a rotation or policy run
+      // is only identifiable by the figures in `detail`.
+      const q = filter.search.toLowerCase();
+      rows = rows.filter((a) =>
+        `${a.actor} ${a.action} ${a.target} ${a.detail ?? ''}`.toLowerCase().includes(q),
       );
     }
-    return [...rows];
+    return rows;
   });
 }
 
@@ -1371,8 +1722,15 @@ function pushNotification(input: { severity: NotificationItem['severity']; title
   });
 }
 
-/** Append an immutable audit entry attributed to the current actor. */
-function appendAudit(action: string, target: string, detail?: string): void {
+/**
+ * Append an immutable audit entry attributed to the current actor.
+ *
+ * `action` is the closed AuditAction union, not a string: the object a row is
+ * filed under is derived here from ACTION_OBJECT rather than passed in, so a
+ * caller cannot misfile an entry and a new action cannot reach the log without
+ * someone classifying it first.
+ */
+function appendAudit(action: AuditAction, target: string, detail?: string): void {
   const { id } = currentActor();
   const ds = getDataset();
   const actor = ds.users.find((u) => u.id === id)?.email ?? 'system';
@@ -1381,6 +1739,7 @@ function appendAudit(action: string, target: string, detail?: string): void {
     at: new Date().toISOString(),
     actor,
     action,
+    object: ACTION_OBJECT[action],
     target,
     detail,
   });
@@ -1601,6 +1960,8 @@ export async function acceptLegal(
     // The Owner signs in with a password until federation is configured — and
     // stays able to, because they are the only account Entra will not manage.
     passwordFallback: true,
+    // Same defaults the seeded tenant carries: a new org is not a laxer org.
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: new Date().toISOString(),
   };
   const user: User = {
@@ -1835,7 +2196,32 @@ function cloneTenant(t: Tenant): Tenant {
     sso: { ...t.sso },
     saml: { ...t.saml, cert: t.saml.cert ? { ...t.saml.cert } : null },
     scim: { ...t.scim },
+    sessionPolicy: { ...t.sessionPolicy },
   };
+}
+
+export function getSessionPolicy(): Promise<SessionPolicy> {
+  return respond(() => ({ ...getDataset().tenant.sessionPolicy }));
+}
+
+/**
+ * Record the tenant's session policy. Audited, because "how long does a session
+ * live" is a question an auditor asks and a change to it is evidence.
+ * // ASSUMPTION: enforcement is upstream — nothing here expires a session.
+ */
+export function updateSessionPolicy(patch: Partial<SessionPolicy>): Promise<SessionPolicy> {
+  return respond(() => {
+    assertActorCan('settings.manage');
+    const { tenant } = getDataset();
+    tenant.sessionPolicy = { ...tenant.sessionPolicy, ...patch };
+    const p = tenant.sessionPolicy;
+    appendAudit(
+      'updated session policy',
+      tenant.name,
+      `Idle ${p.idleTimeoutMinutes} min, absolute ${p.absoluteSessionHours} h, step-up ${p.stepUpOnSensitive ? 'on' : 'off'}.`,
+    );
+    return { ...p };
+  });
 }
 
 /* ------------------------------------------------- single sign-on & SCIM */
@@ -2168,7 +2554,7 @@ export async function activateUser(id: string): Promise<User> {
   return setUserStatus(id, 'active', 'reactivated user');
 }
 
-async function setUserStatus(id: string, status: UserStatus, action: string): Promise<User> {
+async function setUserStatus(id: string, status: UserStatus, action: AuditAction): Promise<User> {
   await settle();
   if (authScenario() === 'api-failure') {
     throw new MockApiError('Could not update the user. Please try again later.', 'API_FAILURE');

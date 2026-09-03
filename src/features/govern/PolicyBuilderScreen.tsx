@@ -13,6 +13,8 @@ import {
   plainEnglish,
   zeroReason,
 } from '@/mocks/policy';
+import { screenHeaderProps } from '@/app/nav';
+import { Badge } from '@/components/ui/Badge';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -283,7 +285,7 @@ export function PolicyBuilderScreen() {
   if (isEditing && existing.isError) {
     return (
       <div>
-        <ScreenHeader eyebrow="Know · Govern" title="Policy Builder" />
+        <ScreenHeader {...screenHeaderProps('/govern/builder')} />
         <Banner tone="critical">
           {errorInfo(existing.error).message} This policy couldn&apos;t be loaded — go back to the list and try again.
         </Banner>
@@ -304,8 +306,12 @@ export function PolicyBuilderScreen() {
   return (
     <div>
       <ScreenHeader
-        eyebrow={isArchived ? 'Know · Govern · Archived' : isEditing ? 'Know · Govern · Edit' : 'Know · Govern · New'}
-        title="Policy Builder"
+        {...screenHeaderProps('/govern/builder')}
+        badge={
+          <Badge tone={isArchived ? 'neutral' : 'info'}>
+            {isArchived ? 'Archived' : isEditing ? 'Editing' : 'New'}
+          </Badge>
+        }
         description="Compose a rule from WHEN / AND / THEN tokens. The preview, affected count, and code are illustrative."
         actions={
           <Button variant="ghost" size="sm" onClick={() => navigate('/govern')}>

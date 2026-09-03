@@ -6,15 +6,15 @@ import { Badge } from '@/components/ui/Badge';
 import { Logo } from '@/components/ui/Logo';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { ScenarioSwitcher } from './ScenarioSwitcher';
-import { EXTRA_TITLES } from './nav';
+import { AUTH_TITLES } from './nav';
 
 function titleForAuthPath(pathname: string): string {
-  if (EXTRA_TITLES[pathname]) return EXTRA_TITLES[pathname];
+  if (AUTH_TITLES[pathname]) return AUTH_TITLES[pathname];
   // Match the longest configured prefix (e.g. /reset-password/:token).
-  const prefix = Object.keys(EXTRA_TITLES)
+  const prefix = Object.keys(AUTH_TITLES)
     .filter((p) => pathname.startsWith(p))
     .sort((a, b) => b.length - a.length)[0];
-  return prefix ? EXTRA_TITLES[prefix] : 'Acrivault';
+  return prefix ? AUTH_TITLES[prefix] : 'Acrivault';
 }
 
 function AuthRouteAnnouncer() {

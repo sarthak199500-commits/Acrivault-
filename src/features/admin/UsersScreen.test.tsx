@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UsersScreen } from './UsersScreen';
@@ -69,6 +70,7 @@ function setTenant(saml: SamlConfig, scim: ScimConfig) {
     saml,
     scim,
     passwordFallback: true,
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: '2026-08-01T00:00:00.000Z',
   };
 }
@@ -174,5 +176,73 @@ describe('finding the Entra settings screen', () => {
     renderScreen();
     await screen.findByText('Noor Haddad');
     expect(screen.queryByText(/nobody from entra can sign in/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Two conditions that look interchangeable and are not: whether the reader can
+ * change a user, and whether the row menu is worth drawing. Every mutating
+ * capability here is Tenant Admin and above, so gating the menu on them hid the
+ * audit trail from the Auditor — the one role whose whole job is reading
+ * evidence. These cases exist to stop a future refactor collapsing them back
+ * into one predicate.
+ */
+describe('reaching a user’s audit trail', () => {
+  async function openMenuFor(name: string) {
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    renderScreen();
+    await screen.findByText(name);
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(`actions for ${name}`, 'i') }));
+    return screen.findAllByRole('menuitem');
+  }
+
+  it('gives a read-only role a menu holding the trail and nothing it cannot use', async () => {
+    useUiStore.getState().setRole('viewer');
+    const items = await openMenuFor('Noor Haddad');
+    expect(items.map((i) => i.textContent?.trim())).toEqual(['View audit trail']);
+  });
+
+  it('does not withhold the trail from a role that cannot act on the target', async () => {
+    // canActOnUser is false for a viewer against everyone, and that is precisely
+    // when someone needs to read the record rather than change it.
+    useUiStore.getState().setRole('viewer');
+    const [item] = await openMenuFor('Noor Haddad');
+    expect(item).not.toHaveAttribute('data-disabled');
+  });
+
+  it('keeps every administrative item for a Tenant Admin', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const items = await openMenuFor('Robin Park');
+    const labels = items.map((i) => i.textContent?.trim());
+    expect(labels).toContain('View audit trail');
+    expect(labels).toContain('Edit');
+    expect(labels).toContain('Suspend');
+    expect(labels).toContain('Delete');
+    // Robin arrived from Entra with no role, so triage comes first.
+    expect(labels).toContain('Assign a role');
+  });
+
+  // The banner claims "you cannot modify users", which is about capability. The
+  // menu now renders for every role, so the two must not share a predicate.
+  it('still shows the read-only banner to the role that has the menu', async () => {
+    useUiStore.getState().setRole('viewer');
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    renderScreen();
+    await screen.findByText('Noor Haddad');
+    expect(screen.getByRole('note')).toHaveTextContent(
+      'Read-only. Your role (Auditor) cannot modify users. Contact a Tenant Admin.',
+    );
+    expect(screen.getByRole('button', { name: /actions for noor haddad/i })).toBeInTheDocument();
+  });
+
+  it('shows no banner to a Tenant Admin', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    renderScreen();
+    await screen.findByText('Noor Haddad');
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
   });
 });

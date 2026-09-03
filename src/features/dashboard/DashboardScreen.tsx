@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowRight, Boxes, ChevronRight, GitCompareArrows, ShieldAlert, Unlink } from 'lucide-react';
 import { useOverview } from './queries';
 import { NHI_TYPES, NHI_TYPE_LABELS, type NhiType } from '@/mocks/types';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { KpiTile } from '@/components/ui/KpiTile';
@@ -391,8 +392,7 @@ export function DashboardScreen() {
           meta line below now states with figures, and cost a line in a header that had
           grown too tall. Other screens keep their descriptions. */}
       <ScreenHeader
-        eyebrow="See · Dashboard"
-        title="Overview"
+        {...screenHeaderProps('/')}
         // ScreenHeader's default mb-6 is sized for a header that ends in a
         // description paragraph. With the description removed the h1 sits directly
         // above the meta line, so 24px plus the h1's own leading read as a hole.

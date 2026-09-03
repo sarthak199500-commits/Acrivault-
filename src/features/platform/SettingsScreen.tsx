@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import { KeyRound, Users as UsersIcon } from 'lucide-react';
 import { useConnections } from './queries';
+import { SessionAccessCard } from './SessionAccessCard';
 import { useTenant, useUsers } from '@/features/admin/queries';
-import { CLOUD_LABELS, SSO_PROVIDER_LABELS, type Tenant } from '@/mocks/types';
+import { CLOUD_LABELS, SSO_PROVIDER_LABELS, totalFor, type Tenant } from '@/mocks/types';
 import { samlStatus, scimStatus, signInSummary, type SummaryTone } from '@/lib/sso';
+import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -12,7 +14,6 @@ import { KeyValueList } from '@/components/ui/KeyValueList';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { buttonClasses } from '@/components/ui/Button';
-import { useCan } from '@/components/ui/Can';
 import { count, pluralize } from '@/lib/format';
 import { CONNECTION_TONE as CONN_TONE } from '@/lib/tones';
 import { cn } from '@/lib/cn';
@@ -138,13 +139,11 @@ function UsersCard() {
 export function SettingsScreen() {
   const connections = useConnections();
   const tenant = useTenant();
-  const canConnect = useCan('connector.manage');
 
   return (
     <div>
       <ScreenHeader
-        eyebrow="Platform"
-        title="Settings"
+        {...screenHeaderProps('/settings')}
         description="Organization, sign-in, connected clouds, and team."
       />
 
@@ -176,16 +175,16 @@ export function SettingsScreen() {
           </CardBody>
         </Card>
 
+        <SessionAccessCard />
+
         <Card className="lg:col-span-2">
           <CardHeader
             title="Connected clouds"
-            description="Read-only access to AWS, GCP, and Azure."
+            description="Read-only access to AWS, Google Cloud, and Azure."
             action={
-              canConnect ? (
-                <Link to="/onboarding" className={buttonClasses('secondary', 'sm')}>
-                  Add a cloud
-                </Link>
-              ) : undefined
+              <Link to="/settings/sources" className={buttonClasses('secondary', 'sm')}>
+                View sources
+              </Link>
             }
           />
           <CardBody>
@@ -197,7 +196,7 @@ export function SettingsScreen() {
               {(conns) => (
                 <ul className="space-y-2">
                   {conns.map((c) => {
-                    const total = c.counts ? Object.values(c.counts).reduce((a, b) => a + b, 0) : 0;
+                    const total = totalFor(c);
                     return (
                       <li
                         key={c.cloud}

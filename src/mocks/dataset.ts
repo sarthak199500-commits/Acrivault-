@@ -4,7 +4,9 @@
 // with ?scale=50000 (or localStorage 'acrivault.scale') to hit the perf target.
 
 import {
+  attachQuarantineProvenance,
   generateAlerts,
+  generateApprovals,
   generateAudit,
   generateConnections,
   generateCopilotSuggestions,
@@ -62,6 +64,8 @@ export interface Dataset {
   identities: Identity[];
   identityById: Map<string, Identity>;
   alerts: ReturnType<typeof generateAlerts>;
+  /** Pending propose-and-approve queue (Act > Approvals). Mutable: decisions land here. */
+  approvals: ReturnType<typeof generateApprovals>;
   sessions: ReturnType<typeof generateSessions>;
   policies: ReturnType<typeof generatePolicies>;
   policyActions: ReturnType<typeof generatePolicyActions>;
@@ -84,18 +88,27 @@ function build(): Dataset {
   // Audit targets name real entities, so the things it names are built first.
   const policies = generatePolicies(identities, SEED, NOW);
   const tenant = generateTenant(NOW);
+  const sessions = generateSessions(identities, SEED, NOW);
+  // Post-pass: policies, users and sessions all exist now, so a quarantined
+  // identity can finally be given a producer (see attachQuarantineProvenance).
+  attachQuarantineProvenance(identities, policies, users, sessions, SEED, NOW);
+  // Strictly AFTER the post-pass, which PROMOTES one active ai-agent to
+  // quarantined. Seeded before it, an approval could name that identity and the
+  // queue would open with a request to contain something already contained.
+  const approvals = generateApprovals(identities, users, SEED, NOW);
   return {
     size,
     identities,
     identityById,
     alerts: generateAlerts(identities, SEED, NOW),
-    sessions: generateSessions(identities, SEED, NOW),
+    approvals,
+    sessions,
     policies,
     policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
     rotations: generateRotations(identities, SEED, NOW),
     audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
     notifications: generateNotifications(SEED, NOW),
-    connections: generateConnections(identities),
+    connections: generateConnections(identities, NOW),
     rehearsals: generateRehearsals(SEED, NOW),
     copilot: generateCopilotSuggestions(identities, SEED),
     tenant,
