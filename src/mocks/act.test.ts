@@ -310,6 +310,31 @@ describe('Act > Quarantine - a containment raised from a replay', () => {
     await releaseQuarantine(identity.id);
   });
 
+  // The two halves resolve independently, which is asserted rather than assumed:
+  // a containment whose acting user was since removed still has to show what it
+  // was decided on. Losing the person is a gap; losing the evidence with them
+  // would be the original defect returning by a different route.
+  it('still shows the evidence when the person who acted has been removed', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const { identity, session } = pickReplayCandidate();
+    await quarantineAgent(identity.id, undefined, session.id);
+
+    const actor = getDataset().users.find((u) => u.id === CURRENT_USER_ID);
+    if (!actor) throw new Error('fixture: expected the acting user to exist');
+    const originalStatus = actor.status;
+    actor.status = 'deleted';
+    try {
+      const row = (await listQuarantined()).find((r) => r.id === identity.id);
+      if (!row) throw new Error('fixture: expected the contained identity to be listed');
+      expect(row.byLabel).toBe('Removed user');
+      expect(row.viaLabel).toBe(`Session review · ${session.id}`);
+      expect(row.viaHref).toBe(`/intelligence/${session.id}`);
+    } finally {
+      actor.status = originalStatus; // later tests rely on the seeded users
+      await releaseQuarantine(identity.id);
+    }
+  });
+
   it('leaves the record unchanged when no replay evidenced the containment', async () => {
     useUiStore.getState().setRole('tenant-admin');
     const target = getDataset().identities.find((i) => i.status === 'active');
