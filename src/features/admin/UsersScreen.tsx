@@ -90,7 +90,25 @@ export function UsersScreen() {
   const canEdit = useCan('users.edit');
   const canSuspend = useCan('users.suspend');
   const canDelete = useCan('users.delete');
-  const showRowActions = canEdit || canSuspend || canDelete;
+  /**
+   * Whether the reader can change anything about a user. This is what the
+   * read-only banner means, and it is the only thing it should key off.
+   */
+  const canModifyUsers = canEdit || canSuspend || canDelete;
+  // Reading the log is a view capability every role that reaches this screen
+  // holds, so the row menu is never empty — not even for the Auditor.
+  const canViewAudit = useCan('audit.view');
+  /**
+   * Whether to draw the row menu at all: true when it would hold at least one
+   * item the reader can actually use.
+   *
+   * Deliberately NOT the same predicate as canModifyUsers. Collapsing the two
+   * is exactly what hid the audit trail from the Auditor — the one role whose
+   * job is reading evidence — because every mutating capability is Tenant Admin
+   * and above. Each item below carries its own capability gate instead, so a
+   * read-only reader gets a menu of what they can do rather than dead controls.
+   */
+  const showRowMenu = canModifyUsers || canViewAudit;
 
   const sync = useSyncUsers();
   const suspend = useSuspendUser();
@@ -257,7 +275,7 @@ export function UsersScreen() {
               <th scope="col" className="px-4 py-2.5 font-medium">
                 Last login
               </th>
-              {showRowActions && (
+              {showRowMenu && (
                 <th scope="col" className="px-4 py-2.5 text-right font-medium">
                   <span className="sr-only">Actions</span>
                 </th>
@@ -335,7 +353,7 @@ export function UsersScreen() {
                     <StatusBadge status={u.status} needsRole={unassigned} />
                   </td>
                   <td className="px-4 py-2.5 tnum text-text-secondary">{lastActivity(u)}</td>
-                  {showRowActions && (
+                  {showRowMenu && (
                     <td className="px-4 py-2.5 text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -344,19 +362,25 @@ export function UsersScreen() {
                           </IconButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          {!canAct && (
+                          {/* Both labels explain why a mutating item is withheld by
+                              RANK. They are meaningless to a reader who holds no
+                              mutating capability at all — nothing is being refused
+                              there, so canModifyUsers gates them. */}
+                          {canModifyUsers && !canAct && (
                             <DropdownMenuLabel>
                               {isSelf
                                 ? 'You can’t manage your own account'
                                 : 'Requires a higher role'}
                             </DropdownMenuLabel>
                           )}
-                          {canAct && lastTa && (
+                          {canModifyUsers && canAct && lastTa && (
                             <DropdownMenuLabel>
                               Last active Tenant Admin — assign another first
                             </DropdownMenuLabel>
                           )}
-                          {unassigned && (
+                          {/* Role assignment travels with users.edit, matching the
+                              bulk "Assign roles" control below. */}
+                          {canEdit && unassigned && (
                             <DropdownMenuItem
                               disabled={!canAct}
                               onSelect={() => setAssignTargets([u])}
@@ -367,72 +391,85 @@ export function UsersScreen() {
                               </span>
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem disabled={!canAct} onSelect={() => setEditTarget(u)}>
-                            <span className="inline-flex items-center gap-2">
-                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
-                            </span>
-                          </DropdownMenuItem>
-                          {/* Deliberately not gated on canAct: reading the log is a
+                          {canEdit && (
+                            <DropdownMenuItem disabled={!canAct} onSelect={() => setEditTarget(u)}>
+                              <span className="inline-flex items-center gap-2">
+                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+                              </span>
+                            </DropdownMenuItem>
+                          )}
+                          {/* Gated on audit.view, not canAct: reading the log is a
                               view capability, and the trail of someone you cannot
-                              act on is exactly what an investigation needs. The
-                              email is the search term because every user entry
-                              names the person in `target`.
+                              act on is exactly what an investigation needs. This is
+                              the item that keeps the menu worth opening for a
+                              read-only role. The email is the search term because
+                              every user entry names the person in `target`.
                               onSelect + navigate, not asChild + Link: the local
                               DropdownMenuItem does not forward asChild to Radix, so
                               a nested anchor would render outside the menu's
                               keyboard handling. */}
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              navigate(
-                                `/audit?object=user&target=${encodeURIComponent(u.email)}`,
-                              )
-                            }
-                          >
-                            <span className="inline-flex items-center gap-2">
-                              <History className="h-3.5 w-3.5" aria-hidden="true" /> View audit
-                              trail
-                            </span>
-                          </DropdownMenuItem>
-                          {idpSuspended ? (
-                            <DropdownMenuLabel>Reactivate this person in Entra</DropdownMenuLabel>
-                          ) : u.status === 'suspended' ? (
+                          {canViewAudit && (
                             <DropdownMenuItem
-                              disabled={!canAct}
-                              onSelect={() => setConfirm({ kind: 'activate', user: u })}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> Activate
-                              </span>
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              disabled={!canAct || lastTa}
-                              title={
-                                lastTa
-                                  ? 'Cannot suspend the only active Tenant Admin. Assign another Tenant Admin first.'
-                                  : undefined
+                              onSelect={() =>
+                                navigate(
+                                  `/audit?object=user&target=${encodeURIComponent(u.email)}`,
+                                )
                               }
-                              onSelect={() => setConfirm({ kind: 'suspend', user: u })}
                             >
                               <span className="inline-flex items-center gap-2">
-                                <Ban className="h-3.5 w-3.5" aria-hidden="true" /> Suspend
+                                <History className="h-3.5 w-3.5" aria-hidden="true" /> View audit
+                                trail
                               </span>
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            disabled={!canAct || lastTa}
-                            title={
-                              lastTa
-                                ? 'Cannot delete the only active Tenant Admin. Assign another Tenant Admin first.'
-                                : undefined
-                            }
-                            onSelect={() => setConfirm({ kind: 'delete', user: u })}
-                          >
-                            <span className="inline-flex items-center gap-2 text-crit-fg">
-                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
-                            </span>
-                          </DropdownMenuItem>
+                          {canSuspend &&
+                            (idpSuspended ? (
+                              <DropdownMenuLabel>Reactivate this person in Entra</DropdownMenuLabel>
+                            ) : u.status === 'suspended' ? (
+                              <DropdownMenuItem
+                                disabled={!canAct}
+                                onSelect={() => setConfirm({ kind: 'activate', user: u })}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />{' '}
+                                  Activate
+                                </span>
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                disabled={!canAct || lastTa}
+                                title={
+                                  lastTa
+                                    ? 'Cannot suspend the only active Tenant Admin. Assign another Tenant Admin first.'
+                                    : undefined
+                                }
+                                onSelect={() => setConfirm({ kind: 'suspend', user: u })}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <Ban className="h-3.5 w-3.5" aria-hidden="true" /> Suspend
+                                </span>
+                              </DropdownMenuItem>
+                            ))}
+                          {/* Separator travels with Delete: on its own above an
+                              empty region it would draw a rule under nothing. */}
+                          {canDelete && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                disabled={!canAct || lastTa}
+                                title={
+                                  lastTa
+                                    ? 'Cannot delete the only active Tenant Admin. Assign another Tenant Admin first.'
+                                    : undefined
+                                }
+                                onSelect={() => setConfirm({ kind: 'delete', user: u })}
+                              >
+                                <span className="inline-flex items-center gap-2 text-crit-fg">
+                                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+                                </span>
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </td>
@@ -505,7 +542,11 @@ export function UsersScreen() {
         </Banner>
       )}
 
-      {!showRowActions && (
+      {/* Keyed off the capability the sentence actually claims, not off whether a
+          menu is drawn. The row menu now renders for every role (it carries the
+          audit-trail link), so keying this off that would have deleted the
+          banner for the very readers it is written for. */}
+      {!canModifyUsers && (
         <div className="mb-4">
           <RoleRestricted action="modify users" remedy="Tenant Admin" />
         </div>
