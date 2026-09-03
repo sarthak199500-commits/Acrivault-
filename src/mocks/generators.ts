@@ -3,6 +3,7 @@
 // an // ASSUMPTION note; see the assumptions log in the README.
 
 import {
+  ACTION_OBJECT,
   CLOUDS,
   CLOUD_LABELS,
   NHI_TYPES,
@@ -10,6 +11,7 @@ import {
   type AgentSession,
   type Alert,
   type AttributeConflict,
+  type AuditAction,
   type AuditEntry,
   type Cloud,
   type CloudConnection,
@@ -768,7 +770,7 @@ export function generateAudit(
   // never an internal id. A seeded row and a row the user just generated have to
   // be indistinguishable in kind, and an identity id is meaningless against a
   // role change or an SSO edit in any case.
-  const actions: ReadonlyArray<[string, () => string]> = [
+  const actions: ReadonlyArray<[AuditAction, () => string]> = [
     ['acknowledged alert', () => rng.pick(identities).name],
     ['resolved alert', () => rng.pick(identities).name],
     ['activated policy', () => rng.pick(policies).name],
@@ -797,6 +799,9 @@ export function generateAudit(
       at: new Date(at).toISOString(),
       actor: rng.pick(actors),
       action,
+      // Same derivation as the live appendAudit path, so a seeded row and a row
+      // the user just generated fall under the same object filter.
+      object: ACTION_OBJECT[action],
       target: target(),
       detail: rng.bool(0.4) ? 'Synthetic event for demonstration.' : undefined,
     });

@@ -20,11 +20,13 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { isFlaggedStep } from './types';
+import { ACTION_OBJECT, isFlaggedStep } from './types';
 import type {
   Alert,
   AgentSession,
+  AuditAction,
   AuditEntry,
+  AuditObject,
   BlastRadius,
   Cloud,
   CloudConnection,
@@ -1394,17 +1396,39 @@ export function getSourceHealth(): Promise<SourceHealth> {
   });
 }
 
-export function listAudit(search?: string): Promise<AuditEntry[]> {
+export interface AuditFilter {
+  /** Matches actor, action, target, or detail. */
+  search?: string;
+  objects?: AuditObject[];
+  /** Inclusive ISO bounds on `at`. */
+  from?: string;
+  to?: string;
+}
+
+export function listAudit(filter: AuditFilter = {}): Promise<AuditEntry[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
-    let rows = getDataset().audit;
-    if (search) {
-      const q = search.toLowerCase();
-      rows = rows.filter(
-        (a) => a.action.toLowerCase().includes(q) || a.actor.toLowerCase().includes(q),
+    let rows = [...getDataset().audit];
+    // An empty array is "no object filter", not "match nothing" — the FilterMenu
+    // holds [] when nothing is ticked, and that state must show the whole log.
+    const objects = filter.objects;
+    if (objects && objects.length > 0) {
+      rows = rows.filter((a) => objects.includes(a.object));
+    }
+    // Inclusive at both ends: a reader who picks one day means that whole day.
+    const { from, to } = filter;
+    if (from) rows = rows.filter((a) => a.at >= from);
+    if (to) rows = rows.filter((a) => a.at <= to);
+    if (filter.search) {
+      // Target and detail included: a user's trail is reachable only by their
+      // email, which lives in `target` (point 38), and a rotation or policy run
+      // is only identifiable by the figures in `detail`.
+      const q = filter.search.toLowerCase();
+      rows = rows.filter((a) =>
+        `${a.actor} ${a.action} ${a.target} ${a.detail ?? ''}`.toLowerCase().includes(q),
       );
     }
-    return [...rows];
+    return rows;
   });
 }
 
@@ -1505,8 +1529,15 @@ function pushNotification(input: { severity: NotificationItem['severity']; title
   });
 }
 
-/** Append an immutable audit entry attributed to the current actor. */
-function appendAudit(action: string, target: string, detail?: string): void {
+/**
+ * Append an immutable audit entry attributed to the current actor.
+ *
+ * `action` is the closed AuditAction union, not a string: the object a row is
+ * filed under is derived here from ACTION_OBJECT rather than passed in, so a
+ * caller cannot misfile an entry and a new action cannot reach the log without
+ * someone classifying it first.
+ */
+function appendAudit(action: AuditAction, target: string, detail?: string): void {
   const { id } = currentActor();
   const ds = getDataset();
   const actor = ds.users.find((u) => u.id === id)?.email ?? 'system';
@@ -1515,6 +1546,7 @@ function appendAudit(action: string, target: string, detail?: string): void {
     at: new Date().toISOString(),
     actor,
     action,
+    object: ACTION_OBJECT[action],
     target,
     detail,
   });
@@ -2302,7 +2334,7 @@ export async function activateUser(id: string): Promise<User> {
   return setUserStatus(id, 'active', 'reactivated user');
 }
 
-async function setUserStatus(id: string, status: UserStatus, action: string): Promise<User> {
+async function setUserStatus(id: string, status: UserStatus, action: AuditAction): Promise<User> {
   await settle();
   if (authScenario() === 'api-failure') {
     throw new MockApiError('Could not update the user. Please try again later.', 'API_FAILURE');

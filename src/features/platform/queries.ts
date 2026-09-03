@@ -7,6 +7,7 @@ import {
   listUsers,
   markNotificationRead,
   updateUserRole,
+  type AuditFilter,
 } from '@/mocks/api';
 import type { Role } from '@/lib/permissions';
 
@@ -30,8 +31,13 @@ export function useUpdateUserRole() {
   });
 }
 
-export function useAudit(search?: string) {
-  return useQuery({ queryKey: ['audit', search ?? ''], queryFn: () => listAudit(search) });
+/**
+ * The filter object is the query key, so each combination caches separately and
+ * TanStack's structural hashing makes an equal-but-new object a cache hit rather
+ * than a refetch on every keystroke.
+ */
+export function useAudit(filter: AuditFilter = {}) {
+  return useQuery({ queryKey: ['audit', filter], queryFn: () => listAudit(filter) });
 }
 
 export function useNotifications() {

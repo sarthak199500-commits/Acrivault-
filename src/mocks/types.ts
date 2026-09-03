@@ -387,11 +387,121 @@ export interface MonitoringBaseline {
   windowDays: number;
 }
 
+export const AUDIT_OBJECTS = ['identity', 'session', 'policy', 'user', 'cloud', 'tenant'] as const;
+export type AuditObject = (typeof AUDIT_OBJECTS)[number];
+
+/**
+ * Every action the product writes to the log, as a closed set.
+ *
+ * A union rather than a string: ACTION_OBJECT below is a Record over it, so the
+ * compiler refuses a new action nobody has classified. That is what stops the
+ * object filter silently under-reporting — an unclassified action would land in
+ * no bucket and simply vanish from a filtered view.
+ *
+ * Derived from every `appendAudit()` call site in api.ts plus the seeded action
+ * tuples in generators.ts. `requested rotation` and `executed emergency
+ * rotation` are seed-only today; the live rotation path does not yet write the
+ * log, which is why they appear here but not in api.ts.
+ */
+export const AUDIT_ACTIONS = [
+  'acknowledged alert',
+  'resolved alert',
+  'assigned owner',
+  'requested rotation',
+  'executed emergency rotation',
+  'quarantined agent',
+  'recommended agent quarantine',
+  'released agent from quarantine',
+  'reviewed agent session',
+  'confirmed held step',
+  'overrode held step',
+  'tested policy',
+  'activated policy',
+  'reactivated policy',
+  'suspended policy',
+  'archived policy',
+  'edited user',
+  'deleted user',
+  'suspended user',
+  'reactivated user',
+  'changed user role',
+  'assigned role',
+  'synced users from Entra',
+  'connected cloud',
+  'updated SSO config',
+  'saved SAML configuration',
+  'tested SAML sign-in',
+  'issued SCIM token',
+  'enabled password sign-in',
+  'disabled password sign-in',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+/**
+ * What kind of thing each action acts on. Exhaustive by construction.
+ *
+ * The held-step decisions and the session review classify as `session` even
+ * though their target names an identity: the reader filtering for sessions is
+ * looking for what happened inside a session, not for the agent's own record.
+ */
+export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
+  'acknowledged alert': 'identity',
+  'resolved alert': 'identity',
+  'assigned owner': 'identity',
+  'requested rotation': 'identity',
+  'executed emergency rotation': 'identity',
+  'quarantined agent': 'identity',
+  'recommended agent quarantine': 'identity',
+  'released agent from quarantine': 'identity',
+  'reviewed agent session': 'session',
+  'confirmed held step': 'session',
+  'overrode held step': 'session',
+  'tested policy': 'policy',
+  'activated policy': 'policy',
+  'reactivated policy': 'policy',
+  'suspended policy': 'policy',
+  'archived policy': 'policy',
+  'edited user': 'user',
+  'deleted user': 'user',
+  'suspended user': 'user',
+  'reactivated user': 'user',
+  'changed user role': 'user',
+  'assigned role': 'user',
+  'synced users from Entra': 'user',
+  'connected cloud': 'cloud',
+  'updated SSO config': 'tenant',
+  'saved SAML configuration': 'tenant',
+  'tested SAML sign-in': 'tenant',
+  'issued SCIM token': 'tenant',
+  'enabled password sign-in': 'tenant',
+  'disabled password sign-in': 'tenant',
+};
+
+export const AUDIT_OBJECT_LABELS: Record<AuditObject, string> = {
+  identity: 'Identity',
+  session: 'Session',
+  policy: 'Policy',
+  user: 'User',
+  cloud: 'Cloud',
+  tenant: 'Tenant',
+};
+
+/**
+ * How long entries are retained before archival.
+ * // ASSUMPTION: 12 months is a placeholder chosen to be defensible for the
+ * // October SOC 2 Type I date. It is a policy decision with cost and legal
+ * // consequences and is pending sign-off. If it is not signed off, ship the
+ * // sentence without the figure — the copy is this one constant.
+ */
+export const AUDIT_RETENTION_LABEL = '12 months';
+
 export interface AuditEntry {
   id: string;
   at: string;
   actor: string;
-  action: string;
+  action: AuditAction;
+  /** What kind of thing the action acted on. Derived from `action`. */
+  object: AuditObject;
   target: string;
   detail?: string;
 } // append-only

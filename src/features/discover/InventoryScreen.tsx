@@ -21,7 +21,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { count, pluralize, relativeTime } from '@/lib/format';
-import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS } from '@/mocks/types';
+import { downloadFile, fileStamp, tenantLabel, toCsv, utcStamp } from '@/lib/csv';
+import { useActorEmail } from '@/lib/user';
+import { getDataset } from '@/mocks/dataset';
+import { NHI_TYPE_LABELS, IDENTITY_STATUS_LABELS, type Identity } from '@/mocks/types';
 import { bandMeta } from '@/lib/risk';
 import { PROVIDER_LABEL } from '@/components/ui/ProviderBadge';
 import { toast } from '@/stores/toast';
@@ -85,15 +88,23 @@ function InventoryKpis() {
 
 function BulkBar({
   selected,
+  rows,
   onClear,
 }: {
   selected: Set<string>;
+  /**
+   * The rows currently in view. The export writes the identities themselves, not
+   * their ids, and the whole point of the file is that it can be read without
+   * the console — so the values have to come from somewhere.
+   */
+  rows: Identity[];
   onClear: () => void;
 }) {
   const canRotate = useCan('rotate.request');
   const canExport = useCan('export');
   const n = selected.size;
   const rotate = useRequestRotations();
+  const actorEmail = useActorEmail();
 
   const requestRotation = () => {
     rotate.mutate([...selected], {
@@ -108,7 +119,47 @@ function BulkBar({
     });
   };
   const exportSelected = () => {
-    toast(`Exported ${count(n)} ${n === 1 ? 'identity' : 'identities'}`, { description: 'Synthetic CSV export.' });
+    const chosen = rows.filter((r) => selected.has(r.id));
+    const at = new Date();
+    const csv = toCsv(
+      [
+        'id',
+        'name',
+        'type',
+        'clouds',
+        'risk_score',
+        'risk_band',
+        'status',
+        'owner',
+        'last_seen_utc',
+      ],
+      chosen.map((r) => [
+        r.id,
+        r.name,
+        NHI_TYPE_LABELS[r.type],
+        // One correlated identity spans several clouds; a single-cloud column
+        // would misreport exactly the identities that matter most.
+        [...new Set(r.sources.map((s) => s.cloud))].join(' '),
+        r.riskScore,
+        r.riskBand,
+        r.status,
+        r.owner ?? '',
+        r.lastSeen,
+      ]),
+      {
+        tenant: tenantLabel(getDataset().tenant.name),
+        actor: actorEmail,
+        generatedAt: utcStamp(at),
+        // Says how the set was narrowed without restating the count below it or
+        // implying a reproducible filter: these rows were picked by hand.
+        filter: 'hand-picked selection',
+        rows: chosen.length,
+      },
+    );
+    downloadFile(`acrivault-identities-${fileStamp(at)}.csv`, csv);
+    toast(`Exported ${count(chosen.length)} ${chosen.length === 1 ? 'identity' : 'identities'}`, {
+      description: 'CSV file downloaded.',
+    });
   };
 
   return (
@@ -235,7 +286,11 @@ export function InventoryScreen() {
         <InventoryFilters filters={filters} counts={data?.counts} />
 
         {selected.size > 0 && filters.view === 'table' && (
-          <BulkBar selected={selected} onClear={() => setSelected(new Set())} />
+          <BulkBar
+            selected={selected}
+            rows={data?.rows ?? []}
+            onClear={() => setSelected(new Set())}
+          />
         )}
 
         <QueryBoundary
