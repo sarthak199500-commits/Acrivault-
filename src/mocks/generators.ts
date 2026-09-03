@@ -944,6 +944,7 @@ export function generateTenant(now: Date): Tenant {
       usersReceived: 11,
     },
     passwordFallback: true,
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: iso(now, 420 * DAY),
   };
 }

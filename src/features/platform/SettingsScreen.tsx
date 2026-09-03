@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { KeyRound, Users as UsersIcon } from 'lucide-react';
 import { useConnections } from './queries';
+import { SessionAccessCard } from './SessionAccessCard';
 import { useTenant, useUsers } from '@/features/admin/queries';
 import { CLOUD_LABELS, SSO_PROVIDER_LABELS, totalFor, type Tenant } from '@/mocks/types';
 import { samlStatus, scimStatus, signInSummary, type SummaryTone } from '@/lib/sso';
@@ -173,6 +174,8 @@ export function SettingsScreen() {
             </QueryBoundary>
           </CardBody>
         </Card>
+
+        <SessionAccessCard />
 
         <Card className="lg:col-span-2">
           <CardHeader

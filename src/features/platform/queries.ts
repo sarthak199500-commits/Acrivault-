@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getConnections,
+  getSessionPolicy,
   getSourceHealth,
   listAudit,
+  updateSessionPolicy,
   listNotifications,
   listUsers,
   markNotificationRead,
@@ -49,5 +51,21 @@ export function useMarkNotificationRead() {
   return useMutation({
     mutationFn: (id: string) => markNotificationRead(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+
+export function useSessionPolicy() {
+  return useQuery({ queryKey: ['session-policy'], queryFn: getSessionPolicy });
+}
+
+export function useUpdateSessionPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: updateSessionPolicy,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['session-policy'] });
+      // The change is audited, so the log a reader may have open is now stale.
+      qc.invalidateQueries({ queryKey: ['audit'] });
+    },
   });
 }

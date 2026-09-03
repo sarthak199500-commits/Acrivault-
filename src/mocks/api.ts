@@ -49,6 +49,7 @@ import type {
   RotationHistoryEntry,
   RotationJob,
   SourceHealth,
+  SessionPolicy,
   Tenant,
   User,
   UserStatus,
@@ -1959,6 +1960,8 @@ export async function acceptLegal(
     // The Owner signs in with a password until federation is configured — and
     // stays able to, because they are the only account Entra will not manage.
     passwordFallback: true,
+    // Same defaults the seeded tenant carries: a new org is not a laxer org.
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: new Date().toISOString(),
   };
   const user: User = {
@@ -2193,7 +2196,32 @@ function cloneTenant(t: Tenant): Tenant {
     sso: { ...t.sso },
     saml: { ...t.saml, cert: t.saml.cert ? { ...t.saml.cert } : null },
     scim: { ...t.scim },
+    sessionPolicy: { ...t.sessionPolicy },
   };
+}
+
+export function getSessionPolicy(): Promise<SessionPolicy> {
+  return respond(() => ({ ...getDataset().tenant.sessionPolicy }));
+}
+
+/**
+ * Record the tenant's session policy. Audited, because "how long does a session
+ * live" is a question an auditor asks and a change to it is evidence.
+ * // ASSUMPTION: enforcement is upstream — nothing here expires a session.
+ */
+export function updateSessionPolicy(patch: Partial<SessionPolicy>): Promise<SessionPolicy> {
+  return respond(() => {
+    assertActorCan('settings.manage');
+    const { tenant } = getDataset();
+    tenant.sessionPolicy = { ...tenant.sessionPolicy, ...patch };
+    const p = tenant.sessionPolicy;
+    appendAudit(
+      'updated session policy',
+      tenant.name,
+      `Idle ${p.idleTimeoutMinutes} min, absolute ${p.absoluteSessionHours} h, step-up ${p.stepUpOnSensitive ? 'on' : 'off'}.`,
+    );
+    return { ...p };
+  });
 }
 
 /* ------------------------------------------------- single sign-on & SCIM */

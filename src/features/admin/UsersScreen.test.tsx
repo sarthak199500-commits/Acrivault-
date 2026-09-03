@@ -70,6 +70,7 @@ function setTenant(saml: SamlConfig, scim: ScimConfig) {
     saml,
     scim,
     passwordFallback: true,
+    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: '2026-08-01T00:00:00.000Z',
   };
 }

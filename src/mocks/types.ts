@@ -510,6 +510,7 @@ export const AUDIT_ACTIONS = [
   'issued SCIM token',
   'enabled password sign-in',
   'disabled password sign-in',
+  'updated session policy',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -557,6 +558,7 @@ export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
   'issued SCIM token': 'tenant',
   'enabled password sign-in': 'tenant',
   'disabled password sign-in': 'tenant',
+  'updated session policy': 'tenant',
 };
 
 export const AUDIT_OBJECT_LABELS: Record<AuditObject, string> = {
@@ -680,6 +682,22 @@ export interface ScimConfig {
   usersReceived: number;
 }
 
+/**
+ * Tenant session and step-up policy.
+ *
+ * `mfaByRole` is deliberately absent: MFA requirement per role presupposes a
+ * finalised permission matrix, which is still open, so the surface states the
+ * intended policy read-only rather than letting an admin save one the
+ * enforcement layer cannot honour.
+ * // ASSUMPTION: enforcement is upstream; this records the policy, never applies it.
+ */
+export interface SessionPolicy {
+  idleTimeoutMinutes: number;
+  absoluteSessionHours: number;
+  /** Re-authenticate before a sensitive action — distinct from merely confirming it. */
+  stepUpOnSensitive: boolean;
+}
+
 export interface Tenant {
   id: string;
   name: string;
@@ -690,6 +708,7 @@ export interface Tenant {
   scim: ScimConfig;
   /** Password sign-in for accounts Entra does not manage. The way back in. */
   passwordFallback: boolean;
+  sessionPolicy: SessionPolicy;
   createdAt: string;
 }
 
