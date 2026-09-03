@@ -215,9 +215,16 @@ export function AuditScreen() {
           <Card>
             <CardHeader
               title={
-                filtered
-                  ? `${count(entries.length)} of ${count(total)} entries`
-                  : `${count(entries.length)} entries`
+                filtered ? (
+                  <>
+                    <span className="tnum">{count(entries.length)}</span> of{' '}
+                    <span className="tnum">{count(total)}</span> entries
+                  </>
+                ) : (
+                  <>
+                    <span className="tnum">{count(entries.length)}</span> entries
+                  </>
+                )
               }
               description={filterSummary || undefined}
             />

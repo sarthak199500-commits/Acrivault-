@@ -507,7 +507,7 @@ export function UsersScreen() {
 
       {!showRowActions && (
         <div className="mb-4">
-          <RoleRestricted note="You have read-only access to the user list." />
+          <RoleRestricted action="modify users" remedy="Tenant Admin" />
         </div>
       )}
 
