@@ -1,5 +1,5 @@
-import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Check } from 'lucide-react';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
@@ -133,7 +133,6 @@ function PeopleCard() {
 }
 
 export function SsoScreen() {
-  const navigate = useNavigate();
   const canManage = useCan('sso.manage');
   const live = useTenantLive();
   // Real time, not the seed's frozen NOW: everything on this screen can be moved
@@ -141,20 +140,10 @@ export function SsoScreen() {
   const now = new Date();
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div>
       <ScreenHeader
         {...screenHeaderProps('/settings/sso')}
         description="Microsoft Entra ID signs your people in and sends them to Acrivault."
-        actions={
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<ArrowLeft className="h-4 w-4" />}
-            onClick={() => navigate('/settings/users')}
-          >
-            Back to users
-          </Button>
-        }
       />
 
       {!canManage && (

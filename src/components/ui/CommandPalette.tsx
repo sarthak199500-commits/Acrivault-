@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useQuery } from '@tanstack/react-query';
-import { CornerDownLeft, KeyRound, Search } from 'lucide-react';
-import { ALL_NAV_ITEMS, screenIdentity } from '@/app/nav';
+import { CornerDownLeft, Search } from 'lucide-react';
+import { ALL_NAV_ITEMS, ALL_SETTINGS_ITEMS, screenIdentity } from '@/app/nav';
 import { listIdentities } from '@/mocks/api';
 import { NhiTypeIcon } from './NhiTypeIcon';
 import { cn } from '@/lib/cn';
@@ -15,6 +15,8 @@ interface Result {
   hint?: string;
   to: string;
   icon: React.ReactNode;
+  /** Extra searchable wording. Not displayed — the label is what the row shows. */
+  keywords?: string;
 }
 
 const SCREEN_RESULTS: Result[] = [
@@ -32,15 +34,22 @@ const SCREEN_RESULTS: Result[] = [
     to: '/onboarding',
     icon: <Search className="h-4 w-4" aria-hidden="true" />,
   },
-  // Not a rail item — it is configured once — but it must still be findable, and
-  // it is the screen an admin hunts for when nobody can sign in.
-  {
-    id: 'screen:/settings/sso',
-    label: 'Single Sign-On',
-    hint: 'Platform',
-    to: '/settings/sso',
-    icon: <KeyRound className="h-4 w-4" aria-hidden="true" />,
-  },
+  // Every settings pane. None of them is a rail item — Settings itself is the
+  // only Platform entry — but all of them must still be findable, and one of
+  // them is the screen an admin hunts for when nobody can sign in. Derived from
+  // SETTINGS_NAV rather than listed here, so the next pane added is searchable
+  // without anyone remembering to come back and add it.
+  ...ALL_SETTINGS_ITEMS.map((i) => ({
+    id: `screen:${i.to}`,
+    label: screenIdentity(i.to).title,
+    hint: 'Settings',
+    to: i.to,
+    icon: <i.icon className="h-4 w-4" aria-hidden="true" />,
+    // The tab label plus the pane's own synonyms, searchable alongside the
+    // canonical title. The tab says "Clouds" and the h1 says "Sources"; someone
+    // hunting for it will type "connected clouds" or "aws" and mean this pane.
+    keywords: `${i.label} ${i.keywords ?? ''}`,
+  })),
 ];
 
 export function CommandPalette() {
@@ -78,7 +87,11 @@ export function CommandPalette() {
 
   const screens = useMemo(
     () =>
-      term ? SCREEN_RESULTS.filter((s) => s.label.toLowerCase().includes(term)) : SCREEN_RESULTS,
+      term
+        ? SCREEN_RESULTS.filter((s) =>
+            `${s.label} ${s.keywords ?? ''}`.toLowerCase().includes(term),
+          )
+        : SCREEN_RESULTS,
     [term],
   );
 

@@ -11,6 +11,8 @@ import {
   generateConnections,
   generateCopilotSuggestions,
   generateIdentities,
+  generateNotificationPrefs,
+  generateNotificationRouting,
   generateNotifications,
   generatePolicies,
   generatePolicyActions,
@@ -72,6 +74,10 @@ export interface Dataset {
   rotations: ReturnType<typeof generateRotations>;
   audit: ReturnType<typeof generateAudit>;
   notifications: ReturnType<typeof generateNotifications>;
+  /** The signed-in person's own delivery choices. Mutable: the prefs screen writes here. */
+  notificationPrefs: ReturnType<typeof generateNotificationPrefs>;
+  /** Tenant-wide routing. Mutable, and every write is audited. */
+  notificationRouting: ReturnType<typeof generateNotificationRouting>;
   connections: ReturnType<typeof generateConnections>;
   rehearsals: ReturnType<typeof generateRehearsals>;
   copilot: ReturnType<typeof generateCopilotSuggestions>;
@@ -107,7 +113,11 @@ function build(): Dataset {
     policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
     rotations: generateRotations(identities, SEED, NOW),
     audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
-    notifications: generateNotifications(SEED, NOW),
+    // Takes identities and policies so a notification can name a real record
+    // and deep-link to it, rather than pointing every row at the Monitor list.
+    notifications: generateNotifications(identities, policies, SEED, NOW),
+    notificationPrefs: generateNotificationPrefs(),
+    notificationRouting: generateNotificationRouting(),
     connections: generateConnections(identities, NOW),
     rehearsals: generateRehearsals(SEED, NOW),
     copilot: generateCopilotSuggestions(identities, SEED),

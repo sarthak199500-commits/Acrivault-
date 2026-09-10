@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Settings, UserRound } from 'lucide-react';
+import { Bell, LogOut, Settings, UserRound } from 'lucide-react';
 import { ROLE_LABELS } from '@/lib/permissions';
 import { useUiStore } from '@/stores/ui';
 import { useAuthStore } from '@/stores/auth';
@@ -38,6 +38,11 @@ export function AccountMenu() {
         <DropdownMenuItem onSelect={() => navigate('/settings')}>
           <span className="inline-flex items-center gap-2">
             <Settings className="h-3.5 w-3.5" aria-hidden="true" /> Settings
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate('/settings/notifications')}>
+          <span className="inline-flex items-center gap-2">
+            <Bell className="h-3.5 w-3.5" aria-hidden="true" /> Notification preferences
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate('/audit')}>

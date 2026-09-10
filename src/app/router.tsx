@@ -3,6 +3,7 @@ import { AppShell } from './AppShell';
 import { AuthLayout } from './AuthLayout';
 import { RouteError, NotFoundScreen } from './routes/NotFoundScreen';
 import { useAuthStore } from '@/stores/auth';
+import { SETTINGS_INDEX_ROUTE } from './nav';
 
 /**
  * Gate the app shell behind the simulated session. Unauthenticated access to any
@@ -116,22 +117,63 @@ export const router = createBrowserRouter([
         path: 'rotate/:jobId',
         lazy: async () => ({ Component: (await import('@/features/rotate/RotationJobDetail')).RotationJobDetail }),
       },
+      // Settings is a shell with a grouped sub-nav; every pane renders in its
+      // Outlet. The panes keep the routes they already had, so every existing
+      // deep link (the coverage chip, the Users screen's Entra link, the
+      // account menu) still resolves.
       {
         path: 'settings',
-        lazy: async () => ({ Component: (await import('@/features/platform/SettingsScreen')).SettingsScreen }),
-      },
-      {
-        path: 'settings/sso',
-        lazy: async () => ({ Component: (await import('@/features/platform/sso/SsoScreen')).SsoScreen }),
-      },
-      // User administration (add-on). Add / Edit are modals over the list.
-      {
-        path: 'settings/users',
-        lazy: async () => ({ Component: (await import('@/features/admin/UsersScreen')).UsersScreen }),
-      },
-      {
-        path: 'settings/sources',
-        lazy: async () => ({ Component: (await import('@/features/platform/SourcesScreen')).SourcesScreen }),
+        lazy: async () => ({
+          Component: (await import('@/features/platform/SettingsLayout')).SettingsLayout,
+        }),
+        children: [
+          { index: true, element: <Navigate to={SETTINGS_INDEX_ROUTE} replace /> },
+          {
+            path: 'account',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/settings/AccountPane')).AccountPane,
+            }),
+          },
+          {
+            path: 'notifications',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/NotificationPreferencesScreen'))
+                .NotificationPreferencesScreen,
+            }),
+          },
+          {
+            path: 'general',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/settings/OrganizationPane'))
+                .OrganizationPane,
+            }),
+          },
+          {
+            path: 'sso',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/sso/SsoScreen')).SsoScreen,
+            }),
+          },
+          {
+            path: 'sessions',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/settings/SessionsPane')).SessionsPane,
+            }),
+          },
+          // User administration (add-on). Add / Edit are modals over the list.
+          {
+            path: 'users',
+            lazy: async () => ({
+              Component: (await import('@/features/admin/UsersScreen')).UsersScreen,
+            }),
+          },
+          {
+            path: 'sources',
+            lazy: async () => ({
+              Component: (await import('@/features/platform/SourcesScreen')).SourcesScreen,
+            }),
+          },
+        ],
       },
       {
         path: 'audit',

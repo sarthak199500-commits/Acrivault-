@@ -20,6 +20,8 @@ import {
   type IdentityStatus,
   type NhiType,
   type NotificationItem,
+  type NotificationPrefs,
+  type NotificationRouting,
   type Policy,
   type PolicyAction,
   type PolicyActionReason,
@@ -811,23 +813,164 @@ export function generateAudit(
   return entries;
 }
 
-export function generateNotifications(seed: number, now: Date): NotificationItem[] {
+/** One notification's category, severity, wording and destination as a single draw. */
+type NotificationSpec = Pick<NotificationItem, 'category' | 'severity' | 'title' | 'href'>;
+
+/**
+ * Seeded notification feed.
+ *
+ * Two invariants this generator has to hold, both of which it used to break:
+ *
+ *  1. STRICTLY DESCENDING in time. `pushNotification` unshifts live entries onto
+ *     the front, so the seeded tail has to already read newest-first. (Was
+ *     `now - i * rng.int(1, 10) * HOUR`, which scaled a fresh random multiplier
+ *     by `i` and so wandered forwards and backwards — the identical bug
+ *     `generateAudit` above carried until it was given a walking decrement.)
+ *
+ *  2. Severity, category, wording and link are ONE tuple, never four
+ *     independent draws. Drawing them apart put "Policy activated by an admin"
+ *     at critical severity, "New critical alert on an AI agent" at info, and
+ *     sent a completed rotation to the Monitor list. A feed that contradicts
+ *     itself teaches the reader to distrust the severity column.
+ */
+export function generateNotifications(
+  identities: Identity[],
+  policies: Policy[],
+  seed: number,
+  now: Date,
+): NotificationItem[] {
   const rng = new Rng(seed ^ 0x404140);
-  const titles = [
-    'New critical alert on an AI agent',
-    'Rotation completed successfully',
-    'Policy activated by an admin',
-    'Orphaned identity detected',
-    'Baseline established for monitoring',
+  // Agents where the population contains any, else the wider set: the small
+  // scales used in tests can hold no ai-agent at all.
+  const agents = identities.filter((i) => i.type === 'ai-agent');
+  const agentPool = agents.length > 0 ? agents : identities;
+
+  const specs: ReadonlyArray<() => NotificationSpec> = [
+    () => {
+      const a = rng.pick(agentPool);
+      return {
+        category: 'quarantine',
+        severity: 'critical',
+        title: a.owner
+          ? `${a.name} quarantined — ${a.owner} notified`
+          : `${a.name} quarantined — no owner to notify`,
+        href: `/discover/${a.id}`,
+      };
+    },
+    () => ({
+      category: 'alert',
+      severity: 'critical',
+      title: `Critical alert on ${rng.pick(agentPool).name}`,
+      href: '/monitor',
+    }),
+    () => ({
+      category: 'alert',
+      severity: 'high',
+      title: `Unusual credential use by ${rng.pick(identities).name}`,
+      href: '/monitor',
+    }),
+    () => {
+      const i = rng.pick(identities);
+      return {
+        category: 'alert',
+        severity: 'medium',
+        title: `${i.name} is now orphaned — no owner on record`,
+        href: `/discover/${i.id}`,
+      };
+    },
+    () => ({
+      category: 'rotation',
+      severity: 'high',
+      title: `Rotation rolled back on ${rng.pick(identities).name}`,
+      href: '/rotate',
+    }),
+    () => ({
+      category: 'rotation',
+      severity: 'info',
+      title: `Rotation completed on ${rng.pick(identities).name}`,
+      href: '/rotate',
+    }),
+    () => ({
+      category: 'policy',
+      severity: 'medium',
+      title: `Policy “${rng.pick(policies).name}” activated`,
+      href: '/govern',
+    }),
+    () => ({
+      category: 'policy',
+      severity: 'info',
+      title: `Policy “${rng.pick(policies).name}” suspended`,
+      href: '/govern',
+    }),
+    () => ({
+      category: 'system',
+      severity: 'info',
+      title: `Baseline established for ${rng.int(8, 40)} agents`,
+    }),
   ];
-  return Array.from({ length: 12 }, (_, i) => ({
-    id: `ntf_${i.toString(36).padStart(4, '0')}`,
-    at: new Date(now.getTime() - i * rng.int(1, 10) * 3600000).toISOString(),
-    severity: rng.weighted(['critical', 'high', 'medium', 'info'] as const, [2, 3, 3, 4]),
-    title: rng.pick(titles),
-    read: rng.bool(0.5),
-    href: rng.bool(0.6) ? '/monitor' : undefined,
-  }));
+
+  // Walking decrement, matching generateAudit: each step only ever moves
+  // backwards, so the result is monotonic by construction rather than by luck.
+  let at = now.getTime() - rng.int(8, 50) * 60000;
+  const items: NotificationItem[] = [];
+  for (let i = 0; i < 12; i++) {
+    items.push({
+      id: `ntf_${i.toString(36).padStart(4, '0')}`,
+      at: new Date(at).toISOString(),
+      // The unread cluster sits at the top, where a live push would land it.
+      read: i >= 3,
+      ...rng.pick(specs)(),
+    });
+    at -= rng.int(1, 7) * 3600000;
+  }
+  return items;
+}
+
+/**
+ * A person's starting delivery choices. Email is on only where a missed message
+ * costs something — containment and critical alerts — so the seeded state is not
+ * a wall of identical switches nobody reads.
+ */
+export function generateNotificationPrefs(): NotificationPrefs {
+  return {
+    categories: {
+      alert: { inApp: true, email: true },
+      rotation: { inApp: true, email: false },
+      policy: { inApp: true, email: false },
+      quarantine: { inApp: true, email: true },
+      system: { inApp: true, email: false },
+    },
+    digest: { enabled: true, day: 1, hour: 9 },
+  };
+}
+
+/**
+ * Seeded tenant routing. Only the email destination is verified: Slack and the
+ * SIEM webhook are labelled synthetic in the UI rather than claiming a delivery
+ * path Wave 1 does not have.
+ * // ASSUMPTION: delivery, verification and secret storage are upstream.
+ */
+export function generateNotificationRouting(): NotificationRouting {
+  return {
+    minSeverity: 'high',
+    destinations: [
+      {
+        id: 'dst_email',
+        kind: 'email',
+        target: 'security-oncall@acme.test',
+        enabled: true,
+        verified: true,
+      },
+      { id: 'dst_slack', kind: 'slack', target: '#sec-alerts', enabled: true, verified: false },
+      {
+        id: 'dst_siem',
+        kind: 'webhook',
+        target: 'https://splunk.acme.test/services/collector',
+        enabled: false,
+        verified: false,
+      },
+    ],
+  };
 }
 
 export function generateConnections(identities: Identity[], now: Date): CloudConnection[] {
