@@ -337,7 +337,7 @@ export function NotificationPreferencesScreen() {
         description="What reaches you, and where it goes."
         actions={
           <Link to="/notifications" className={buttonClasses('secondary', 'sm')}>
-            Back to feed
+            Notification feed
           </Link>
         }
       />

@@ -3,9 +3,12 @@ import {
   Bell,
   BookOpen,
   Boxes,
+  Building2,
   ClipboardCheck,
+  Clock,
   Database,
   GitBranch,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   RefreshCw,
@@ -14,6 +17,7 @@ import {
   ShieldHalf,
   ShieldX,
   Sparkles,
+  UserRound,
   Users,
   Workflow,
   type LucideIcon,
@@ -93,15 +97,90 @@ export const NAV: NavGroup[] = [
   {
     layer: 'Platform',
     items: [
-      { to: '/settings/users', label: 'Users', title: 'Manage Users', icon: Users },
-      { to: '/settings/sources', label: 'Sources', icon: Database },
-      { to: '/settings', label: 'Settings', icon: Settings, end: true },
+      // Users and Sources used to sit here as well as being /settings/* routes
+      // AND cards inside /settings — three entry points to one screen, with the
+      // hierarchy expressed nowhere. They are settings panes now, reachable from
+      // SETTINGS_NAV below and still findable in the command palette.
+      { to: '/settings', label: 'Settings', icon: Settings },
+      // Audit Log stays a rail destination: it is an auditor's working surface
+      // with an export, not something anyone configures.
       { to: '/audit', label: 'Audit Log', icon: ScrollText },
       { to: '/notifications', label: 'Notifications', icon: Bell },
       { to: '/design-system', label: 'Design System', icon: BookOpen },
     ],
   },
 ];
+
+export interface SettingsNavItem {
+  to: string;
+  /** Sub-nav label. */
+  label: string;
+  /** Canonical screen name — the pane's h1 and document title. Defaults to `label`. */
+  title?: string;
+  icon: LucideIcon;
+}
+
+export interface SettingsNavGroup {
+  category: string;
+  items: SettingsNavItem[];
+}
+
+/**
+ * The panes inside Settings, grouped.
+ *
+ * One list, read by three consumers: the settings sub-nav, the command palette
+ * (so collapsing the Platform rail above does not make a pane unfindable), and
+ * SCREEN_INDEX below (so no pane file types its own eyebrow). The palette used
+ * to hand-append `/settings/sso` for exactly this reason; deriving it from here
+ * means the next pane added is searchable without anyone remembering to.
+ *
+ * No capability gating: every role may VIEW every pane. What a role cannot
+ * change is refused inside the pane, with the RoleRestricted sentence naming
+ * the role and the remedy — a category that vanishes tells the reader nothing.
+ */
+export const SETTINGS_NAV: SettingsNavGroup[] = [
+  {
+    category: 'Account',
+    items: [
+      { to: '/settings/account', label: 'Your account', icon: UserRound },
+      {
+        to: '/settings/notifications',
+        label: 'Notifications',
+        title: 'Notification Preferences',
+        icon: Bell,
+      },
+    ],
+  },
+  {
+    category: 'Organization',
+    items: [
+      { to: '/settings/general', label: 'General', title: 'Organization', icon: Building2 },
+      { to: '/settings/sso', label: 'Sign-in and SSO', title: 'Sign-in & SSO', icon: KeyRound },
+      {
+        to: '/settings/sessions',
+        label: 'Sessions and access',
+        title: 'Sessions & Access',
+        icon: Clock,
+      },
+    ],
+  },
+  {
+    category: 'People',
+    items: [{ to: '/settings/users', label: 'Users', title: 'Manage Users', icon: Users }],
+  },
+  {
+    category: 'Data',
+    items: [
+      { to: '/settings/sources', label: 'Connected clouds', title: 'Sources', icon: Database },
+    ],
+  },
+];
+
+/** Flat list of settings panes, for the command palette and the screen index. */
+export const ALL_SETTINGS_ITEMS: SettingsNavItem[] = SETTINGS_NAV.flatMap((g) => g.items);
+
+/** The pane a bare /settings lands on. */
+export const SETTINGS_INDEX_ROUTE = '/settings/account';
 
 /** Flat list used by the command palette and the route announcer. */
 export const ALL_NAV_ITEMS: (NavItem & { layer: string })[] = NAV.flatMap((g) =>
@@ -125,16 +204,17 @@ const EXTRA_SCREENS: Record<string, { layer: string; pillar?: string; title: str
   // Deliberately outside the four layers: onboarding is a one-time setup flow,
   // not a place in the product.
   '/onboarding': { layer: 'Get started', title: 'Onboarding & Connect' },
-  '/settings/sso': { layer: 'Platform', pillar: 'Settings', title: 'Sign-in & SSO' },
-  // Not a rail destination: the feed and Settings both link to it, and a third
-  // Platform entry called "Notifications" next to the existing one would read as
-  // two different places.
-  '/settings/notifications': {
-    layer: 'Platform',
-    pillar: 'Settings',
-    title: 'Notification Preferences',
-  },
   '/govern/builder': { layer: 'Know', pillar: 'Govern', title: 'Policy Builder' },
+  // Every settings pane is folded in below, derived from SETTINGS_NAV. Adding
+  // one there gives it an eyebrow, a document title and a palette entry at once.
+  ...Object.fromEntries(
+    SETTINGS_NAV.flatMap((group) =>
+      group.items.map((item) => [
+        item.to,
+        { layer: 'Platform', pillar: 'Settings', title: item.title ?? item.label },
+      ]),
+    ),
+  ),
 };
 
 function identityOf(v: { layer: string; pillar?: string; title: string }): ScreenIdentity {

@@ -237,6 +237,14 @@ production build, lint, axe-clean, both themes):
   immutable history) and Platform (Settings with Admin-gated user role management +
   connected clouds, SSO config with a timing-assumption note, append-only Audit log,
   Notifications feed + preferences).
+  - **Settings is a shell, not a page.** `/settings` redirects to the first pane and
+    every `/settings/*` screen renders inside a grouped sub-nav (Account, Organization,
+    People, Data) declared once in `SETTINGS_NAV` — which also feeds the command palette
+    and the screen-title index, so a new pane is searchable and correctly titled without
+    a second edit. The Platform rail lists Settings, Audit Log, Notifications and Design
+    System only: Users and Sources used to sit there *and* be `/settings/*` routes *and*
+    be cards inside Settings, which is three doors to one room. Audit Log stays in the
+    rail — it is an auditor's working surface with an export, not a setting.
 - **Phase 7** — Wave 2 concept screens (Recovery Rehearsals — time-to-usable + rehearsal
   history; Defender Copilot — ranked, human-approved suggestions), then hardening: a
   full-route **axe sweep in both themes (0 violations)**, a contrast pass, and this README.
