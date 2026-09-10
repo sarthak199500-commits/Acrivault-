@@ -180,6 +180,28 @@ Registration & administration add-on:
   MFA.
 - The **session model**: the app simulates a session that defaults to authenticated; a
   real session, SSO, and MFA are upstream.
+Notifications & delivery:
+
+- **Notification delivery is upstream.** The in-app leg is real — a category whose
+  in-app switch is off raises nothing — but email, Slack and SIEM delivery, destination
+  verification, and the secrets those endpoints need are all upstream. Unverified
+  destinations are labelled **Synthetic** in the UI rather than implying a working path.
+- **Adding or changing a routing destination** needs a delivery check and a stored
+  secret, so the screen enables and disables the configured destinations rather than
+  editing them. Same reason **allowed domains** stay read-only: adding one needs a DNS
+  check, which belongs in the existing verification flow.
+- **Rotation notifications fire on start, not on outcome.** Phase progress is simulated
+  in the UI and never reaches the mock API, so there is no completion or rollback event
+  to raise. The category is named "Rotation activity" for that reason — the earlier
+  "Rotation outcomes" wording promised a notification nothing sent.
+- **The weekly digest carries no stored time zone**; it renders against the reader's
+  resolved zone so a stored value cannot drift out of step with the browser.
+- **No MFA device name or recovery-code count** on the Your account card: the user model
+  holds neither, and a count no flow updates is the failure the read-only MFA-by-role
+  table already refuses to commit. Re-enrolment links to the existing flow instead.
+- **Ownership transfer** swaps both roles in one write, so the tenant never has two
+  Owners or none. Enforcement of the resulting permissions is upstream.
+
 - **Known a11y note**: while a Radix modal is open, the shell is `aria-hidden` and focus
   is trapped; axe reports `aria-hidden-focus` / missing-landmark against the hidden
   background. This is inherent to the shared Dialog primitive (every dialog in the app)

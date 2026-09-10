@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { useCan } from '@/components/ui/Can';
+import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
 
@@ -59,6 +60,18 @@ export function SessionAccessCard() {
         >
           {(p) => (
             <div className="divide-y divide-border">
+              {/*
+                Named before the controls, not after. This card disables three
+                inputs for a role that cannot manage settings, and it was the
+                only screen in the app that did so silently — every other
+                surface uses this component to say whose role it is and who can
+                lift it.
+              */}
+              {!canManage && (
+                <div className="pb-3">
+                  <RoleRestricted action="change session policy" remedy="Tenant Admin" />
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-3 pb-2.5">
                 <span className="text-[length:var(--fs-small)] text-text">Idle timeout</span>
                 <Select

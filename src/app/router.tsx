@@ -124,6 +124,13 @@ export const router = createBrowserRouter([
         path: 'settings/sso',
         lazy: async () => ({ Component: (await import('@/features/platform/sso/SsoScreen')).SsoScreen }),
       },
+      {
+        path: 'settings/notifications',
+        lazy: async () => ({
+          Component: (await import('@/features/platform/NotificationPreferencesScreen'))
+            .NotificationPreferencesScreen,
+        }),
+      },
       // User administration (add-on). Add / Edit are modals over the list.
       {
         path: 'settings/users',

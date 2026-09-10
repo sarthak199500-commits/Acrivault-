@@ -20,7 +20,7 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { ACTION_OBJECT, isCrossCloud, isFlaggedStep } from './types';
+import { ACTION_OBJECT, isCrossCloud, isFlaggedStep, NOTIFICATION_CATEGORIES } from './types';
 import type {
   Alert,
   AgentSession,
@@ -37,7 +37,11 @@ import type {
   IdentityStatus,
   MonitoringBaseline,
   NhiType,
+  NotificationCategory,
+  NotificationChannels,
   NotificationItem,
+  NotificationPrefs,
+  NotificationRouting,
   Policy,
   PolicyAction,
   PolicyActionOutcome,
@@ -811,6 +815,14 @@ export function activatePolicy(id: string): Promise<Policy> {
       policy.name,
       `Enforced against ${countPhrase(policy.affectedCount)}.`,
     );
+    // The 'Policy changes' preference promised this event; until now nothing
+    // raised it, so the switch described a notification the product never sent.
+    pushNotification({
+      severity: 'medium',
+      category: 'policy',
+      title: `Policy “${policy.name}” ${reactivating ? 'reactivated' : 'activated'}`,
+      href: '/govern',
+    });
     return { ...policy };
   });
 }
@@ -997,6 +1009,7 @@ function containIdentity(identity: Identity, note?: string, viaSessionId?: strin
   // to tell, which is itself worth surfacing rather than silently skipping.
   pushNotification({
     severity: 'critical',
+    category: 'quarantine',
     title: identity.owner
       ? `${identity.name} quarantined — ${identity.owner} notified`
       : `${identity.name} quarantined — no owner to notify`,
@@ -1561,6 +1574,16 @@ export function requestRotation(identityId: string, mode: 'standard' | 'emergenc
       cascade: [],
     };
     getDataset().rotations.active.unshift(job);
+    // Raised on START, which is the only rotation event this layer owns —
+    // phase progress is simulated in the UI and never reaches the mock API, so
+    // there is no completion or rollback event to hook yet. The category label
+    // says "activity" rather than "outcomes" for exactly this reason.
+    pushNotification({
+      severity: mode === 'emergency' ? 'high' : 'info',
+      category: 'rotation',
+      title: `${mode === 'emergency' ? 'Emergency rotation' : 'Rotation'} started on ${identityLabel(identityId)}`,
+      href: '/rotate',
+    });
     return { ...job };
   });
 }
@@ -1666,12 +1689,145 @@ export function listNotifications(): Promise<NotificationItem[]> {
   return respond(() => (isEmptyForced() ? [] : [...getDataset().notifications]));
 }
 
-export function markNotificationRead(id: string): Promise<NotificationItem> {
+/**
+ * Set one notification's read state.
+ *
+ * REPLACES the array entry rather than mutating it. `listNotifications` hands
+ * out the stored objects, so mutating `item.read` in place left the cache
+ * deep-equal to itself: React Query's structural sharing returned the SAME array
+ * reference on refetch, no subscriber was notified, and the header bell went on
+ * showing a stale unread count until something unrelated forced a re-render.
+ * A new object at a new array index is what makes the invalidation observable.
+ */
+export function setNotificationRead(id: string, read: boolean): Promise<NotificationItem> {
   return respond(() => {
-    const item = getDataset().notifications.find((n) => n.id === id);
-    if (!item) throw new MockApiError('Notification not found.');
-    item.read = true;
-    return { ...item };
+    const list = getDataset().notifications;
+    const index = list.findIndex((n) => n.id === id);
+    if (index === -1) throw new MockApiError('Notification not found.');
+    const updated = { ...list[index], read };
+    list[index] = updated;
+    return { ...updated };
+  });
+}
+
+/** Clear the whole unread cluster in one write. Same replace-don't-mutate rule. */
+export function markAllNotificationsRead(): Promise<NotificationItem[]> {
+  return respond(() => {
+    const ds = getDataset();
+    ds.notifications = ds.notifications.map((n) => (n.read ? n : { ...n, read: true }));
+    return ds.notifications.map((n) => ({ ...n }));
+  });
+}
+
+/**
+ * Deep copies, not spreads. The stored prefs hold a nested object per category;
+ * handing out a shallow copy would share those inner objects with the caller and
+ * reintroduce exactly the aliasing that made the bell badge go stale.
+ */
+function copyPrefs(p: NotificationPrefs): NotificationPrefs {
+  const categories = {} as Record<NotificationCategory, NotificationChannels>;
+  for (const c of NOTIFICATION_CATEGORIES) categories[c] = { ...p.categories[c] };
+  return { categories, digest: { ...p.digest } };
+}
+
+function copyRouting(r: NotificationRouting): NotificationRouting {
+  return { minSeverity: r.minSeverity, destinations: r.destinations.map((d) => ({ ...d })) };
+}
+
+/** The signed-in actor's email, or 'system' — the same resolution appendAudit uses. */
+function currentActorEmail(): string {
+  const { id } = currentActor();
+  return getDataset().users.find((u) => u.id === id)?.email ?? 'system';
+}
+
+export function getNotificationPrefs(): Promise<NotificationPrefs> {
+  return respond(() => copyPrefs(getDataset().notificationPrefs));
+}
+
+/**
+ * Record the signed-in person's delivery choices. Audited: an attacker who turns
+ * off critical alerts has done something an auditor needs to be able to find.
+ * Every role holds `notifications.self` — these are personal, not tenant-wide.
+ */
+export function updateNotificationPrefs(patch: Partial<NotificationPrefs>): Promise<NotificationPrefs> {
+  return respond(() => {
+    assertActorCan('notifications.self');
+    const ds = getDataset();
+    const next: NotificationPrefs = {
+      categories: { ...ds.notificationPrefs.categories, ...(patch.categories ?? {}) },
+      digest: { ...ds.notificationPrefs.digest, ...(patch.digest ?? {}) },
+    };
+    ds.notificationPrefs = next;
+    const on = NOTIFICATION_CATEGORIES.filter((c) => next.categories[c].email).length;
+    appendAudit(
+      'updated notification preferences',
+      currentActorEmail(),
+      `Email on for ${on} of ${NOTIFICATION_CATEGORIES.length} categories, digest ${next.digest.enabled ? 'on' : 'off'}.`,
+    );
+    return copyPrefs(next);
+  });
+}
+
+export function getNotificationRouting(): Promise<NotificationRouting> {
+  return respond(() => copyRouting(getDataset().notificationRouting));
+}
+
+/**
+ * Record tenant-wide routing (role-gated: `notifications.routing`).
+ *
+ * Separate from the personal preferences above because the blast radius is
+ * different: this decides what an entire security team stops seeing.
+ */
+export function updateNotificationRouting(
+  patch: Partial<NotificationRouting>,
+): Promise<NotificationRouting> {
+  return respond(() => {
+    assertActorCan('notifications.routing');
+    const ds = getDataset();
+    const next: NotificationRouting = { ...ds.notificationRouting, ...patch };
+    ds.notificationRouting = next;
+    const live = next.destinations.filter((d) => d.enabled).length;
+    appendAudit(
+      'updated notification routing',
+      ds.tenant.name,
+      `Routing ${next.minSeverity} and above to ${live} of ${next.destinations.length} destinations.`,
+    );
+    return copyRouting(next);
+  });
+}
+
+/**
+ * Hand the Tenant Owner role to someone else (role-gated:
+ * `tenant.transferOwnership`, Owner only).
+ *
+ * A tenant has exactly one Owner, so this is a swap, not a grant: the outgoing
+ * Owner lands on Tenant Admin in the same write. Doing it as two role changes
+ * would leave a window with two Owners or none.
+ */
+export function transferOwnership(userId: string): Promise<User> {
+  return respond(() => {
+    assertActorCan('tenant.transferOwnership');
+    const ds = getDataset();
+    const target = ds.users.find((u) => u.id === userId);
+    if (!target) throw new MockApiError('User not found.', 'NOT_FOUND');
+    if (target.id === currentActor().id) {
+      throw new MockApiError('You already own this organization.', 'INVALID_TRANSITION');
+    }
+    if (target.status !== 'active') {
+      throw new MockApiError(
+        'Ownership can only pass to an active user.',
+        'INVALID_TRANSITION',
+      );
+    }
+    const outgoing = ds.users.find((u) => u.role === 'tenant-owner');
+    if (outgoing) outgoing.role = 'tenant-admin';
+    target.role = 'tenant-owner';
+    appendAudit(
+      'transferred ownership',
+      ds.tenant.name,
+      `Tenant Owner passed to ${target.email}${outgoing ? `; ${outgoing.email} is now a Tenant Admin` : ''}.`,
+    );
+    return { ...target };
   });
 }
 
@@ -1749,9 +1905,23 @@ function identityLabel(identityId: string): string {
   return getDataset().identityById.get(identityId)?.name ?? identityId;
 }
 
-/** Raise an in-app notification (spec 13.4). Newest first, unread. */
-function pushNotification(input: { severity: NotificationItem['severity']; title: string; href?: string }): void {
-  getDataset().notifications.unshift({
+/**
+ * Raise an in-app notification (spec 13.4). Newest first, unread.
+ *
+ * Honours the reader's in-app preference for the category: a switch that does
+ * not suppress anything is decoration. Delivery to email, Slack or a SIEM is
+ * upstream, so only the in-app leg is enforced here.
+ * // ASSUMPTION: external delivery and tenant routing fan-out are upstream.
+ */
+function pushNotification(input: {
+  severity: NotificationItem['severity'];
+  category: NotificationCategory;
+  title: string;
+  href?: string;
+}): void {
+  const ds = getDataset();
+  if (!ds.notificationPrefs.categories[input.category].inApp) return;
+  ds.notifications.unshift({
     id: `ntf_${Math.random().toString(36).slice(2, 8)}`,
     at: new Date().toISOString(),
     read: false,

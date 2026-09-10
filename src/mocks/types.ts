@@ -527,6 +527,12 @@ export const AUDIT_ACTIONS = [
   'enabled password sign-in',
   'disabled password sign-in',
   'updated session policy',
+  // Personal delivery choices are filed under `user`, tenant-wide routing under
+  // `tenant`: an auditor asking "who stopped getting critical alerts" and one
+  // asking "where does this org send them" are running two different queries.
+  'updated notification preferences',
+  'updated notification routing',
+  'transferred ownership',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -568,6 +574,9 @@ export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
   'assigned role': 'user',
   'synced users from Entra': 'user',
   'connected cloud': 'cloud',
+  'updated notification preferences': 'user',
+  'updated notification routing': 'tenant',
+  'transferred ownership': 'tenant',
   'updated SSO config': 'tenant',
   'saved SAML configuration': 'tenant',
   'tested SAML sign-in': 'tenant',
@@ -608,13 +617,136 @@ export interface AuditEntry {
   detail?: string;
 } // append-only
 
+/**
+ * What kind of event raised a notification.
+ *
+ * A closed set because it is the join between the feed and a preference: a
+ * toggle can only suppress what it can name. Before this existed the
+ * preferences screen offered four switches with nothing to bind to, so every
+ * one of them was decorative.
+ */
+export const NOTIFICATION_CATEGORIES = [
+  'alert',
+  'rotation',
+  'policy',
+  'quarantine',
+  'system',
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+export const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
+  alert: 'Critical alerts',
+  // "Rotation activity", not "outcomes": the only rotation event this build
+  // raises is a start (`requestRotation`). Completion is simulated in the UI and
+  // has no server-side event to hook, so promising outcomes here would put the
+  // preference screen back to describing notifications nothing sends.
+  rotation: 'Rotation activity',
+  policy: 'Policy changes',
+  quarantine: 'Quarantine actions',
+  system: 'System notices',
+};
+
+/** Short label for the per-row chip in the feed, where the pref-row wording is too long. */
+export const NOTIFICATION_CATEGORY_CHIP: Record<NotificationCategory, string> = {
+  alert: 'Alert',
+  rotation: 'Rotation',
+  policy: 'Policy',
+  quarantine: 'Quarantine',
+  system: 'System',
+};
+
 export interface NotificationItem {
   id: string;
   at: string;
   severity: RiskBand | 'info';
+  category: NotificationCategory;
   title: string;
   read: boolean;
   href?: string;
+}
+
+/** Where one category's notifications are delivered for one person. */
+export interface NotificationChannels {
+  inApp: boolean;
+  email: boolean;
+}
+
+/** 0 = Sunday, matching `Date.getDay()`. */
+export type DigestDay = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export const DIGEST_DAY_LABELS: Record<DigestDay, string> = {
+  0: 'Sunday',
+  1: 'Monday',
+  2: 'Tuesday',
+  3: 'Wednesday',
+  4: 'Thursday',
+  5: 'Friday',
+  6: 'Saturday',
+};
+
+/**
+ * One person's delivery choices. Personal, so every role holds
+ * `notifications.self` and may edit their own.
+ *
+ * The digest carries no time zone: it is rendered against the reader's own
+ * resolved zone rather than stored, so a stored value cannot drift out of step
+ * with the browser and quietly describe a delivery time nobody gets.
+ */
+export interface NotificationPrefs {
+  categories: Record<NotificationCategory, NotificationChannels>;
+  digest: { enabled: boolean; day: DigestDay; hour: number };
+}
+
+export const ROUTING_DESTINATION_KINDS = ['email', 'slack', 'webhook'] as const;
+export type RoutingDestinationKind = (typeof ROUTING_DESTINATION_KINDS)[number];
+
+export const ROUTING_KIND_LABELS: Record<RoutingDestinationKind, string> = {
+  email: 'Email',
+  slack: 'Slack',
+  webhook: 'Webhook',
+};
+
+export interface RoutingDestination {
+  id: string;
+  kind: RoutingDestinationKind;
+  /** Address, channel, or endpoint. Never a secret — tokens live upstream. */
+  target: string;
+  enabled: boolean;
+  /**
+   * Whether the destination has proven it receives. Only `email` is ever
+   * verified in Wave 1; the rest are synthetic and say so in the UI.
+   * // ASSUMPTION: delivery and verification are upstream.
+   */
+  verified: boolean;
+}
+
+/**
+ * Tenant-wide routing: where the ORGANIZATION's alerts go, as distinct from
+ * where one person's do. Gated on `notifications.routing` (Tenant Admin and
+ * above) because it decides what an entire security team sees.
+ */
+export interface NotificationRouting {
+  /** Route anything at or above this severity. `'info'` routes everything. */
+  minSeverity: RiskBand | 'info';
+  destinations: RoutingDestination[];
+}
+
+/** Severity floor → the bands it admits, ordered high → low. */
+export const SEVERITY_ORDER: ReadonlyArray<RiskBand | 'info'> = [
+  'critical',
+  'high',
+  'medium',
+  'low',
+  'minimal',
+  'info',
+];
+
+/** Does `severity` clear the routing floor? */
+export function meetsSeverityFloor(
+  severity: RiskBand | 'info',
+  floor: RiskBand | 'info',
+): boolean {
+  return SEVERITY_ORDER.indexOf(severity) <= SEVERITY_ORDER.indexOf(floor);
 }
 
 export interface CloudConnection {

@@ -1,12 +1,20 @@
-import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
-import { listNotifications } from '@/mocks/api';
+import { useNotifications } from '@/features/platform/queries';
 import { IconButton } from '@/components/ui/IconButton';
 
+/**
+ * The header's unread count.
+ *
+ * Reads through `useNotifications`, the same hook the feed uses, rather than
+ * repeating the query key and fetcher inline. Two hand-written copies of one
+ * cache entry is how the badge and the feed came to disagree — and the count
+ * being wrong in the persistent chrome is worse than it being wrong anywhere
+ * else, because it is the number that decides whether anyone looks.
+ */
 export function NotificationsBell() {
   const navigate = useNavigate();
-  const { data } = useQuery({ queryKey: ['notifications'], queryFn: listNotifications });
+  const { data } = useNotifications();
   const unread = data?.filter((n) => !n.read).length ?? 0;
 
   return (

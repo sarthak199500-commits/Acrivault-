@@ -126,6 +126,14 @@ const EXTRA_SCREENS: Record<string, { layer: string; pillar?: string; title: str
   // not a place in the product.
   '/onboarding': { layer: 'Get started', title: 'Onboarding & Connect' },
   '/settings/sso': { layer: 'Platform', pillar: 'Settings', title: 'Sign-in & SSO' },
+  // Not a rail destination: the feed and Settings both link to it, and a third
+  // Platform entry called "Notifications" next to the existing one would read as
+  // two different places.
+  '/settings/notifications': {
+    layer: 'Platform',
+    pillar: 'Settings',
+    title: 'Notification Preferences',
+  },
   '/govern/builder': { layer: 'Know', pillar: 'Govern', title: 'Policy Builder' },
 };
 
