@@ -113,14 +113,23 @@ export const NAV: NavGroup[] = [
 
 export interface SettingsNavItem {
   to: string;
-  /** Sub-nav label. */
+  /**
+   * Tab label. Short on purpose — seven of these share one row, and the pane's
+   * own h1 carries the full name, so the tab does not have to.
+   */
   label: string;
   /** Canonical screen name — the pane's h1 and document title. Defaults to `label`. */
   title?: string;
+  /**
+   * Extra wording the command palette should match. The tab says "Clouds" and
+   * the h1 says "Sources"; someone hunting for it will type neither.
+   */
+  keywords?: string;
   icon: LucideIcon;
 }
 
 export interface SettingsNavGroup {
+  /** Named for the screen-reader group label and the divider it draws. */
   category: string;
   items: SettingsNavItem[];
 }
@@ -136,17 +145,28 @@ export interface SettingsNavGroup {
  *
  * No capability gating: every role may VIEW every pane. What a role cannot
  * change is refused inside the pane, with the RoleRestricted sentence naming
- * the role and the remedy — a category that vanishes tells the reader nothing.
+ * the role and the remedy — a tab that vanishes tells the reader nothing.
+ *
+ * TWO groups, not four. The sub-nav is one tab row now, so a group buys a
+ * divider and a screen-reader label rather than a heading — and the only split
+ * that earns one is what is yours versus what is the organization's.
  */
 export const SETTINGS_NAV: SettingsNavGroup[] = [
   {
     category: 'Account',
     items: [
-      { to: '/settings/account', label: 'Your account', icon: UserRound },
+      {
+        to: '/settings/account',
+        label: 'Account',
+        title: 'Your account',
+        keywords: 'profile me my password mfa authenticator sign-in method',
+        icon: UserRound,
+      },
       {
         to: '/settings/notifications',
         label: 'Notifications',
         title: 'Notification Preferences',
+        keywords: 'preferences email digest routing alerts delivery',
         icon: Bell,
       },
     ],
@@ -154,24 +174,41 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
   {
     category: 'Organization',
     items: [
-      { to: '/settings/general', label: 'General', title: 'Organization', icon: Building2 },
-      { to: '/settings/sso', label: 'Sign-in and SSO', title: 'Sign-in & SSO', icon: KeyRound },
+      {
+        to: '/settings/general',
+        label: 'General',
+        title: 'Organization',
+        keywords: 'tenant organisation domains retention ownership transfer',
+        icon: Building2,
+      },
+      {
+        to: '/settings/sso',
+        label: 'Sign-in',
+        title: 'Sign-in & SSO',
+        keywords: 'sso saml scim entra single sign-on federation',
+        icon: KeyRound,
+      },
       {
         to: '/settings/sessions',
-        label: 'Sessions and access',
+        label: 'Sessions',
         title: 'Sessions & Access',
+        keywords: 'sessions access idle timeout step-up mfa by role',
         icon: Clock,
       },
-    ],
-  },
-  {
-    category: 'People',
-    items: [{ to: '/settings/users', label: 'Users', title: 'Manage Users', icon: Users }],
-  },
-  {
-    category: 'Data',
-    items: [
-      { to: '/settings/sources', label: 'Connected clouds', title: 'Sources', icon: Database },
+      {
+        to: '/settings/users',
+        label: 'Users',
+        title: 'Manage Users',
+        keywords: 'people roles suspend invite',
+        icon: Users,
+      },
+      {
+        to: '/settings/sources',
+        label: 'Clouds',
+        title: 'Sources',
+        keywords: 'connected clouds sources aws azure gcp connectors sync',
+        icon: Database,
+      },
     ],
   },
 ];

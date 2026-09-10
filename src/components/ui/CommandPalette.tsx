@@ -45,10 +45,10 @@ const SCREEN_RESULTS: Result[] = [
     hint: 'Settings',
     to: i.to,
     icon: <i.icon className="h-4 w-4" aria-hidden="true" />,
-    // The sub-nav wording, searchable alongside the canonical title. The pane at
-    // /settings/sources is titled "Sources" but the sub-nav calls it "Connected
-    // clouds", and someone will type either one.
-    keywords: i.label,
+    // The tab label plus the pane's own synonyms, searchable alongside the
+    // canonical title. The tab says "Clouds" and the h1 says "Sources"; someone
+    // hunting for it will type "connected clouds" or "aws" and mean this pane.
+    keywords: `${i.label} ${i.keywords ?? ''}`,
   })),
 ];
 
