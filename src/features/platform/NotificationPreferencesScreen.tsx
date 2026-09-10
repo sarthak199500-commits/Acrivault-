@@ -342,7 +342,7 @@ export function NotificationPreferencesScreen() {
         }
       />
 
-      <div className="grid max-w-3xl gap-4">
+      <div className="grid gap-4">
         <QueryBoundary
           query={prefs}
           loadingFallback={<SkeletonTableRows rows={6} cols={3} />}

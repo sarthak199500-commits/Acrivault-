@@ -140,7 +140,7 @@ export function SsoScreen() {
   const now = new Date();
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div>
       <ScreenHeader
         {...screenHeaderProps('/settings/sso')}
         description="Microsoft Entra ID signs your people in and sends them to Acrivault."

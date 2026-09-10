@@ -2,7 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import { useSessionPolicy, useUpdateSessionPolicy } from './queries';
 import { ROLES, ROLE_LABELS, type Role } from '@/lib/permissions';
 import { Badge } from '@/components/ui/Badge';
-import { Card, CardBody, CardHeader } from '@/components/ui/Card';
+import { Card, CardBody } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
@@ -47,11 +47,12 @@ export function SessionAccessCard() {
     });
 
   return (
-    <Card className="lg:col-span-2">
-      <CardHeader
-        title="Sessions & access"
-        description="How long a session lives, and what it takes to act inside one."
-      />
+    // No CardHeader: this is the only card on the Sessions pane, whose h1 and
+    // description already say "Sessions & Access" and "How long a session
+    // lives, and what it takes to act inside one." Repeating both inside the
+    // card was a leftover from when it was one card among seven on a wall.
+    // `lg:col-span-2` went with it — there is no grid to span any more.
+    <Card>
       <CardBody>
         <QueryBoundary
           query={policy}
