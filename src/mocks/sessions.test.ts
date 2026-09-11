@@ -271,3 +271,37 @@ describe('closing a session', () => {
     expect(reviewed.reviewedBy).toMatch(/@/);
   });
 });
+
+describe('seeded session coherence', () => {
+  it('names a reviewer on every seeded reviewed session, as the product would', async () => {
+    const sessions = await listSessions();
+    const reviewed = sessions.filter((s) => s.reviewState === 'reviewed');
+    expect(reviewed.length).toBeGreaterThan(0);
+    for (const session of reviewed) {
+      expect(session.reviewedBy, session.id).toMatch(/@/);
+      expect(session.reviewedAt, session.id).toBeTruthy();
+    }
+  });
+
+  it('carries the upstream agent identity so the lineage can be followed', async () => {
+    const sessions = await listSessions();
+    const delegated = sessions.filter((s) => s.provenance.spawnedBy.kind === 'agent');
+    expect(delegated.length).toBeGreaterThan(0);
+    const byId = new Map(sessions.map((s) => [s.identityId, s.identityName]));
+    for (const session of delegated) {
+      const upstream = session.provenance.spawnedBy.identityId;
+      expect(upstream, session.id).toBeTruthy();
+      // The label must name the identity the id points at, not some other agent.
+      if (byId.has(upstream as string)) {
+        expect(byId.get(upstream as string), session.id).toBe(session.provenance.spawnedBy.label);
+      }
+    }
+  });
+
+  it('leaves human- and schedule-spawned sessions without an identity id', async () => {
+    const sessions = await listSessions();
+    for (const session of sessions.filter((s) => s.provenance.spawnedBy.kind !== 'agent')) {
+      expect(session.provenance.spawnedBy.identityId, session.id).toBeUndefined();
+    }
+  });
+});

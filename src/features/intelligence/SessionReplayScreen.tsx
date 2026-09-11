@@ -374,7 +374,21 @@ function Provenance({ session }: { session: AgentSessionWithIdentity }) {
       <CardBody className="space-y-4">
         <KeyValueList
           items={[
-            { label: 'Spawned by', value: `${SPAWN_KIND_LABELS[spawn.kind]} — ${spawn.label}`, mono: true },
+            {
+              label: 'Spawned by',
+              // An upstream agent is traversable; a human or a cron is just a label.
+              value: spawn.identityId ? (
+                <span>
+                  {SPAWN_KIND_LABELS[spawn.kind]} —{' '}
+                  <Link to={`/discover/${spawn.identityId}`} className="text-accent-text hover:underline">
+                    {spawn.label}
+                  </Link>
+                </span>
+              ) : (
+                `${SPAWN_KIND_LABELS[spawn.kind]} — ${spawn.label}`
+              ),
+              mono: true,
+            },
             { label: 'Model', value: session.provenance.model, mono: true },
             { label: 'Region', value: session.provenance.region, mono: true },
             {

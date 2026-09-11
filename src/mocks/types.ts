@@ -323,8 +323,12 @@ export interface SessionProvenance {
   model: string;
   /** Where it ran. */
   region: string;
-  /** What started it. */
-  spawnedBy: { kind: SessionSpawnKind; label: string };
+  /**
+   * What started it. When an upstream *agent* did, `identityId` names it — the
+   * label alone is a dead end, and agent-to-agent delegation is the case that
+   * most justifies session replay existing.
+   */
+  spawnedBy: { kind: SessionSpawnKind; label: string; identityId?: string };
   /** Every credential the session authenticated with, not just the first. */
   credentials: string[];
 }
