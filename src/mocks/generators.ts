@@ -398,6 +398,13 @@ const ANOMALY_REASONS = {
 };
 
 /** Hard-deny rules that can hold a step (FR-006). */
+/** Justifications seeded onto overridden holds, so the settled state is demoable. */
+const OVERRIDE_REASONS = [
+  'Confirmed with the owning team: part of the approved quarter-end runbook.',
+  'False positive — the target bucket was decommissioned last sprint.',
+  'Break-glass authorised by the on-call incident commander.',
+];
+
 const DENY_RULES = [
   'POL-14 — deny destructive calls on production storage',
   'POL-07 — deny role assumption outside the agent’s home account',
@@ -443,7 +450,10 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
       // session — a held action is the loudest thing on the screen and loses that
       // meaning if it is common.
       const blocked = privileged && blockedCount === 0 && rng.bool(0.06);
-      const anomaly = !blocked && rng.bool(0.12);
+      // 0.035, not 0.12: a session flags if ANY of its 5-14 steps does, so the
+      // per-step rate compounds. At 0.12 roughly 70% of sessions flagged and the
+      // Flagged facet narrowed 69 rows to 52, which is not triage.
+      const anomaly = !blocked && rng.bool(0.015);
       if (anomaly) anomalyCount++;
       if (blocked) blockedCount++;
 
@@ -477,6 +487,23 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
       last.status = 'scoring';
     }
 
+    // A reviewed session must not still owe a decision on a held step: the API
+    // refuses that transition, so seeding it would create a state the product
+    // itself cannot reach. Settle the holds rather than downgrading the review —
+    // which also gives the demo its only examples of an already-decided hold.
+    const reviewState = rng.weighted<SessionReviewState>(['open', 'reviewed'], [7, 3]);
+    if (reviewState === 'reviewed') {
+      for (const step of steps) {
+        if (step.status !== 'blocked' || step.blockDecision) continue;
+        const overridden = rng.bool(0.35);
+        step.blockDecision = {
+          outcome: overridden ? 'overridden' : 'confirmed',
+          at: new Date(cursor + 60000).toISOString(),
+          ...(overridden ? { justification: rng.pick(OVERRIDE_REASONS) } : {}),
+        };
+      }
+    }
+
     const otherAgents = agents.filter((a) => a.id !== agent.id);
     const spawnedBy = {
       kind: spawnKind,
@@ -502,13 +529,36 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
         spawnedBy,
         credentials: agent.sources.length > 0 ? agent.sources.map((src) => src.externalId) : ['unknown'],
       },
-      reviewState: rng.weighted<SessionReviewState>(['open', 'reviewed'], [7, 3]),
+      reviewState,
     });
   }
   return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 /* --------------------------------------------------------------- policies */
+
+/**
+ * Attach each alert to the most recent session that had already started when the
+ * alert fired. A post-pass rather than an argument to generateAlerts, matching
+ * how attachQuarantineProvenance wires identities to the things that produced them.
+ */
+export function attachAlertSessions(alerts: Alert[], sessions: AgentSession[]): void {
+  const byIdentity = new Map<string, AgentSession[]>();
+  for (const session of sessions) {
+    const list = byIdentity.get(session.identityId);
+    if (list) list.push(session);
+    else byIdentity.set(session.identityId, [session]);
+  }
+  for (const list of byIdentity.values()) {
+    list.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+  for (const alert of alerts) {
+    const candidates = byIdentity.get(alert.identityId);
+    if (!candidates) continue;
+    const match = candidates.find((s) => s.startedAt <= alert.createdAt);
+    if (match) alert.sessionId = match.id;
+  }
+}
 
 export function generatePolicies(identities: Identity[], seed: number, now: Date): Policy[] {
   const rng = new Rng(seed ^ 0xc0ffee);

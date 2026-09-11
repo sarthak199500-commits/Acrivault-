@@ -479,14 +479,6 @@ export function getMonitoringBaseline(): Promise<MonitoringBaseline> {
 }
 
 /** The most recent session for an identity, for the agent-alert → replay jump. */
-export function getLatestSessionForIdentity(identityId: string): Promise<AgentSessionWithIdentity | null> {
-  return respond(() => {
-    const session = getDataset()
-      .sessions.filter((s) => s.identityId === identityId)
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    return session ? withIdentityName(session) : null;
-  });
-}
 
 export function acknowledgeAlert(id: string): Promise<Alert> {
   return respond(() => {
@@ -926,8 +918,21 @@ function findAgent(identityId: string): Identity {
 export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentity> {
   return respond(() => {
     const session = findSession(id);
+    // FR-006: a held step is an open question. Reviewing the session moves it out
+    // of the triage flow into a collapsed section, and no surface anywhere lists
+    // outstanding holds — so the decision would simply be lost.
+    const undecided = session.steps.filter((s) => s.status === 'blocked' && !s.blockDecision);
+    if (undecided.length > 0) {
+      throw new MockApiError(
+        undecided.length === 1
+          ? 'Decide the held step before marking this session reviewed.'
+          : `Decide the ${undecided.length} held steps before marking this session reviewed.`,
+        'HOLD_UNDECIDED',
+      );
+    }
     session.reviewState = 'reviewed';
     session.reviewedAt = new Date().toISOString();
+    session.reviewedBy = actorEmail();
     // FRS 3.5: session actions are role-gated AND logged. Marking reviewed is the
     // record that a human looked; without an audit line there is nothing to show that.
     appendAudit(
@@ -1254,7 +1259,10 @@ export function requestApproval(input: {
     // whole call instead of leaving an orphan request pointing at nothing.
     const source = input.fromSessionId ? findSession(input.fromSessionId) : null;
     ds.approvals.unshift(request);
-    if (source) source.quarantineRecommendedAt = request.requestedAt;
+    if (source) {
+      source.quarantineRecommendedAt = request.requestedAt;
+      source.quarantineRecommendedBy = actorEmail();
+    }
     appendAudit(
       'recommended agent quarantine',
       identity.name,
@@ -1767,10 +1775,15 @@ function pushNotification(input: { severity: NotificationItem['severity']; title
  * caller cannot misfile an entry and a new action cannot reach the log without
  * someone classifying it first.
  */
-function appendAudit(action: AuditAction, target: string, detail?: string): void {
+/** The acting principal's email, or 'system' when no user matches. */
+function actorEmail(): string {
   const { id } = currentActor();
+  return getDataset().users.find((u) => u.id === id)?.email ?? 'system';
+}
+
+function appendAudit(action: AuditAction, target: string, detail?: string): void {
   const ds = getDataset();
-  const actor = ds.users.find((u) => u.id === id)?.email ?? 'system';
+  const actor = actorEmail();
   ds.audit.unshift({
     id: `aud_${Math.random().toString(36).slice(2, 8)}`,
     at: new Date().toISOString(),

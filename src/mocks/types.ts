@@ -132,6 +132,13 @@ export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 export interface Alert {
   id: string;
   identityId: string;
+  /**
+   * The session that was running when this alert fired. Resolved once at build
+   * time, never looked up at read time: "the agent's latest session" is a
+   * different session the moment the agent runs again, and the panel presents
+   * whatever it opens as the evidence for the alert.
+   */
+  sessionId?: string;
   severity: RiskBand;
   title: string;
   description: string;
@@ -347,8 +354,16 @@ export interface AgentSession {
   provenance: SessionProvenance;
   reviewState: SessionReviewState;
   reviewedAt?: string;
+  /**
+   * Who cleared it, resolved from the acting principal. The audit trail already
+   * records the actor, but an auditor asking "who cleared this session" should
+   * not have to join two records to find out.
+   */
+  reviewedBy?: string;
   /** Set when an Analyst proposes a quarantine for an admin to carry out. */
   quarantineRecommendedAt?: string;
+  /** Who proposed it — the same reasoning as `reviewedBy`. */
+  quarantineRecommendedBy?: string;
 }
 
 // ASSUMPTION: 6-phase lifecycle naming (Rotation and cascade-revocation mechanics).

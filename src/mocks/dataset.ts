@@ -4,6 +4,7 @@
 // with ?scale=50000 (or localStorage 'acrivault.scale') to hit the perf target.
 
 import {
+  attachAlertSessions,
   attachQuarantineProvenance,
   generateAlerts,
   generateApprovals,
@@ -96,11 +97,14 @@ function build(): Dataset {
   // quarantined. Seeded before it, an approval could name that identity and the
   // queue would open with a request to contain something already contained.
   const approvals = generateApprovals(identities, users, SEED, NOW);
+  // Alerts last: they point at sessions, so sessions must exist first.
+  const alerts = generateAlerts(identities, SEED, NOW);
+  attachAlertSessions(alerts, sessions);
   return {
     size,
     identities,
     identityById,
-    alerts: generateAlerts(identities, SEED, NOW),
+    alerts,
     approvals,
     sessions,
     policies,
