@@ -515,6 +515,8 @@ export function generateSessions(
         step.blockDecision = {
           outcome: overridden ? 'overridden' : 'confirmed',
           at: new Date(cursor + 60000).toISOString(),
+          // The same person who reviewed the session settled its holds.
+          ...(reviewer ? { by: reviewer.email } : {}),
           ...(overridden ? { justification: rng.pick(OVERRIDE_REASONS) } : {}),
         };
       }

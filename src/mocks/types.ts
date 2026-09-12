@@ -275,6 +275,15 @@ export const FLAGGED_STATUSES: StepStatus[] = ['anomaly', 'blocked'];
 export const isFlaggedStep = (step: SessionStep): boolean =>
   FLAGGED_STATUSES.includes(step.status);
 
+/** One answer to a held step. Append-only: see `supersededDecisions`. */
+export interface BlockDecision {
+  outcome: 'confirmed' | 'overridden';
+  justification?: string;
+  at: string;
+  /** Resolved from the acting principal, never client-supplied. */
+  by?: string;
+}
+
 export interface SessionStep {
   id: string;
   /** 1-based ordinal within the session; defines display order (spec 11.4). */
@@ -296,8 +305,14 @@ export interface SessionStep {
    * never happened.
    */
   holdEnforced?: boolean;
-  /** Set once an analyst confirms the block or overrides it with justification. */
-  blockDecision?: { outcome: 'confirmed' | 'overridden'; justification?: string; at: string };
+  /**
+   * The decision in force. Deciding again does not edit this in place — the
+   * previous one moves to `supersededDecisions` and stays visible, because an
+   * auditor asking "did anyone change their mind here?" deserves an answer.
+   */
+  blockDecision?: BlockDecision;
+  /** Earlier decisions, oldest first. Never rewritten, never removed. */
+  supersededDecisions?: BlockDecision[];
   /** Tool calls only — the scope the call was invoked with. */
   scope?: ToolScope;
 }

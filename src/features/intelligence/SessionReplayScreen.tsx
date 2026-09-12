@@ -23,7 +23,13 @@ import { useQuarantineAgent, useReleaseQuarantine } from '@/features/discover/qu
 // so it goes through the same hook the queue's own screen uses.
 import { useRequestApproval } from '@/features/act/queries';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
-import { SPAWN_KIND_LABELS, isFlaggedStep, type SessionStep, type StepStatus } from '@/mocks/types';
+import {
+  SPAWN_KIND_LABELS,
+  isFlaggedStep,
+  type BlockDecision as BlockDecisionRecord,
+  type SessionStep,
+  type StepStatus,
+} from '@/mocks/types';
 import { detailEyebrow } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card';
@@ -190,14 +196,11 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
   const [justification, setJustification] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  if (step.blockDecision) {
-    return (
-      <Banner tone={step.blockDecision.outcome === 'confirmed' ? 'info' : 'warning'}>
-        {step.blockDecision.outcome === 'confirmed'
-          ? `Block confirmed ${relativeTime(step.blockDecision.at)}.`
-          : `Overridden ${relativeTime(step.blockDecision.at)} — “${step.blockDecision.justification}”`}
-      </Banner>
-    );
+  const decided = step.blockDecision;
+  const superseded = step.supersededDecisions ?? [];
+
+  if (decided && !canConfirm && !canOverride) {
+    return <DecisionRecord decided={decided} superseded={superseded} />;
   }
 
   if (!canConfirm && !canOverride) {
@@ -223,7 +226,12 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-3">
+      {decided && <DecisionRecord decided={decided} superseded={superseded} />}
+      {decided && (
+        <div className="eyebrow text-text-tertiary">Supersede this decision</div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
       {canConfirm && (
         <Button
           size="sm"
@@ -279,6 +287,40 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
           rows={3}
         />
       </Dialog>
+      </div>
+    </div>
+  );
+}
+
+/** How a decision reads once made — plus anything it displaced. */
+function describeDecision(d: BlockDecisionRecord): string {
+  const who = d.by ? ` by ${d.by}` : '';
+  return d.outcome === 'confirmed'
+    ? `Block confirmed ${relativeTime(d.at)}${who}.`
+    : `Overridden ${relativeTime(d.at)}${who} — “${d.justification}”`;
+}
+
+function DecisionRecord({
+  decided,
+  superseded,
+}: {
+  decided: BlockDecisionRecord;
+  superseded: BlockDecisionRecord[];
+}) {
+  return (
+    <div className="space-y-2">
+      {/* History reads quietly: it is context, not the current answer. */}
+      {superseded.map((d, i) => (
+        <p
+          key={`${d.at}-${i}`}
+          className="text-[length:var(--fs-micro)] text-text-tertiary line-through"
+        >
+          Superseded — {describeDecision(d)}
+        </p>
+      ))}
+      <Banner tone={decided.outcome === 'confirmed' ? 'info' : 'warning'}>
+        {describeDecision(decided)}
+      </Banner>
     </div>
   );
 }

@@ -1035,9 +1035,13 @@ export function decideBlockedStep(
       throw new MockApiError('A written justification is required to override a hold.', 'JUSTIFICATION_REQUIRED');
     }
 
+    // Supersede rather than edit: the earlier decision stays on the record.
+    const previous = step.blockDecision;
+    if (previous) step.supersededDecisions = [...(step.supersededDecisions ?? []), previous];
     step.blockDecision = {
       outcome,
       at: new Date().toISOString(),
+      by: actorEmail(),
       ...(trimmed ? { justification: trimmed } : {}),
     };
     appendAudit(
@@ -1045,6 +1049,7 @@ export function decideBlockedStep(
       identityLabel(session.identityId),
       [
         `Step ${step.stepNo} (${step.summary}) — ${step.blockedByRule ?? 'hard-deny rule'}.`,
+        previous ? `Supersedes the earlier decision to ${previous.outcome === 'confirmed' ? 'confirm' : 'override'} it.` : null,
         trimmed ? `Justification: ${trimmed}` : null,
       ]
         .filter(Boolean)
