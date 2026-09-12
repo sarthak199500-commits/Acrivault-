@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionReplayScreen } from './SessionReplayScreen';
@@ -195,5 +196,21 @@ describe('SessionReplayScreen — accessibility', () => {
     renderReplay();
     await screen.findAllByText('Scheduled trigger fired');
     expect(await screen.findAllByTitle('Volume 40x the established baseline')).not.toHaveLength(0);
+  });
+});
+
+describe('SessionReplayScreen — review is one-way', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useUiStore.setState({ role: 'tenant-admin' });
+  });
+
+  it('warns that marking reviewed cannot be undone', async () => {
+    const user = userEvent.setup();
+    renderReplay(DECIDED);
+    await user.click(await screen.findByRole('button', { name: /Mark reviewed/i }));
+    // No reopen exists anywhere, so the dialog has to say so rather than leave
+    // the reader to discover it by mis-clicking.
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
   });
 });

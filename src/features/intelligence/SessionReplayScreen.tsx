@@ -532,7 +532,7 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
         open={confirm === 'review'}
         onOpenChange={(o) => !o && setConfirm(null)}
         title="Mark this session reviewed?"
-        description="This records that an analyst has inspected the session, and is written to the audit trail."
+        description="This records that an analyst has inspected the session, and is written to the audit trail. It cannot be undone — the session moves out of the triage flow for good."
         confirmLabel="Mark reviewed"
         pending={markReviewed.isPending}
         onConfirm={() => markReviewed.mutate(session.id, settle('Session marked reviewed', 'success'))}
