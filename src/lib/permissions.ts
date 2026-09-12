@@ -51,6 +51,12 @@ export type Capability =
   | 'alert.acknowledge'
   | 'alert.resolve'
   | 'session.markReviewed'
+  // Deciding a hold is split from containment, and confirm from override,
+  // because the risks are not the same shape. Confirming agrees with the policy
+  // and unblocks nothing. Overriding lets an action a policy DENIED proceed —
+  // it fails open, where quarantine fails safe — so it carries the higher bar.
+  | 'session.holdConfirm'
+  | 'session.holdOverride'
   | 'session.quarantine'
   // Analyst's "Recommend" level: propose a quarantine for an admin to approve.
   | 'session.quarantineRecommend'
@@ -106,6 +112,8 @@ const ANALYST_CAPS: Capability[] = [
   // Recommend: proposes; a role holding the matching execute capability approves.
   'rotate.request',
   'session.quarantineRecommend',
+  // Agreeing that a policy was right is the analyst's job, and changes nothing.
+  'session.holdConfirm',
 ];
 
 // Security Admin (rank 3): policy authority, alert resolution, quarantine, and
@@ -116,6 +124,7 @@ const SECURITY_ADMIN_CAPS: Capability[] = [
   ...ANALYST_CAPS.filter((c) => c !== 'rotate.request'),
   'alert.resolve',
   'session.markReviewed',
+  'session.holdOverride',
   'session.quarantine',
   'policy.activate',
   'policy.lifecycle',

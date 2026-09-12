@@ -183,7 +183,8 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
 
 /** FR-006: an analyst confirms a hold or overrides it with a written justification. */
 function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; step: SessionStep }) {
-  const canAct = useCan('session.quarantine');
+  const canConfirm = useCan('session.holdConfirm');
+  const canOverride = useCan('session.holdOverride');
   const decide = useDecideBlockedStep(session.id);
   const [overriding, setOverriding] = useState(false);
   const [justification, setJustification] = useState('');
@@ -199,7 +200,9 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
     );
   }
 
-  if (!canAct) return <RoleRestricted inline note="Your role can review this hold but not decide it." />;
+  if (!canConfirm && !canOverride) {
+    return <RoleRestricted inline note="Your role can review this hold but not decide it." />;
+  }
 
   const submitOverride = () => {
     if (!justification.trim()) {
@@ -220,23 +223,29 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
   };
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        size="sm"
-        variant="danger"
-        loading={decide.isPending && !overriding}
-        onClick={() =>
-          decide.mutate(
-            { stepId: step.id, outcome: 'confirmed' },
-            { onSuccess: () => toast('Block confirmed', { tone: 'success' }) },
-          )
-        }
-      >
-        Confirm block
-      </Button>
-      <Button size="sm" variant="secondary" onClick={() => setOverriding(true)}>
-        Override…
-      </Button>
+    <div className="flex flex-wrap items-center gap-2">
+      {canConfirm && (
+        <Button
+          size="sm"
+          variant="danger"
+          loading={decide.isPending && !overriding}
+          onClick={() =>
+            decide.mutate(
+              { stepId: step.id, outcome: 'confirmed' },
+              { onSuccess: () => toast('Block confirmed', { tone: 'success' }) },
+            )
+          }
+        >
+          Confirm block
+        </Button>
+      )}
+      {canOverride ? (
+        <Button size="sm" variant="secondary" onClick={() => setOverriding(true)}>
+          Override…
+        </Button>
+      ) : (
+        <RoleRestricted inline note="Overriding a hold needs a Security Admin." />
+      )}
 
       <Dialog
         open={overriding}

@@ -1023,6 +1023,9 @@ export function decideBlockedStep(
 ): Promise<AgentSessionWithIdentity> {
   return respond(() => {
     const session = findSession(sessionId);
+    // Enforced here as well as in the UI: the control is a convenience, never
+    // the gate. Confirm and override are separate capabilities (see permissions).
+    assertActorCan(outcome === 'overridden' ? 'session.holdOverride' : 'session.holdConfirm');
     const step = session.steps.find((s) => s.id === stepId);
     if (!step) throw new MockApiError('Step not found.');
     if (step.status !== 'blocked') throw new MockApiError('This step is not held for review.');

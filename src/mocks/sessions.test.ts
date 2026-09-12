@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideBlockedStep,
   getIdentity,
@@ -303,5 +303,49 @@ describe('seeded session coherence', () => {
     for (const session of sessions.filter((s) => s.provenance.spawnedBy.kind !== 'agent')) {
       expect(session.provenance.spawnedBy.identityId, session.id).toBeUndefined();
     }
+  });
+});
+
+describe('hold authority', () => {
+  // The role is global state; leaving it set would leak into any later suite.
+  afterEach(() => useUiStore.setState({ role: 'tenant-admin' }));
+
+  it('lets an Analyst confirm a hold — agreeing with a policy unblocks nothing', async () => {
+    useUiStore.setState({ role: 'analyst' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    const updated = await decideBlockedStep(target.id, held.id, 'confirmed');
+    const after = updated.steps.find((p) => p.id === held.id);
+    expect(after?.blockDecision?.outcome).toBe('confirmed');
+  });
+
+  it('refuses an Analyst the override — it lets a denied action proceed', async () => {
+    useUiStore.setState({ role: 'analyst' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    await expect(
+      decideBlockedStep(target.id, held.id, 'overridden', 'because I say so'),
+    ).rejects.toThrow();
+  });
+
+  it('allows a Security Admin both', async () => {
+    useUiStore.setState({ role: 'security-admin' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    const updated = await decideBlockedStep(target.id, held.id, 'overridden', 'Approved runbook step.');
+    const after = updated.steps.find((p) => p.id === held.id);
+    expect(after?.blockDecision?.outcome).toBe('overridden');
   });
 });
