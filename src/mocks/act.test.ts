@@ -69,8 +69,9 @@ describe('Act > Quarantine provenance', () => {
     }
   });
 
-  // Re-asserts the fixture guard above through the read path, so a dead menu
-  // option in Act > Quarantine's "Produced by" filter shows up here too.
+  // Re-asserts the 'demonstrates all three producer outcomes' guard above through
+  // the read path, so a dead menu option in Act > Quarantine's "Produced by"
+  // filter shows up here too.
   // (`replay` here is that guard's `person-from-replay` — ProducerFacet's name
   // for the same outcome, not a fourth one.)
   it('produces all three facets across the seeded data', async () => {
