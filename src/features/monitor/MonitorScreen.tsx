@@ -5,13 +5,14 @@ import { useAlerts, useMonitoringBaseline } from './queries';
 import { BaselineStrip } from './BaselineStrip';
 import { useMonitorFilters } from './useMonitorFilters';
 import type { AlertWithIdentity } from '@/mocks/api';
-import type { RiskBand } from '@/mocks/types';
+import { NHI_TYPES, NHI_TYPE_LABELS, type NhiType, type RiskBand } from '@/mocks/types';
 import { bucketByTime, splitAcknowledged } from './alertGrouping';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
+import { FilterMenu } from '@/components/ui/FilterMenu';
 import { FilterPill } from '@/components/ui/FilterPill';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -22,6 +23,25 @@ import { SEVERITY_FG } from '@/lib/tones';
 
 const SEVERITY_ORDER: RiskBand[] = ['critical', 'high', 'medium', 'low'];
 
+/**
+ * Name the dimension that emptied the feed, but only when one did. With two narrowing
+ * at once, blaming either is a guess that sends the analyst to clear the wrong one.
+ */
+function emptyHeadline({
+  severity,
+  learningOnly,
+  identityTypes,
+}: {
+  severity: RiskBand | null;
+  learningOnly: boolean;
+  identityTypes: NhiType[];
+}) {
+  const active = [severity !== null, learningOnly, identityTypes.length > 0].filter(Boolean);
+  if (active.length > 1) return 'No alerts match these filters';
+  if (learningOnly) return 'No alerts from learning identities';
+  if (identityTypes.length > 0) return 'No alerts on this identity type';
+  return 'No alerts at this severity';
+}
 
 /**
  * Two lines: what happened, then who and when.
@@ -121,8 +141,18 @@ export function MonitorScreen() {
   const baseline = useMonitoringBaseline();
   const navigate = useNavigate();
   const location = useLocation();
-  const { severity, setSeverity, learningOnly, showLearningOnly, clearLearningOnly } =
-    useMonitorFilters();
+  const {
+    severity,
+    setSeverity,
+    identityTypes,
+    toggleIdentityType,
+    clearIdentityTypes,
+    learningOnly,
+    showLearningOnly,
+    clearLearningOnly,
+    clearAll,
+    anyActive,
+  } = useMonitorFilters();
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -180,15 +210,25 @@ export function MonitorScreen() {
       >
         {(alerts) => {
           const bySeverity = severity ? alerts.filter((a) => a.severity === severity) : alerts;
-          const filtered = learningOnly
+          // What the other two dimensions have already narrowed to. The type menu counts
+          // against this, not the whole feed: an option offering rows that the active
+          // severity has excluded is a dead end that lands on nothing.
+          const scoped = learningOnly
             ? bySeverity.filter((a) => a.baseline === 'learning')
             : bySeverity;
+          const typeCounts = scoped.reduce<Partial<Record<NhiType, number>>>((acc, a) => {
+            acc[a.identityType] = (acc[a.identityType] ?? 0) + 1;
+            return acc;
+          }, {});
+          const filtered = identityTypes.length
+            ? scoped.filter((a) => identityTypes.includes(a.identityType))
+            : scoped;
           const { active, acknowledged } = splitAcknowledged(filtered);
           const buckets = bucketByTime(active);
           return (
             <div>
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                <FilterPill label="All" count={alerts.length} selected={severity === null && !learningOnly} onClick={() => { setSeverity(null); clearLearningOnly(); }} />
+                <FilterPill label="All" count={alerts.length} selected={!anyActive} onClick={clearAll} />
                 {SEVERITY_ORDER.map((s) => (
                   <FilterPill
                     key={s}
@@ -199,6 +239,22 @@ export function MonitorScreen() {
                     icon={<span className={cn('inline-block h-2 w-2 rounded-full')} style={{ backgroundColor: `var(--risk-${s})` }} aria-hidden="true" />}
                   />
                 ))}
+                {/* A menu rather than five more pills: the row already carries All, four
+                    severities and a conditional "Still learning", and eleven pills wrap
+                    to a second line. Labelled in full — "Type" belongs to the anomaly
+                    taxonomy the FRS asks for, which this is not. */}
+                <FilterMenu
+                  label="Identity type"
+                  options={NHI_TYPES.map((type) => ({
+                    value: type,
+                    label: NHI_TYPE_LABELS[type],
+                    count: typeCounts[type] ?? 0,
+                    swatch: <NhiTypeIcon type={type} className="h-3.5 w-3.5 text-text-tertiary" />,
+                  }))}
+                  selected={identityTypes}
+                  onToggle={(v) => toggleIdentityType(v as NhiType)}
+                  onClear={clearIdentityTypes}
+                />
                 {/* Only while active — the strip's link is what turns it on, so an
                     always-present pill would advertise a dimension most tenants never use. */}
                 {learningOnly && (
@@ -220,8 +276,8 @@ export function MonitorScreen() {
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={<Activity className="h-5 w-5" />}
-                    headline={learningOnly ? 'No alerts from learning identities' : 'No alerts at this severity'}
-                    guidance="Clear the filter to see all open alerts."
+                    headline={emptyHeadline({ severity, learningOnly, identityTypes })}
+                    guidance="Press All to see every open alert."
                   />
                 ) : (
                   <div>
