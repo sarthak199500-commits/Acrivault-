@@ -1,7 +1,11 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import {
   applyQuarantineFilter,
   parseQuarantineParams,
+  useQuarantineFilters,
   type QuarantineFilter,
 } from './useQuarantineFilters';
 import type { NhiType, ProducerFacet } from '@/mocks/types';
@@ -96,10 +100,18 @@ describe('applyQuarantineFilter', () => {
     ]);
   });
 
+  // Two cases, not one: types=['api-key'] ∩ producers=['policy'] is empty under a
+  // correct AND, but it is ALSO empty under a broken "always return nothing once
+  // both axes are set" mutation — so that case alone can't tell the two apart.
+  // The second case has a real non-empty intersection (row a is both
+  // service-account and person), so only a genuinely correct AND passes it.
   it('ANDs across axes', () => {
     expect(
       ids(applyQuarantineFilter(ROWS, { ...NONE, types: ['api-key'], producers: ['policy'] })),
     ).toEqual([]);
+    expect(
+      ids(applyQuarantineFilter(ROWS, { ...NONE, types: ['service-account'], producers: ['person'] })),
+    ).toEqual(['a']);
   });
 
   // Deliberately 'z', not a more obvious 'a': every row's byLabel contains a
@@ -125,5 +137,53 @@ describe('applyQuarantineFilter', () => {
 
   it('matches a cited session id', () => {
     expect(ids(applyQuarantineFilter(ROWS, { ...NONE, search: 'ses_00318' }))).toEqual(['d']);
+  });
+});
+
+/**
+ * The one piece of hook-body logic (as opposed to the pure functions above) that
+ * needs its own test: `clearTypes` exists because looping `toggleType` over a
+ * menu's selected values does NOT clear them all (react-router-dom 6.30.4's
+ * `setSearchParams` hands every call in one tick the same render-memoised
+ * `searchParams`, not a setState-style accumulator — see the hook's doc comment).
+ * No `renderHook` in this repo, so a tiny harness rendered under `MemoryRouter`
+ * stands in for one, the same shape `UsersScreen.test.tsx` already uses.
+ */
+function Harness() {
+  const { clearTypes } = useQuarantineFilters();
+  const location = useLocation();
+  return (
+    <div>
+      <span data-testid="search">{location.search}</span>
+      <button type="button" onClick={clearTypes}>
+        clear types
+      </button>
+    </div>
+  );
+}
+
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Harness />
+    </MemoryRouter>,
+  );
+}
+
+// clearTypes exists because it is NOT equivalent to `filter.types.forEach(toggleType)`:
+// verified by a throwaway version of this harness with a second button wired to that
+// forEach. Starting from the same `?type=api-key,ai-agent,oauth-token`, that loop left
+// `?type=api-key,ai-agent` — only the last value (`oauth-token`) was ever removed, not
+// all three — because react-router-dom's `setSearchParams` (6.30.4) hands every call in
+// the loop the same `searchParams` memoised from this render, not an accumulator (see
+// the hook's doc comment). Not kept as a permanent assertion: encoding a known-bad
+// pattern's exact leftover value as a spec is brittle and adds nothing `clearTypes`'s own
+// test doesn't already cover.
+describe('useQuarantineFilters — clearTypes', () => {
+  it('drops the whole `type` param in one write', async () => {
+    renderAt('/?type=api-key,ai-agent,oauth-token');
+    await userEvent.click(screen.getByRole('button', { name: 'clear types' }));
+    const search = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(search.has('type')).toBe(false);
   });
 });

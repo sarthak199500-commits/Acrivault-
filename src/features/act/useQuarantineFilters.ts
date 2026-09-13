@@ -47,9 +47,13 @@ export function parseQuarantineParams(params: URLSearchParams): QuarantineFilter
  * the session list's — so a narrowing survives refresh, the back button undoes it,
  * and an auditor can share what they are looking at.
  *
- * Writes go through the functional `setParams` form, not a snapshot of `params`:
- * `onClear` toggles every selected value in one tick, and a snapshot would make
- * each of those toggles overwrite the last.
+ * `update` writes through `setParams`'s functional form, but that does NOT make
+ * writes compose across several calls in one tick: react-router-dom's
+ * `setSearchParams` (6.30.4, `useSearchParams`) hands every call in the tick the
+ * `searchParams` memoised from THIS render's `location.search` — not a
+ * setState-style accumulator — so several toggles fired before a re-render all
+ * read the same stale list and only the last one's write survives. `clearTypes` /
+ * `clearProducers` exist because of exactly that; see their own comment.
  */
 export function useQuarantineFilters() {
   const [params, setParams] = useSearchParams();
@@ -76,9 +80,15 @@ export function useQuarantineFilters() {
   );
 
   const toggleInList = useCallback(
-    (key: string, value: string) =>
+    <T extends string>(key: string, value: T, allowed: readonly T[]) =>
       update((n) => {
-        const current = n.get(key)?.split(',').filter(Boolean) ?? [];
+        // Re-parsed through the same allowlist as the read path (`parseList`),
+        // not a raw `.split(',')`: without it, toggling a fresh value onto a URL
+        // that already carries an unknown one (`?by=policy,wat`) would keep
+        // re-`set()`ing "wat" back in on every later toggle, even though nothing
+        // ever reads it back out. The write side has to drop the same junk the
+        // read side does, or a shared link keeps getting dirtier.
+        const current = parseList(n.get(key), allowed);
         const nextList = current.includes(value)
           ? current.filter((v) => v !== value)
           : [...current, value];
@@ -87,6 +97,18 @@ export function useQuarantineFilters() {
       }),
     [update],
   );
+
+  /**
+   * Drop a whole axis in one write.
+   *
+   * NOT `filter.types.forEach(toggleType)`: `setSearchParams`'s functional form
+   * is not a setState-style update queue — it hands every call the `searchParams`
+   * memoised from the current render's `location.search` (react-router-dom
+   * 6.30.4, `useSearchParams`), so several calls in one tick all compute their
+   * edit from the same stale list and only the last `navigate()` survives.
+   * Clearing a three-value menu that way removes exactly one value, not three.
+   */
+  const clearList = useCallback((key: string) => update((n) => n.delete(key)), [update]);
 
   const clearAll = useCallback(
     () => update((n) => ['q', 'type', 'by'].forEach((k) => n.delete(k))),
@@ -103,8 +125,10 @@ export function useQuarantineFilters() {
   return {
     filter,
     setSearch,
-    toggleType: (t: NhiType) => toggleInList('type', t),
-    toggleProducer: (p: ProducerFacet) => toggleInList('by', p),
+    toggleType: (t: NhiType) => toggleInList('type', t, NHI_TYPES),
+    toggleProducer: (p: ProducerFacet) => toggleInList('by', p, PRODUCER_FACETS),
+    clearTypes: () => clearList('type'),
+    clearProducers: () => clearList('by'),
     clearAll,
     activeCount,
   };
