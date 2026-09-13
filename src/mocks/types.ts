@@ -57,11 +57,6 @@ export interface AttributeConflict {
 export type GovernanceStatus = 'governed' | 'ungoverned' | 'drift';
 
 /**
- * What put an identity into quarantine. The state is reachable three ways — a
- * Govern policy action, an admin acting from the identity panel, and a session
- * review — and a terminal state with no named producer is not auditable.
- */
-/**
  * What produced a containment: a Govern policy enforcing, or a person deciding.
  *
  * There is deliberately no third `session` kind. A session review is not an
@@ -98,10 +93,14 @@ export interface QuarantineRecord {
  */
 export type ProducerFacet = 'policy' | 'person' | 'replay';
 
-/** The facet a containment reads as, derived from the record rather than its label. */
+/** The facet a containment reads as; see `producer` on `QuarantinedIdentity` (api.ts) for why it isn't read off the label. */
 export function producerFacet(source: QuarantineSource): ProducerFacet {
-  if (source.kind === 'policy') return 'policy';
-  return source.viaSessionId ? 'replay' : 'person';
+  switch (source.kind) {
+    case 'policy':
+      return 'policy';
+    case 'user':
+      return source.viaSessionId ? 'replay' : 'person';
+  }
 }
 
 export interface Identity {

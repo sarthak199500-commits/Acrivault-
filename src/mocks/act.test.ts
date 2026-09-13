@@ -53,8 +53,10 @@ describe('Act > Quarantine provenance', () => {
     expect([...outcomes].sort()).toEqual(['person', 'person-from-replay', 'policy']);
   });
 
-  // Derived from the RECORD, never from the label: a filter that read
-  // `byLabel.startsWith('Policy · ')` would break the next time that copy moves.
+  // Every row's facet agrees with its own record, across all three branches — so
+  // a row can never carry another row's facet. The label-derivation defect itself
+  // is caught by 'still reads as replay-backed...' below: on seeded data a
+  // label-derived producer and a record-derived one are indistinguishable.
   it('emits a producer facet agreeing with the record, for every row', async () => {
     const rows = await listQuarantined();
     const byId = new Map(getDataset().identities.map((i) => [i.id, i]));
@@ -67,8 +69,10 @@ describe('Act > Quarantine provenance', () => {
     }
   });
 
-  // All three facets have to occur, or the menu ships with a dead option and the
-  // test above passes vacuously on whichever two survived.
+  // Re-asserts the fixture guard above through the read path, so a dead menu
+  // option in Act > Quarantine's "Produced by" filter shows up here too.
+  // (`replay` here is that guard's `person-from-replay` — ProducerFacet's name
+  // for the same outcome, not a fourth one.)
   it('produces all three facets across the seeded data', async () => {
     const rows = await listQuarantined();
     expect([...new Set(rows.map((r) => r.producer))].sort()).toEqual([
@@ -343,11 +347,14 @@ describe('Act > Quarantine - a containment raised from a replay', () => {
     useUiStore.getState().setRole('tenant-admin');
     const { identity } = pickReplayCandidate();
     await quarantineAgent(identity.id, undefined, 'ses_does_not_exist');
-    const row = (await listQuarantined()).find((r) => r.id === identity.id);
-    if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
-    expect(row.viaLabel).toBe('Removed session');
-    expect(row.producer).toBe('replay');
-    await releaseQuarantine(identity.id);
+    try {
+      const row = (await listQuarantined()).find((r) => r.id === identity.id);
+      if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
+      expect(row.viaLabel).toBe('Removed session');
+      expect(row.producer).toBe('replay');
+    } finally {
+      await releaseQuarantine(identity.id);
+    }
   });
 
   // The two halves resolve independently, which is asserted rather than assumed:
