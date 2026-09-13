@@ -508,6 +508,16 @@ No test of its own: it is presentation over `useQuarantineFilters`, which Task 2
 covers, and the repo has no component-level test for `UsersToolbar` either. Task 5
 verifies it in the browser.
 
+**Amended after Task 2's review.** Each menu's `onClear` calls the hook's `clearTypes`
+/ `clearProducers`, **not** `filter.types.forEach(toggleType)` — which is the shape
+`UsersToolbar` uses and this file otherwise copies. That pattern is broken:
+`setSearchParams`' functional form hands every call the `searchParams` memoised from
+the current render's `location.search` (react-router-dom 6.30.4, `useSearchParams`),
+so N toggles in one tick all compute from the same stale value and the last
+`navigate()` wins — clearing exactly one value out of however many were selected.
+Proven during Task 2 and fixed there with a primitive that deletes the whole key in a
+single write. `UsersToolbar` still has the bug; filed separately, do not fix it here.
+
 - [ ] **Step 1: Write the component**
 
 Create `src/features/act/QuarantineToolbar.tsx`:
@@ -578,7 +588,7 @@ export function QuarantineToolbar({
         options={typeOptions}
         selected={filter.types}
         onToggle={(v) => filters.toggleType(v as NhiType)}
-        onClear={() => filter.types.forEach((t) => filters.toggleType(t))}
+        onClear={filters.clearTypes}
       />
       <FilterMenu
         label="Produced by"
@@ -586,7 +596,7 @@ export function QuarantineToolbar({
         options={producerOptions}
         selected={filter.producers}
         onToggle={(v) => filters.toggleProducer(v as ProducerFacet)}
-        onClear={() => filter.producers.forEach((p) => filters.toggleProducer(p))}
+        onClear={filters.clearProducers}
       />
 
       {filters.activeCount > 0 && (
