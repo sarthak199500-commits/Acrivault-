@@ -102,8 +102,14 @@ describe('applyQuarantineFilter', () => {
     ).toEqual([]);
   });
 
+  // Deliberately 'z', not a more obvious 'a': every row's byLabel contains a
+  // common word with an 'a' in it (Admin, Tenant, dormant…), so a one-char
+  // search of 'a' would return all four rows even with the below-minimum gate
+  // deleted — the assertion would pass for the wrong reason. 'z' occurs in
+  // none of the fixture rows, so removing the gate turns this needle into a
+  // real (failing) filter; confirmed by mutating the gate away and re-running.
   it('ignores a search below the minimum instead of narrowing on one keystroke', () => {
-    expect(ids(applyQuarantineFilter(ROWS, { ...NONE, search: 'a' }))).toEqual(['a', 'b', 'c', 'd']);
+    expect(ids(applyQuarantineFilter(ROWS, { ...NONE, search: 'z' }))).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('matches the identity name', () => {
