@@ -12,6 +12,8 @@ export interface SessionFilter {
   review: SessionReviewState | null;
   /** Spec 10.2's "Flagged only / All sessions" filter. */
   flaggedOnly: boolean;
+  /** Only sessions where a hard-deny rule actually held a step. */
+  heldOnly: boolean;
   /** Exact identity id, set by the "View sessions" link on an agent in Discover. */
   agentId: string | null;
   search: string;
@@ -38,6 +40,7 @@ export function useSessionFilters() {
       // `?anomalies=1` predates the held-step state and still lands on this facet, which
       // now also covers steps a hard-deny rule held.
       flaggedOnly: params.get('flagged') === '1' || params.get('anomalies') === '1',
+      heldOnly: params.get('held') === '1',
       agentId: params.get('agent'),
       search: params.get('q') ?? '',
       sort: SESSION_SORTS.some((s) => s.value === sort) ? (sort as SessionSort) : 'recent',
@@ -75,6 +78,15 @@ export function useSessionFilters() {
     [update],
   );
 
+  const toggleHeld = useCallback(
+    () =>
+      update((n) => {
+        if (n.get('held') === '1') n.delete('held');
+        else n.set('held', '1');
+      }),
+    [update],
+  );
+
   const clearAgent = useCallback(() => update((n) => n.delete('agent')), [update]);
 
   const setSearch = useCallback(
@@ -88,7 +100,7 @@ export function useSessionFilters() {
   );
 
   const clearAll = useCallback(
-    () => update((n) => ['review', 'flagged', 'anomalies', 'agent', 'q'].forEach((k) => n.delete(k))),
+    () => update((n) => ['review', 'flagged', 'anomalies', 'held', 'agent', 'q'].forEach((k) => n.delete(k))),
     [update],
   );
 
@@ -96,10 +108,11 @@ export function useSessionFilters() {
   const activeCount =
     (filter.review ? 1 : 0) +
     (filter.flaggedOnly ? 1 : 0) +
+    (filter.heldOnly ? 1 : 0) +
     (filter.agentId ? 1 : 0) +
     (filter.search.trim().length >= MIN_SEARCH_CHARS ? 1 : 0);
 
-  return { filter, setReview, toggleFlagged, clearAgent, setSearch, setSort, clearAll, activeCount };
+  return { filter, setReview, toggleFlagged, toggleHeld, clearAgent, setSearch, setSort, clearAll, activeCount };
 }
 
 /**
@@ -126,6 +139,7 @@ export function applySessionFilter<
   const rows = sessions.filter((s) => {
     if (filter.review && s.reviewState !== filter.review) return false;
     if (filter.flaggedOnly && !s.flagged) return false;
+    if (filter.heldOnly && s.blockedCount === 0) return false;
     if (filter.agentId && s.identityId !== filter.agentId) return false;
     if (needle && !`${s.identityName} ${s.id}`.toLowerCase().includes(needle)) return false;
     return true;

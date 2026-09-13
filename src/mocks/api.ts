@@ -481,14 +481,6 @@ export function getMonitoringBaseline(): Promise<MonitoringBaseline> {
 }
 
 /** The most recent session for an identity, for the agent-alert → replay jump. */
-export function getLatestSessionForIdentity(identityId: string): Promise<AgentSessionWithIdentity | null> {
-  return respond(() => {
-    const session = getDataset()
-      .sessions.filter((s) => s.identityId === identityId)
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    return session ? withIdentityName(session) : null;
-  });
-}
 
 export function acknowledgeAlert(id: string): Promise<Alert> {
   return respond(() => {
@@ -936,8 +928,21 @@ function findAgent(identityId: string): Identity {
 export function markSessionReviewed(id: string): Promise<AgentSessionWithIdentity> {
   return respond(() => {
     const session = findSession(id);
+    // FR-006: a held step is an open question. Reviewing the session moves it out
+    // of the triage flow into a collapsed section, and no surface anywhere lists
+    // outstanding holds — so the decision would simply be lost.
+    const undecided = session.steps.filter((s) => s.status === 'blocked' && !s.blockDecision);
+    if (undecided.length > 0) {
+      throw new MockApiError(
+        undecided.length === 1
+          ? 'Decide the held step before marking this session reviewed.'
+          : `Decide the ${undecided.length} held steps before marking this session reviewed.`,
+        'HOLD_UNDECIDED',
+      );
+    }
     session.reviewState = 'reviewed';
     session.reviewedAt = new Date().toISOString();
+    session.reviewedBy = actorEmail();
     // FRS 3.5: session actions are role-gated AND logged. Marking reviewed is the
     // record that a human looked; without an audit line there is nothing to show that.
     appendAudit(
@@ -1029,6 +1034,9 @@ export function decideBlockedStep(
 ): Promise<AgentSessionWithIdentity> {
   return respond(() => {
     const session = findSession(sessionId);
+    // Enforced here as well as in the UI: the control is a convenience, never
+    // the gate. Confirm and override are separate capabilities (see permissions).
+    assertActorCan(outcome === 'overridden' ? 'session.holdOverride' : 'session.holdConfirm');
     const step = session.steps.find((s) => s.id === stepId);
     if (!step) throw new MockApiError('Step not found.');
     if (step.status !== 'blocked') throw new MockApiError('This step is not held for review.');
@@ -1038,9 +1046,13 @@ export function decideBlockedStep(
       throw new MockApiError('A written justification is required to override a hold.', 'JUSTIFICATION_REQUIRED');
     }
 
+    // Supersede rather than edit: the earlier decision stays on the record.
+    const previous = step.blockDecision;
+    if (previous) step.supersededDecisions = [...(step.supersededDecisions ?? []), previous];
     step.blockDecision = {
       outcome,
       at: new Date().toISOString(),
+      by: actorEmail(),
       ...(trimmed ? { justification: trimmed } : {}),
     };
     appendAudit(
@@ -1048,6 +1060,7 @@ export function decideBlockedStep(
       identityLabel(session.identityId),
       [
         `Step ${step.stepNo} (${step.summary}) — ${step.blockedByRule ?? 'hard-deny rule'}.`,
+        previous ? `Supersedes the earlier decision to ${previous.outcome === 'confirmed' ? 'confirm' : 'override'} it.` : null,
         trimmed ? `Justification: ${trimmed}` : null,
       ]
         .filter(Boolean)
@@ -1265,7 +1278,10 @@ export function requestApproval(input: {
     // whole call instead of leaving an orphan request pointing at nothing.
     const source = input.fromSessionId ? findSession(input.fromSessionId) : null;
     ds.approvals.unshift(request);
-    if (source) source.quarantineRecommendedAt = request.requestedAt;
+    if (source) {
+      source.quarantineRecommendedAt = request.requestedAt;
+      source.quarantineRecommendedBy = actorEmail();
+    }
     appendAudit(
       'recommended agent quarantine',
       identity.name,
@@ -1903,10 +1919,15 @@ function pushNotification(input: {
  * caller cannot misfile an entry and a new action cannot reach the log without
  * someone classifying it first.
  */
-function appendAudit(action: AuditAction, target: string, detail?: string): void {
+/** The acting principal's email, or 'system' when no user matches. */
+function actorEmail(): string {
   const { id } = currentActor();
+  return getDataset().users.find((u) => u.id === id)?.email ?? 'system';
+}
+
+function appendAudit(action: AuditAction, target: string, detail?: string): void {
   const ds = getDataset();
-  const actor = ds.users.find((u) => u.id === id)?.email ?? 'system';
+  const actor = actorEmail();
   ds.audit.unshift({
     id: `aud_${Math.random().toString(36).slice(2, 8)}`,
     at: new Date().toISOString(),

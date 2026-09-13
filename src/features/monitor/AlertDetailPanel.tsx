@@ -25,7 +25,7 @@ function Body({ alert }: { alert: AlertWithIdentity }) {
   const identity = identityQuery.data;
   const band = identity ? riskBand(identity.riskScore) : null;
   // FRS 3.7: alerts link to the identity and, for agents, the session replay.
-  const sessionQuery = useAlertSession(alert.identityId, identity?.type === 'ai-agent');
+  const sessionQuery = useAlertSession(alert.sessionId);
   const session = sessionQuery.data;
 
   return (
@@ -96,7 +96,9 @@ function Body({ alert }: { alert: AlertWithIdentity }) {
             </Link>
           ) : (
             <p className="text-[length:var(--fs-small)] text-text-tertiary">
-              No recorded session for this agent yet.
+              {alert.sessionId
+                ? 'The linked session could not be loaded.'
+                : 'No session is linked to this alert.'}
             </p>
           )}
         </section>

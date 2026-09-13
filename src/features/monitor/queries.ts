@@ -3,8 +3,8 @@ import {
   acknowledgeAlert,
   getAlert,
   getIdentity,
-  getLatestSessionForIdentity,
   getMonitoringBaseline,
+  getSession,
   listAlerts,
   resolveAlert,
 } from '@/mocks/api';
@@ -27,14 +27,15 @@ export function useMonitoringBaseline() {
 }
 
 /**
- * The agent session behind an alert. Only AI agents have one, so callers gate on the
- * identity's type — asking for a service account's session would always be a miss.
+ * The session an alert was raised on. Keyed on the alert's own `sessionId`, so the
+ * panel shows the trace that caused the alert rather than whatever the agent
+ * happened to run most recently.
  */
-export function useAlertSession(identityId: string | undefined, isAgent: boolean) {
+export function useAlertSession(sessionId: string | undefined) {
   return useQuery({
-    queryKey: ['identity-session', identityId],
-    queryFn: () => getLatestSessionForIdentity(identityId as string),
-    enabled: !!identityId && isAgent,
+    queryKey: ['session', sessionId],
+    queryFn: () => getSession(sessionId as string),
+    enabled: !!sessionId,
   });
 }
 

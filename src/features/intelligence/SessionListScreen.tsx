@@ -195,7 +195,7 @@ function ReviewedSection({
 export function SessionListScreen() {
   const query = useSessions();
   const navigate = useNavigate();
-  const { filter, setReview, toggleFlagged, clearAgent, setSearch, setSort, clearAll, activeCount } =
+  const { filter, setReview, toggleFlagged, toggleHeld, clearAgent, setSearch, setSort, clearAll, activeCount } =
     useSessionFilters();
   const openSession = (s: AgentSessionWithIdentity) => navigate(`/intelligence/${s.id}`);
 
@@ -205,6 +205,7 @@ export function SessionListScreen() {
       open: all.filter((s) => s.reviewState === 'open').length,
       reviewed: all.filter((s) => s.reviewState === 'reviewed').length,
       flagged: all.filter((s) => s.flagged).length,
+      held: all.filter((s) => s.blockedCount > 0).length,
     }),
     [all],
   );
@@ -282,6 +283,19 @@ export function SessionListScreen() {
                       selected={filter.flaggedOnly}
                       onClick={toggleFlagged}
                       icon={<TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />}
+                    />
+                  </span>
+                </Tooltip>
+                {/* Held is the loudest signal the engine produces, and Flagged
+                    merges it with anomalies — so it needs its own facet. */}
+                <Tooltip content="A hard-deny rule stopped at least one step.">
+                  <span>
+                    <FilterPill
+                      label="Held"
+                      count={counts.held}
+                      selected={filter.heldOnly}
+                      onClick={toggleHeld}
+                      icon={<Ban className="h-3.5 w-3.5" aria-hidden="true" />}
                     />
                   </span>
                 </Tooltip>

@@ -399,15 +399,32 @@ const ANOMALY_REASONS = {
 };
 
 /** Hard-deny rules that can hold a step (FR-006). */
+/** Justifications seeded onto overridden holds, so the settled state is demoable. */
+const OVERRIDE_REASONS = [
+  'Confirmed with the owning team: part of the approved quarter-end runbook.',
+  'False positive — the target bucket was decommissioned last sprint.',
+  'Break-glass authorised by the on-call incident commander.',
+];
+
 const DENY_RULES = [
   'POL-14 — deny destructive calls on production storage',
   'POL-07 — deny role assumption outside the agent’s home account',
   'POL-22 — deny outbound mail from unattended agents',
 ];
 
-export function generateSessions(identities: Identity[], seed: number, now: Date): AgentSession[] {
+/** Roles whose holders can mark a session reviewed — see lib/permissions. */
+const REVIEWER_ROLES: Role[] = ['security-admin', 'tenant-admin', 'tenant-owner'];
+
+export function generateSessions(
+  identities: Identity[],
+  users: User[],
+  seed: number,
+  now: Date,
+): AgentSession[] {
   const rng = new Rng(seed ^ 0x55aa55);
   const agents = identities.filter((i) => i.type === 'ai-agent');
+  // Only someone who could actually have reviewed it.
+  const reviewers = users.filter((u) => u.status === 'active' && u.role && REVIEWER_ROLES.includes(u.role));
   const sessions: AgentSession[] = [];
   // Sessions per agent, not a fraction of the agent population: an agent is
   // long-running and accumulates many sessions over a week, so the session count
@@ -444,7 +461,10 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
       // session — a held action is the loudest thing on the screen and loses that
       // meaning if it is common.
       const blocked = privileged && blockedCount === 0 && rng.bool(0.06);
-      const anomaly = !blocked && rng.bool(0.12);
+      // 0.035, not 0.12: a session flags if ANY of its 5-14 steps does, so the
+      // per-step rate compounds. At 0.12 roughly 70% of sessions flagged and the
+      // Flagged facet narrowed 69 rows to 52, which is not triage.
+      const anomaly = !blocked && rng.bool(0.015);
       if (anomaly) anomalyCount++;
       if (blocked) blockedCount++;
 
@@ -478,15 +498,43 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
       last.status = 'scoring';
     }
 
+    // A reviewed session must not still owe a decision on a held step: the API
+    // refuses that transition, so seeding it would create a state the product
+    // itself cannot reach. Settle the holds rather than downgrading the review —
+    // which also gives the demo its only examples of an already-decided hold.
+    const reviewState = rng.weighted<SessionReviewState>(['open', 'reviewed'], [7, 3]);
+    // A reviewed session names its reviewer, exactly as one reviewed through the
+    // product does — otherwise every pre-seeded row shows the badge with no actor
+    // behind it. Indexed rather than rng.pick: a new draw would shift the stream.
+    const reviewer = reviewState === 'reviewed' && reviewers.length > 0
+      ? reviewers[i % reviewers.length]
+      : null;
+    if (reviewState === 'reviewed') {
+      for (const step of steps) {
+        if (step.status !== 'blocked' || step.blockDecision) continue;
+        const overridden = rng.bool(0.35);
+        step.blockDecision = {
+          outcome: overridden ? 'overridden' : 'confirmed',
+          at: new Date(cursor + 60000).toISOString(),
+          // The same person who reviewed the session settled its holds.
+          ...(reviewer ? { by: reviewer.email } : {}),
+          ...(overridden ? { justification: rng.pick(OVERRIDE_REASONS) } : {}),
+        };
+      }
+    }
+
     const otherAgents = agents.filter((a) => a.id !== agent.id);
+    // Exactly one rng draw per branch, in the original order: adding or moving a
+    // draw shifts the whole stream and reshuffles every session id.
+    const upstream = spawnKind === 'agent' ? (otherAgents.length > 0 ? rng.pick(otherAgents) : agent) : null;
     const spawnedBy = {
       kind: spawnKind,
-      label:
-        spawnKind === 'agent'
-          ? (otherAgents.length > 0 ? rng.pick(otherAgents) : agent).name
-          : spawnKind === 'human'
-            ? `${rng.pick(['j.okafor', 'r.mehta', 's.novak', 'a.lindqvist'])}@tenant.example`
-            : `cron: ${rng.pick(['hourly-reconcile', 'nightly-sweep', '15m-poll'])}`,
+      label: upstream
+        ? upstream.name
+        : spawnKind === 'human'
+          ? `${rng.pick(['j.okafor', 'r.mehta', 's.novak', 'a.lindqvist'])}@tenant.example`
+          : `cron: ${rng.pick(['hourly-reconcile', 'nightly-sweep', '15m-poll'])}`,
+      ...(upstream ? { identityId: upstream.id } : {}),
     };
 
     sessions.push({
@@ -503,13 +551,39 @@ export function generateSessions(identities: Identity[], seed: number, now: Date
         spawnedBy,
         credentials: agent.sources.length > 0 ? agent.sources.map((src) => src.externalId) : ['unknown'],
       },
-      reviewState: rng.weighted<SessionReviewState>(['open', 'reviewed'], [7, 3]),
+      reviewState,
+      ...(reviewer
+        ? { reviewedAt: new Date(cursor + 120000).toISOString(), reviewedBy: reviewer.email }
+        : {}),
     });
   }
   return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 /* --------------------------------------------------------------- policies */
+
+/**
+ * Attach each alert to the most recent session that had already started when the
+ * alert fired. A post-pass rather than an argument to generateAlerts, matching
+ * how attachQuarantineProvenance wires identities to the things that produced them.
+ */
+export function attachAlertSessions(alerts: Alert[], sessions: AgentSession[]): void {
+  const byIdentity = new Map<string, AgentSession[]>();
+  for (const session of sessions) {
+    const list = byIdentity.get(session.identityId);
+    if (list) list.push(session);
+    else byIdentity.set(session.identityId, [session]);
+  }
+  for (const list of byIdentity.values()) {
+    list.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+  for (const alert of alerts) {
+    const candidates = byIdentity.get(alert.identityId);
+    if (!candidates) continue;
+    const match = candidates.find((s) => s.startedAt <= alert.createdAt);
+    if (match) alert.sessionId = match.id;
+  }
+}
 
 export function generatePolicies(identities: Identity[], seed: number, now: Date): Policy[] {
   const rng = new Rng(seed ^ 0xc0ffee);

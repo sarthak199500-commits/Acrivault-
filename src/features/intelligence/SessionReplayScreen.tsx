@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Bot,
   ChevronLeft,
@@ -23,7 +23,13 @@ import { useQuarantineAgent, useReleaseQuarantine } from '@/features/discover/qu
 // so it goes through the same hook the queue's own screen uses.
 import { useRequestApproval } from '@/features/act/queries';
 import type { AgentSessionWithIdentity } from '@/mocks/api';
-import { SPAWN_KIND_LABELS, isFlaggedStep, type SessionStep, type StepStatus } from '@/mocks/types';
+import {
+  SPAWN_KIND_LABELS,
+  isFlaggedStep,
+  type BlockDecision as BlockDecisionRecord,
+  type SessionStep,
+  type StepStatus,
+} from '@/mocks/types';
 import { detailEyebrow } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card, CardBody, CardFooter, CardHeader } from '@/components/ui/Card';
@@ -125,9 +131,17 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
             </span>
           </Stat>
           <Stat label="Review">
-            <Badge tone={session.reviewState === 'reviewed' ? 'info' : 'warning'} className="capitalize">
-              {session.reviewState}
-            </Badge>
+            <span className="flex flex-col gap-0.5">
+              <Badge tone={session.reviewState === 'reviewed' ? 'info' : 'warning'} className="w-fit capitalize">
+                {session.reviewState}
+              </Badge>
+              {session.reviewState === 'reviewed' && session.reviewedBy && (
+                <span className="text-[length:var(--fs-micro)] text-text-tertiary">
+                  {session.reviewedBy}
+                  {session.reviewedAt ? ` · ${relativeTime(session.reviewedAt)}` : ''}
+                </span>
+              )}
+            </span>
           </Stat>
           <Stat label="Agent">
             {quarantined ? (
@@ -159,7 +173,9 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
           // the reader nowhere to look, which is the finding this screen shares
           // with the recommend action itself.
           <Banner tone="warning">
-            An analyst has recommended quarantining this agent.{' '}
+            {session.quarantineRecommendedBy
+              ? `${session.quarantineRecommendedBy} has recommended quarantining this agent.`
+              : 'An analyst has recommended quarantining this agent.'}{' '}
             <Link to="/act/approvals" className="underline">
               Awaiting a decision in Act › Approvals
             </Link>
@@ -173,23 +189,23 @@ function SessionSummary({ session }: { session: AgentSessionWithIdentity }) {
 
 /** FR-006: an analyst confirms a hold or overrides it with a written justification. */
 function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; step: SessionStep }) {
-  const canAct = useCan('session.quarantine');
+  const canConfirm = useCan('session.holdConfirm');
+  const canOverride = useCan('session.holdOverride');
   const decide = useDecideBlockedStep(session.id);
   const [overriding, setOverriding] = useState(false);
   const [justification, setJustification] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  if (step.blockDecision) {
-    return (
-      <Banner tone={step.blockDecision.outcome === 'confirmed' ? 'info' : 'warning'}>
-        {step.blockDecision.outcome === 'confirmed'
-          ? `Block confirmed ${relativeTime(step.blockDecision.at)}.`
-          : `Overridden ${relativeTime(step.blockDecision.at)} — “${step.blockDecision.justification}”`}
-      </Banner>
-    );
+  const decided = step.blockDecision;
+  const superseded = step.supersededDecisions ?? [];
+
+  if (decided && !canConfirm && !canOverride) {
+    return <DecisionRecord decided={decided} superseded={superseded} />;
   }
 
-  if (!canAct) return <RoleRestricted inline note="Your role can review this hold but not decide it." />;
+  if (!canConfirm && !canOverride) {
+    return <RoleRestricted inline note="Your role can review this hold but not decide it." />;
+  }
 
   const submitOverride = () => {
     if (!justification.trim()) {
@@ -210,23 +226,34 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
   };
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        size="sm"
-        variant="danger"
-        loading={decide.isPending && !overriding}
-        onClick={() =>
-          decide.mutate(
-            { stepId: step.id, outcome: 'confirmed' },
-            { onSuccess: () => toast('Block confirmed', { tone: 'success' }) },
-          )
-        }
-      >
-        Confirm block
-      </Button>
-      <Button size="sm" variant="secondary" onClick={() => setOverriding(true)}>
-        Override…
-      </Button>
+    <div className="space-y-3">
+      {decided && <DecisionRecord decided={decided} superseded={superseded} />}
+      {decided && (
+        <div className="eyebrow text-text-tertiary">Supersede this decision</div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+      {canConfirm && (
+        <Button
+          size="sm"
+          variant="danger"
+          loading={decide.isPending && !overriding}
+          onClick={() =>
+            decide.mutate(
+              { stepId: step.id, outcome: 'confirmed' },
+              { onSuccess: () => toast('Block confirmed', { tone: 'success' }) },
+            )
+          }
+        >
+          Confirm block
+        </Button>
+      )}
+      {canOverride ? (
+        <Button size="sm" variant="secondary" onClick={() => setOverriding(true)}>
+          Override…
+        </Button>
+      ) : (
+        <RoleRestricted inline note="Overriding a hold needs a Security Admin." />
+      )}
 
       <Dialog
         open={overriding}
@@ -260,6 +287,40 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
           rows={3}
         />
       </Dialog>
+      </div>
+    </div>
+  );
+}
+
+/** How a decision reads once made — plus anything it displaced. */
+function describeDecision(d: BlockDecisionRecord): string {
+  const who = d.by ? ` by ${d.by}` : '';
+  return d.outcome === 'confirmed'
+    ? `Block confirmed ${relativeTime(d.at)}${who}.`
+    : `Overridden ${relativeTime(d.at)}${who} — “${d.justification}”`;
+}
+
+function DecisionRecord({
+  decided,
+  superseded,
+}: {
+  decided: BlockDecisionRecord;
+  superseded: BlockDecisionRecord[];
+}) {
+  return (
+    <div className="space-y-2">
+      {/* History reads quietly: it is context, not the current answer. */}
+      {superseded.map((d, i) => (
+        <p
+          key={`${d.at}-${i}`}
+          className="text-[length:var(--fs-micro)] text-text-tertiary line-through"
+        >
+          Superseded — {describeDecision(d)}
+        </p>
+      ))}
+      <Banner tone={decided.outcome === 'confirmed' ? 'info' : 'warning'}>
+        {describeDecision(decided)}
+      </Banner>
     </div>
   );
 }
@@ -364,7 +425,21 @@ function Provenance({ session }: { session: AgentSessionWithIdentity }) {
       <CardBody className="space-y-4">
         <KeyValueList
           items={[
-            { label: 'Spawned by', value: `${SPAWN_KIND_LABELS[spawn.kind]} — ${spawn.label}`, mono: true },
+            {
+              label: 'Spawned by',
+              // An upstream agent is traversable; a human or a cron is just a label.
+              value: spawn.identityId ? (
+                <span>
+                  {SPAWN_KIND_LABELS[spawn.kind]} —{' '}
+                  <Link to={`/discover/${spawn.identityId}`} className="text-accent-text hover:underline">
+                    {spawn.label}
+                  </Link>
+                </span>
+              ) : (
+                `${SPAWN_KIND_LABELS[spawn.kind]} — ${spawn.label}`
+              ),
+              mono: true,
+            },
             { label: 'Model', value: session.provenance.model, mono: true },
             { label: 'Region', value: session.provenance.region, mono: true },
             {
@@ -443,6 +518,7 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
   const showQuarantine = canQuarantine && !quarantined;
   const showRecommend = !canQuarantine && canRecommend && !quarantined;
   const showRelease = canRelease && quarantined;
+  const undecidedHolds = session.steps.filter((s) => s.status === 'blocked' && !s.blockDecision).length;
   const anyAction = showReview || showQuarantine || showRecommend || showRelease;
 
   // `description` carries the second line where the outcome has somewhere the
@@ -462,9 +538,26 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
       {anyAction ? (
         <div className="flex flex-wrap items-center gap-2">
           {showReview && (
-            <Button variant="secondary" leadingIcon={<CheckCheck className="h-4 w-4" />} onClick={() => setConfirm('review')}>
-              Mark reviewed
-            </Button>
+            <Tooltip
+              content={
+                undecidedHolds > 0
+                  ? `Decide the ${undecidedHolds === 1 ? 'held step' : `${undecidedHolds} held steps`} first.`
+                  : 'Record that a human has reviewed this session.'
+              }
+            >
+              {/* The span is required: a disabled button emits no pointer events,
+                  so the tooltip would never open. */}
+              <span>
+                <Button
+                  variant="secondary"
+                  leadingIcon={<CheckCheck className="h-4 w-4" />}
+                  disabled={undecidedHolds > 0}
+                  onClick={() => setConfirm('review')}
+                >
+                  Mark reviewed
+                </Button>
+              </span>
+            </Tooltip>
           )}
           {showQuarantine && (
             <Button variant="danger" leadingIcon={<ShieldX className="h-4 w-4" />} onClick={() => setConfirm('quarantine')}>
@@ -490,7 +583,7 @@ function Actions({ session }: { session: AgentSessionWithIdentity }) {
         open={confirm === 'review'}
         onOpenChange={(o) => !o && setConfirm(null)}
         title="Mark this session reviewed?"
-        description="This records that an analyst has inspected the session, and is written to the audit trail."
+        description="This records that an analyst has inspected the session, and is written to the audit trail. It cannot be undone — the session moves out of the triage flow for good."
         confirmLabel="Mark reviewed"
         pending={markReviewed.isPending}
         onConfirm={() => markReviewed.mutate(session.id, settle('Session marked reviewed', 'success'))}
@@ -589,7 +682,27 @@ const TONE_FOR_STATUS: Record<StepStatus, 'default' | 'anomaly' | 'active'> = {
 };
 
 function Replay({ session }: { session: AgentSessionWithIdentity }) {
-  const [selectedId, setSelectedId] = useState(session.steps[0]?.id ?? '');
+  // In the URL, like the list's filters: a finding is only actionable if the
+  // person who has to decide it can be sent straight to the step.
+  const [params, setParams] = useSearchParams();
+  const stepParam = params.get('step');
+  const selectedId = session.steps.some((s) => s.id === stepParam)
+    ? (stepParam as string)
+    : (session.steps[0]?.id ?? '');
+  const setSelectedId = useCallback(
+    (id: string) => {
+      // `replace` so arrowing through a trace does not fill the back stack.
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('step', id);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
   const selectedIndex = Math.max(0, session.steps.findIndex((s) => s.id === selectedId));
   const selected = session.steps[selectedIndex];
   const flaggedIds = useMemo(
@@ -631,7 +744,12 @@ function Replay({ session }: { session: AgentSessionWithIdentity }) {
         <>
           {STEP_LABEL[step.kind]}
           {step.scope && <span className="text-text-secondary"> · {step.scope}</span>}
-          {step.anomalyReason && <span className="text-crit-fg"> · {step.anomalyReason}</span>}
+          {step.anomalyReason && (
+            <span className="text-crit-fg" title={step.anomalyReason}>
+              {' · '}
+              {step.anomalyReason}
+            </span>
+          )}
         </>
       ),
       flag: verdict ? (
@@ -708,7 +826,13 @@ function Replay({ session }: { session: AgentSessionWithIdentity }) {
                 )}
               </div>
             )}
-            <div className="max-h-[16rem] overflow-y-auto px-5 pb-5 pt-3 [scrollbar-gutter:stable] md:max-h-[34rem]">
+            <div
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scrollable region must be focusable (WCAG scrollable-region-focusable), matching the session list's virtualised scroller
+              tabIndex={0}
+              role="group"
+              aria-label="Session steps, scrollable"
+              className="max-h-[16rem] overflow-y-auto px-5 pb-5 pt-3 [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent)_30%,transparent)] md:max-h-[34rem]"
+            >
               <Timeline items={items} ariaLabel="Session steps" />
             </div>
           </div>

@@ -132,6 +132,13 @@ export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 export interface Alert {
   id: string;
   identityId: string;
+  /**
+   * The session that was running when this alert fired. Resolved once at build
+   * time, never looked up at read time: "the agent's latest session" is a
+   * different session the moment the agent runs again, and the panel presents
+   * whatever it opens as the evidence for the alert.
+   */
+  sessionId?: string;
   severity: RiskBand;
   title: string;
   description: string;
@@ -268,6 +275,15 @@ export const FLAGGED_STATUSES: StepStatus[] = ['anomaly', 'blocked'];
 export const isFlaggedStep = (step: SessionStep): boolean =>
   FLAGGED_STATUSES.includes(step.status);
 
+/** One answer to a held step. Append-only: see `supersededDecisions`. */
+export interface BlockDecision {
+  outcome: 'confirmed' | 'overridden';
+  justification?: string;
+  at: string;
+  /** Resolved from the acting principal, never client-supplied. */
+  by?: string;
+}
+
 export interface SessionStep {
   id: string;
   /** 1-based ordinal within the session; defines display order (spec 11.4). */
@@ -289,8 +305,14 @@ export interface SessionStep {
    * never happened.
    */
   holdEnforced?: boolean;
-  /** Set once an analyst confirms the block or overrides it with justification. */
-  blockDecision?: { outcome: 'confirmed' | 'overridden'; justification?: string; at: string };
+  /**
+   * The decision in force. Deciding again does not edit this in place — the
+   * previous one moves to `supersededDecisions` and stays visible, because an
+   * auditor asking "did anyone change their mind here?" deserves an answer.
+   */
+  blockDecision?: BlockDecision;
+  /** Earlier decisions, oldest first. Never rewritten, never removed. */
+  supersededDecisions?: BlockDecision[];
   /** Tool calls only — the scope the call was invoked with. */
   scope?: ToolScope;
 }
@@ -316,8 +338,12 @@ export interface SessionProvenance {
   model: string;
   /** Where it ran. */
   region: string;
-  /** What started it. */
-  spawnedBy: { kind: SessionSpawnKind; label: string };
+  /**
+   * What started it. When an upstream *agent* did, `identityId` names it — the
+   * label alone is a dead end, and agent-to-agent delegation is the case that
+   * most justifies session replay existing.
+   */
+  spawnedBy: { kind: SessionSpawnKind; label: string; identityId?: string };
   /** Every credential the session authenticated with, not just the first. */
   credentials: string[];
 }
@@ -347,8 +373,16 @@ export interface AgentSession {
   provenance: SessionProvenance;
   reviewState: SessionReviewState;
   reviewedAt?: string;
+  /**
+   * Who cleared it, resolved from the acting principal. The audit trail already
+   * records the actor, but an auditor asking "who cleared this session" should
+   * not have to join two records to find out.
+   */
+  reviewedBy?: string;
   /** Set when an Analyst proposes a quarantine for an admin to carry out. */
   quarantineRecommendedAt?: string;
+  /** Who proposed it — the same reasoning as `reviewedBy`. */
+  quarantineRecommendedBy?: string;
 }
 
 // ASSUMPTION: 6-phase lifecycle naming (Rotation and cascade-revocation mechanics).
