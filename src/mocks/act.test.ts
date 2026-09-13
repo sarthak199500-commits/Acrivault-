@@ -53,6 +53,31 @@ describe('Act > Quarantine provenance', () => {
     expect([...outcomes].sort()).toEqual(['person', 'person-from-replay', 'policy']);
   });
 
+  // Derived from the RECORD, never from the label: a filter that read
+  // `byLabel.startsWith('Policy · ')` would break the next time that copy moves.
+  it('emits a producer facet agreeing with the record, for every row', async () => {
+    const rows = await listQuarantined();
+    const byId = new Map(getDataset().identities.map((i) => [i.id, i]));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const by = byId.get(row.id)?.quarantine?.by;
+      if (!by) throw new Error(`fixture: ${row.id} listed without a quarantine record`);
+      const expected = by.kind === 'policy' ? 'policy' : by.viaSessionId ? 'replay' : 'person';
+      expect(row.producer).toBe(expected);
+    }
+  });
+
+  // All three facets have to occur, or the menu ships with a dead option and the
+  // test above passes vacuously on whichever two survived.
+  it('produces all three facets across the seeded data', async () => {
+    const rows = await listQuarantined();
+    expect([...new Set(rows.map((r) => r.producer))].sort()).toEqual([
+      'person',
+      'policy',
+      'replay',
+    ]);
+  });
+
   // The domain rule (see makeIdentity's containment roll): only a high-risk
   // orphan is ever quarantined. This has to hold for EVERY quarantined identity,
   // including the one attachQuarantineProvenance promotes to demonstrate the
@@ -307,6 +332,21 @@ describe('Act > Quarantine - a containment raised from a replay', () => {
     if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
     expect(row.viaLabel).toBe('Removed session');
     expect(row.viaHref).toBeUndefined();
+    await releaseQuarantine(identity.id);
+  });
+
+  // The facet comes off `by.viaSessionId`, not off whether `viaLabel` resolved to
+  // a link. Deriving it from the label would silently re-file this row as
+  // `person` the moment its session was deleted — losing, from the filter, the
+  // one containment whose evidence is most worth finding.
+  it('still reads as replay-backed when the cited session has been deleted', async () => {
+    useUiStore.getState().setRole('tenant-admin');
+    const { identity } = pickReplayCandidate();
+    await quarantineAgent(identity.id, undefined, 'ses_does_not_exist');
+    const row = (await listQuarantined()).find((r) => r.id === identity.id);
+    if (!row) throw new Error('fixture: expected the just-contained identity to be listed');
+    expect(row.viaLabel).toBe('Removed session');
+    expect(row.producer).toBe('replay');
     await releaseQuarantine(identity.id);
   });
 

@@ -20,7 +20,13 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { ACTION_OBJECT, isCrossCloud, isFlaggedStep, NOTIFICATION_CATEGORIES } from './types';
+import {
+  ACTION_OBJECT,
+  isCrossCloud,
+  isFlaggedStep,
+  NOTIFICATION_CATEGORIES,
+  producerFacet,
+} from './types';
 import type {
   Alert,
   AgentSession,
@@ -45,6 +51,7 @@ import type {
   PolicyAction,
   PolicyActionOutcome,
   PolicyToken,
+  ProducerFacet,
   QuarantineRecord,
   ReachEdge,
   ReachNode,
@@ -1079,6 +1086,12 @@ export interface QuarantinedIdentity {
   name: string;
   type: NhiType;
   at: string;
+  /**
+   * Which of the three display outcomes this row is, for Act > Quarantine's
+   * "Produced by" filter. Carried structurally so nothing has to match on
+   * `byLabel`, whose copy is free to change.
+   */
+  producer: ProducerFacet;
   /** Resolved producer, e.g. "Policy · Orphaned AI agents". */
   byLabel: string;
   /** Where the producer lives, for the link back. Absent when it has no screen. */
@@ -1155,6 +1168,7 @@ export function listQuarantined(): Promise<QuarantinedIdentity[]> {
         name: i.name,
         type: i.type,
         at: i.quarantine.at,
+        producer: producerFacet(i.quarantine.by),
         ...quarantineLabel(i.quarantine),
       }))
       .sort((a, b) => b.at.localeCompare(a.at)),

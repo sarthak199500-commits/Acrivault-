@@ -87,6 +87,23 @@ export interface QuarantineRecord {
   by: QuarantineSource;
 }
 
+/**
+ * Which of the three DISPLAY outcomes a containment reads as — the axis Act >
+ * Quarantine filters on.
+ *
+ * This is NOT a data-model kind. `QuarantineSource` has exactly two and stays
+ * that way (act.test.ts guards the set): a session is evidence, not an actor.
+ * This union splits the `user` kind by whether a replay evidenced the decision,
+ * which is a presentation concern and lives here as one.
+ */
+export type ProducerFacet = 'policy' | 'person' | 'replay';
+
+/** The facet a containment reads as, derived from the record rather than its label. */
+export function producerFacet(source: QuarantineSource): ProducerFacet {
+  if (source.kind === 'policy') return 'policy';
+  return source.viaSessionId ? 'replay' : 'person';
+}
+
 export interface Identity {
   id: string;
   name: string;
