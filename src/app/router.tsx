@@ -154,12 +154,6 @@ export const router = createBrowserRouter([
               Component: (await import('@/features/platform/sso/SsoScreen')).SsoScreen,
             }),
           },
-          {
-            path: 'sessions',
-            lazy: async () => ({
-              Component: (await import('@/features/platform/settings/SessionsPane')).SessionsPane,
-            }),
-          },
           // User administration (add-on). Add / Edit are modals over the list.
           {
             path: 'users',

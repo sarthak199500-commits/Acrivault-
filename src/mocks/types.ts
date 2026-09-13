@@ -697,58 +697,6 @@ export interface NotificationPrefs {
   digest: { enabled: boolean; day: DigestDay; hour: number };
 }
 
-export const ROUTING_DESTINATION_KINDS = ['email', 'slack', 'webhook'] as const;
-export type RoutingDestinationKind = (typeof ROUTING_DESTINATION_KINDS)[number];
-
-export const ROUTING_KIND_LABELS: Record<RoutingDestinationKind, string> = {
-  email: 'Email',
-  slack: 'Slack',
-  webhook: 'Webhook',
-};
-
-export interface RoutingDestination {
-  id: string;
-  kind: RoutingDestinationKind;
-  /** Address, channel, or endpoint. Never a secret — tokens live upstream. */
-  target: string;
-  enabled: boolean;
-  /**
-   * Whether the destination has proven it receives. Only `email` is ever
-   * verified in Wave 1; the rest are synthetic and say so in the UI.
-   * // ASSUMPTION: delivery and verification are upstream.
-   */
-  verified: boolean;
-}
-
-/**
- * Tenant-wide routing: where the ORGANIZATION's alerts go, as distinct from
- * where one person's do. Gated on `notifications.routing` (Tenant Admin and
- * above) because it decides what an entire security team sees.
- */
-export interface NotificationRouting {
-  /** Route anything at or above this severity. `'info'` routes everything. */
-  minSeverity: RiskBand | 'info';
-  destinations: RoutingDestination[];
-}
-
-/** Severity floor → the bands it admits, ordered high → low. */
-export const SEVERITY_ORDER: ReadonlyArray<RiskBand | 'info'> = [
-  'critical',
-  'high',
-  'medium',
-  'low',
-  'minimal',
-  'info',
-];
-
-/** Does `severity` clear the routing floor? */
-export function meetsSeverityFloor(
-  severity: RiskBand | 'info',
-  floor: RiskBand | 'info',
-): boolean {
-  return SEVERITY_ORDER.indexOf(severity) <= SEVERITY_ORDER.indexOf(floor);
-}
-
 export interface CloudConnection {
   cloud: Cloud;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -832,22 +780,6 @@ export interface ScimConfig {
   usersReceived: number;
 }
 
-/**
- * Tenant session and step-up policy.
- *
- * `mfaByRole` is deliberately absent: MFA requirement per role presupposes a
- * finalised permission matrix, which is still open, so the surface states the
- * intended policy read-only rather than letting an admin save one the
- * enforcement layer cannot honour.
- * // ASSUMPTION: enforcement is upstream; this records the policy, never applies it.
- */
-export interface SessionPolicy {
-  idleTimeoutMinutes: number;
-  absoluteSessionHours: number;
-  /** Re-authenticate before a sensitive action — distinct from merely confirming it. */
-  stepUpOnSensitive: boolean;
-}
-
 export interface Tenant {
   id: string;
   name: string;
@@ -858,7 +790,6 @@ export interface Tenant {
   scim: ScimConfig;
   /** Password sign-in for accounts Entra does not manage. The way back in. */
   passwordFallback: boolean;
-  sessionPolicy: SessionPolicy;
   createdAt: string;
 }
 

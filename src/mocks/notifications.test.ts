@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   activatePolicy,
   getNotificationPrefs,
-  getNotificationRouting,
   listAudit,
   listNotifications,
   markAllNotificationsRead,
@@ -10,10 +9,9 @@ import {
   setNotificationRead,
   transferOwnership,
   updateNotificationPrefs,
-  updateNotificationRouting,
 } from './api';
 import { getDataset } from './dataset';
-import { meetsSeverityFloor, NOTIFICATION_CATEGORIES } from './types';
+import { NOTIFICATION_CATEGORIES } from './types';
 import { useUiStore } from '@/stores/ui';
 import { currentActor } from '@/stores/auth';
 
@@ -143,35 +141,6 @@ describe('preferences', () => {
     const enabled = await listNotifications();
     expect(enabled.length).toBe(before.length + 1);
     expect(enabled[0].category).toBe('rotation');
-  });
-});
-
-describe('tenant routing', () => {
-  it('is refused to a role without notifications.routing', async () => {
-    useUiStore.getState().setRole('security-admin');
-    await expect(updateNotificationRouting({ minSeverity: 'info' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
-    useUiStore.getState().setRole('viewer');
-    await expect(updateNotificationRouting({ minSeverity: 'info' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
-  });
-
-  it('persists for a Tenant Admin and is audited', async () => {
-    await updateNotificationRouting({ minSeverity: 'critical' });
-    const after = await getNotificationRouting();
-    expect(after.minSeverity).toBe('critical');
-    const audit = await listAudit({ search: 'notification routing' });
-    expect(audit.some((e) => e.action === 'updated notification routing')).toBe(true);
-  });
-
-  it('severity floor admits equal and higher bands only', () => {
-    expect(meetsSeverityFloor('critical', 'high')).toBe(true);
-    expect(meetsSeverityFloor('high', 'high')).toBe(true);
-    expect(meetsSeverityFloor('medium', 'high')).toBe(false);
-    expect(meetsSeverityFloor('info', 'info')).toBe(true);
-    expect(meetsSeverityFloor('critical', 'info')).toBe(true);
   });
 });
 

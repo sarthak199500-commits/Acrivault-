@@ -2,23 +2,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getConnections,
   getNotificationPrefs,
-  getNotificationRouting,
-  getSessionPolicy,
   getSourceHealth,
   listAudit,
-  updateSessionPolicy,
   listNotifications,
   listUsers,
   markAllNotificationsRead,
   setNotificationRead,
   transferOwnership,
   updateNotificationPrefs,
-  updateNotificationRouting,
   updateUserRole,
   type AuditFilter,
 } from '@/mocks/api';
 import type { Role } from '@/lib/permissions';
-import type { NotificationPrefs, NotificationRouting } from '@/mocks/types';
+import type { NotificationPrefs } from '@/mocks/types';
 
 export function useUsers() {
   return useQuery({ queryKey: ['users'], queryFn: listUsers });
@@ -73,7 +69,6 @@ export function useMarkAllNotificationsRead() {
 // entry the reader subscribes to — a retyped literal that drifts is a rollback
 // that silently restores nothing.
 const PREFS_KEY = ['notification-prefs'] as const;
-const ROUTING_KEY = ['notification-routing'] as const;
 
 export function useNotificationPrefs() {
   return useQuery({ queryKey: PREFS_KEY, queryFn: getNotificationPrefs });
@@ -118,31 +113,6 @@ export function useUpdateNotificationPrefs() {
   });
 }
 
-export function useNotificationRouting() {
-  return useQuery({ queryKey: ROUTING_KEY, queryFn: getNotificationRouting });
-}
-
-/** Same optimistic treatment as the preferences above, for the same reason. */
-export function useUpdateNotificationRouting() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: updateNotificationRouting,
-    onMutate: async (patch) => {
-      await qc.cancelQueries({ queryKey: ROUTING_KEY });
-      const previous = qc.getQueryData<NotificationRouting>(ROUTING_KEY);
-      if (previous) qc.setQueryData<NotificationRouting>(ROUTING_KEY, { ...previous, ...patch });
-      return { previous };
-    },
-    onError: (_err, _patch, context) => {
-      if (context?.previous) qc.setQueryData(ROUTING_KEY, context.previous);
-    },
-    onSuccess: (saved) => {
-      qc.setQueryData(ROUTING_KEY, saved);
-      qc.invalidateQueries({ queryKey: ['audit'] });
-    },
-  });
-}
-
 /** Ownership moves two people's roles at once, so the user list is refetched whole. */
 export function useTransferOwnership() {
   const qc = useQueryClient();
@@ -151,22 +121,6 @@ export function useTransferOwnership() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
       qc.invalidateQueries({ queryKey: ['tenant'] });
-      qc.invalidateQueries({ queryKey: ['audit'] });
-    },
-  });
-}
-
-export function useSessionPolicy() {
-  return useQuery({ queryKey: ['session-policy'], queryFn: getSessionPolicy });
-}
-
-export function useUpdateSessionPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: updateSessionPolicy,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['session-policy'] });
-      // The change is audited, so the log a reader may have open is now stale.
       qc.invalidateQueries({ queryKey: ['audit'] });
     },
   });

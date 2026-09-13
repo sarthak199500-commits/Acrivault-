@@ -41,7 +41,6 @@ import type {
   NotificationChannels,
   NotificationItem,
   NotificationPrefs,
-  NotificationRouting,
   Policy,
   PolicyAction,
   PolicyActionOutcome,
@@ -53,7 +52,6 @@ import type {
   RotationHistoryEntry,
   RotationJob,
   SourceHealth,
-  SessionPolicy,
   Tenant,
   User,
   UserStatus,
@@ -1730,10 +1728,6 @@ function copyPrefs(p: NotificationPrefs): NotificationPrefs {
   return { categories, digest: { ...p.digest } };
 }
 
-function copyRouting(r: NotificationRouting): NotificationRouting {
-  return { minSeverity: r.minSeverity, destinations: r.destinations.map((d) => ({ ...d })) };
-}
-
 /** The signed-in actor's email, or 'system' — the same resolution appendAudit uses. */
 function currentActorEmail(): string {
   const { id } = currentActor();
@@ -1765,34 +1759,6 @@ export function updateNotificationPrefs(patch: Partial<NotificationPrefs>): Prom
       `Email on for ${on} of ${NOTIFICATION_CATEGORIES.length} categories, digest ${next.digest.enabled ? 'on' : 'off'}.`,
     );
     return copyPrefs(next);
-  });
-}
-
-export function getNotificationRouting(): Promise<NotificationRouting> {
-  return respond(() => copyRouting(getDataset().notificationRouting));
-}
-
-/**
- * Record tenant-wide routing (role-gated: `notifications.routing`).
- *
- * Separate from the personal preferences above because the blast radius is
- * different: this decides what an entire security team stops seeing.
- */
-export function updateNotificationRouting(
-  patch: Partial<NotificationRouting>,
-): Promise<NotificationRouting> {
-  return respond(() => {
-    assertActorCan('notifications.routing');
-    const ds = getDataset();
-    const next: NotificationRouting = { ...ds.notificationRouting, ...patch };
-    ds.notificationRouting = next;
-    const live = next.destinations.filter((d) => d.enabled).length;
-    appendAudit(
-      'updated notification routing',
-      ds.tenant.name,
-      `Routing ${next.minSeverity} and above to ${live} of ${next.destinations.length} destinations.`,
-    );
-    return copyRouting(next);
   });
 }
 
@@ -2167,8 +2133,6 @@ export async function acceptLegal(
     // The Owner signs in with a password until federation is configured — and
     // stays able to, because they are the only account Entra will not manage.
     passwordFallback: true,
-    // Same defaults the seeded tenant carries: a new org is not a laxer org.
-    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: new Date().toISOString(),
   };
   const user: User = {
@@ -2403,32 +2367,7 @@ function cloneTenant(t: Tenant): Tenant {
     sso: { ...t.sso },
     saml: { ...t.saml, cert: t.saml.cert ? { ...t.saml.cert } : null },
     scim: { ...t.scim },
-    sessionPolicy: { ...t.sessionPolicy },
   };
-}
-
-export function getSessionPolicy(): Promise<SessionPolicy> {
-  return respond(() => ({ ...getDataset().tenant.sessionPolicy }));
-}
-
-/**
- * Record the tenant's session policy. Audited, because "how long does a session
- * live" is a question an auditor asks and a change to it is evidence.
- * // ASSUMPTION: enforcement is upstream — nothing here expires a session.
- */
-export function updateSessionPolicy(patch: Partial<SessionPolicy>): Promise<SessionPolicy> {
-  return respond(() => {
-    assertActorCan('settings.manage');
-    const { tenant } = getDataset();
-    tenant.sessionPolicy = { ...tenant.sessionPolicy, ...patch };
-    const p = tenant.sessionPolicy;
-    appendAudit(
-      'updated session policy',
-      tenant.name,
-      `Idle ${p.idleTimeoutMinutes} min, absolute ${p.absoluteSessionHours} h, step-up ${p.stepUpOnSensitive ? 'on' : 'off'}.`,
-    );
-    return { ...p };
-  });
 }
 
 /* ------------------------------------------------- single sign-on & SCIM */

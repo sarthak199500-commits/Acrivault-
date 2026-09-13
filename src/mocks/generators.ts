@@ -21,7 +21,6 @@ import {
   type NhiType,
   type NotificationItem,
   type NotificationPrefs,
-  type NotificationRouting,
   type Policy,
   type PolicyAction,
   type PolicyActionReason,
@@ -944,35 +943,6 @@ export function generateNotificationPrefs(): NotificationPrefs {
   };
 }
 
-/**
- * Seeded tenant routing. Only the email destination is verified: Slack and the
- * SIEM webhook are labelled synthetic in the UI rather than claiming a delivery
- * path Wave 1 does not have.
- * // ASSUMPTION: delivery, verification and secret storage are upstream.
- */
-export function generateNotificationRouting(): NotificationRouting {
-  return {
-    minSeverity: 'high',
-    destinations: [
-      {
-        id: 'dst_email',
-        kind: 'email',
-        target: 'security-oncall@acme.test',
-        enabled: true,
-        verified: true,
-      },
-      { id: 'dst_slack', kind: 'slack', target: '#sec-alerts', enabled: true, verified: false },
-      {
-        id: 'dst_siem',
-        kind: 'webhook',
-        target: 'https://splunk.acme.test/services/collector',
-        enabled: false,
-        verified: false,
-      },
-    ],
-  };
-}
-
 export function generateConnections(identities: Identity[], now: Date): CloudConnection[] {
   const byCloud: Record<Cloud, Record<NhiType, number>> = {
     aws: emptyCounts(),
@@ -1087,7 +1057,6 @@ export function generateTenant(now: Date): Tenant {
       usersReceived: 11,
     },
     passwordFallback: true,
-    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: iso(now, 420 * DAY),
   };
 }

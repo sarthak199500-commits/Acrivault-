@@ -23,7 +23,6 @@ describe('permission matrix', () => {
     expect(can('tenant-admin', 'rotate.standard')).toBe(true);
     expect(can('tenant-admin', 'rotate.emergency')).toBe(true);
     expect(can('tenant-admin', 'session.quarantineRelease')).toBe(true);
-    expect(can('tenant-admin', 'notifications.routing')).toBe(true);
     // Security Admin cannot manage billing/other users/SSO/tenant.
     expect(can('security-admin', 'tenant.manage')).toBe(false);
     expect(can('security-admin', 'users.manage')).toBe(false);
@@ -78,9 +77,6 @@ describe('permission matrix', () => {
     expect(can('viewer', 'notifications.self')).toBe(true);
     expect(can('analyst', 'notifications.self')).toBe(true);
     expect(can('security-admin', 'notifications.self')).toBe(true);
-    // Tenant-wide routing stops at Tenant Admin.
-    expect(can('analyst', 'notifications.routing')).toBe(false);
-    expect(can('security-admin', 'notifications.routing')).toBe(false);
   });
 });
 

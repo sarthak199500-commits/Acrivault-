@@ -5,7 +5,6 @@ import {
   Boxes,
   Building2,
   ClipboardCheck,
-  Clock,
   Database,
   GitBranch,
   KeyRound,
@@ -187,13 +186,6 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
         title: 'Sign-in & SSO',
         keywords: 'sso saml scim entra single sign-on federation',
         icon: KeyRound,
-      },
-      {
-        to: '/settings/sessions',
-        label: 'Sessions',
-        title: 'Sessions & Access',
-        keywords: 'sessions access idle timeout step-up mfa by role',
-        icon: Clock,
       },
       {
         to: '/settings/users',

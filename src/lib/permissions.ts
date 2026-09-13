@@ -72,9 +72,8 @@ export type Capability =
   | 'audit.view'
   | 'audit.export'
   | 'identity.assignOwner'
-  // notification preferences are personal; routing is tenant-wide (spec §4)
+  // notification preferences are personal (spec §4)
   | 'notifications.self'
-  | 'notifications.routing'
   // user & tenant administration
   | 'users.manage'
   | 'users.add'
@@ -136,7 +135,6 @@ const TENANT_ADMIN_CAPS: Capability[] = [
   'session.quarantineRelease',
   'connector.manage',
   'export',
-  'notifications.routing',
   'users.manage',
   'users.add',
   'users.edit',
