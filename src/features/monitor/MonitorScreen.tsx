@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Activity, BellOff, ChevronRight, X } from 'lucide-react';
+import { Activity, BellOff, ChevronRight, ShieldCheck, X } from 'lucide-react';
 import { useAlerts, useMonitoringBaseline } from './queries';
 import { BaselineStrip } from './BaselineStrip';
 import { useMonitorFilters } from './useMonitorFilters';
 import type { AlertWithIdentity } from '@/mocks/api';
 import type { RiskBand } from '@/mocks/types';
-import { bucketByTime, splitAcknowledged } from './alertGrouping';
+import { bucketByTime, rollUpByPolicy, splitAcknowledged } from './alertGrouping';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
@@ -55,6 +55,15 @@ function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => v
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-text">{alert.title}</span>
+          {/* Provenance, not the rule's name — the title already carries that. Without
+              it a rule-raised row and a baseline anomaly look alike, and the two mean
+              very different things: one is a policy someone chose, the other is a
+              deviation nobody predicted. */}
+          {alert.raisedBy && (
+            <Badge tone="info" icon={<ShieldCheck className="h-3 w-3" />} className="shrink-0">
+              policy
+            </Badge>
+          )}
           {alert.baseline === 'learning' && (
             <Badge tone="neutral" className="shrink-0">learning</Badge>
           )}
@@ -81,6 +90,43 @@ function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => v
         aria-hidden="true"
       />
     </button>
+  );
+}
+
+/**
+ * The rest of what one rule raised, behind its first row.
+ *
+ * Collapsed by default and counted honestly: the label states identities, because a
+ * rule raises once per identity and "3 more alerts" would invite reading it as three
+ * separate findings.
+ */
+function PolicyRollUp({
+  alerts,
+  onOpen,
+}: {
+  alerts: AlertWithIdentity[];
+  onOpen: (a: AlertWithIdentity) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-border bg-surface-2 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 py-2 pl-7 pr-3 text-left text-[length:var(--fs-micro)] text-text-secondary hover:text-text"
+      >
+        <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')} aria-hidden="true" />
+        {pluralize(alerts.length, 'more identity', 'more identities')} from this rule
+      </button>
+      {open && (
+        <div className="pl-4">
+          {alerts.map((a) => (
+            <AlertRow key={a.id} alert={a} onOpen={() => onOpen(a)} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -121,13 +167,21 @@ export function MonitorScreen() {
   const baseline = useMonitoringBaseline();
   const navigate = useNavigate();
   const location = useLocation();
-  const { severity, setSeverity, learningOnly, showLearningOnly, clearLearningOnly } =
+  const { severity, setSeverity, source, setSource, learningOnly, showLearningOnly, clearLearningOnly } =
     useMonitorFilters();
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     (query.data ?? []).forEach((a) => (c[a.severity] = (c[a.severity] ?? 0) + 1));
     return c;
+  }, [query.data]);
+
+  // Counted over the whole feed, not the filtered view, so the two pills always
+  // reconcile with All — a pill whose count moves when you select its sibling reads
+  // as the filter having changed the estate rather than the view.
+  const sourceCounts = useMemo(() => {
+    const policy = (query.data ?? []).filter((a) => a.raisedBy).length;
+    return { policy, behavior: (query.data ?? []).length - policy };
   }, [query.data]);
 
   // Alerts the baseline caveat actually applies to — the strip's link promises this count.
@@ -180,15 +234,18 @@ export function MonitorScreen() {
       >
         {(alerts) => {
           const bySeverity = severity ? alerts.filter((a) => a.severity === severity) : alerts;
-          const filtered = learningOnly
-            ? bySeverity.filter((a) => a.baseline === 'learning')
+          const bySource = source
+            ? bySeverity.filter((a) => (source === 'policy' ? !!a.raisedBy : !a.raisedBy))
             : bySeverity;
+          const filtered = learningOnly
+            ? bySource.filter((a) => a.baseline === 'learning')
+            : bySource;
           const { active, acknowledged } = splitAcknowledged(filtered);
           const buckets = bucketByTime(active);
           return (
             <div>
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                <FilterPill label="All" count={alerts.length} selected={severity === null && !learningOnly} onClick={() => { setSeverity(null); clearLearningOnly(); }} />
+                <FilterPill label="All" count={alerts.length} selected={severity === null && source === null && !learningOnly} onClick={() => { setSeverity(null); setSource(null); clearLearningOnly(); }} />
                 {SEVERITY_ORDER.map((s) => (
                   <FilterPill
                     key={s}
@@ -199,6 +256,25 @@ export function MonitorScreen() {
                     icon={<span className={cn('inline-block h-2 w-2 rounded-full')} style={{ backgroundColor: `var(--risk-${s})` }} aria-hidden="true" />}
                   />
                 ))}
+                {/* Always present, unlike the learning pill: a tenant with no active
+                    alert rule should still be able to see that the feed is entirely
+                    behavioral, which a zero on this pill says outright. */}
+                <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+                <FilterPill
+                  label="From a policy"
+                  count={sourceCounts.policy}
+                  selected={source === 'policy'}
+                  onClick={() => setSource(source === 'policy' ? null : 'policy')}
+                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                />
+                <FilterPill
+                  label="Behavioral"
+                  count={sourceCounts.behavior}
+                  selected={source === 'behavior'}
+                  onClick={() => setSource(source === 'behavior' ? null : 'behavior')}
+                  icon={<Activity className="h-3.5 w-3.5" />}
+                />
+
                 {/* Only while active — the strip's link is what turns it on, so an
                     always-present pill would advertise a dimension most tenants never use. */}
                 {learningOnly && (
@@ -220,8 +296,20 @@ export function MonitorScreen() {
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={<Activity className="h-5 w-5" />}
-                    headline={learningOnly ? 'No alerts from learning identities' : 'No alerts at this severity'}
-                    guidance="Clear the filter to see all open alerts."
+                    headline={
+                      learningOnly
+                        ? 'No alerts from learning identities'
+                        : source === 'policy'
+                          ? 'No alerts raised by a policy'
+                          : source === 'behavior'
+                            ? 'No behavioral alerts'
+                            : 'No alerts at this severity'
+                    }
+                    guidance={
+                      source === 'policy'
+                        ? 'Only an active rule whose action is “raise an alert” puts anything here.'
+                        : 'Clear the filter to see all open alerts.'
+                    }
                   />
                 ) : (
                   <div>
@@ -231,8 +319,13 @@ export function MonitorScreen() {
                           <span>{bucket.label}</span>
                           <span className="tnum text-text-tertiary">{bucket.alerts.length}</span>
                         </h2>
-                        {bucket.alerts.map((a) => (
-                          <AlertRow key={a.id} alert={a} onOpen={() => openAlert(a)} />
+                        {rollUpByPolicy(bucket.alerts).map((group) => (
+                          <div key={group.lead.id}>
+                            <AlertRow alert={group.lead} onOpen={() => openAlert(group.lead)} />
+                            {group.rest.length > 0 && (
+                              <PolicyRollUp alerts={group.rest} onOpen={openAlert} />
+                            )}
+                          </div>
                         ))}
                       </section>
                     ))}

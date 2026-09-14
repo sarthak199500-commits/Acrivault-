@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import {
   ArrowRight,
+  Flag,
   GitBranch,
   GitCompareArrows,
   Link2,
@@ -23,6 +24,7 @@ import {
 // queue, so the hook that raises one lives with the queue that receives it.
 import { useRequestApproval } from '@/features/act/queries';
 import { CLOUD_LABELS, NHI_TYPE_LABELS, type Identity } from '@/mocks/types';
+import type { IdentityRow } from '@/mocks/api';
 import { NOW } from '@/mocks/dataset';
 import { Drawer } from '@/components/ui/Drawer';
 import { RiskPill } from '@/components/ui/RiskPill';
@@ -64,7 +66,7 @@ function DetailBody({
   canAssignOwner,
   onAssignOwner,
 }: {
-  identity: Identity;
+  identity: IdentityRow;
   canAssignOwner: boolean;
   onAssignOwner: () => void;
 }) {
@@ -83,6 +85,9 @@ function DetailBody({
           <Badge tone="warning" icon={<GitCompareArrows className="h-3 w-3" />}>
             {pluralize(identity.conflicts.length, 'conflict')}
           </Badge>
+        )}
+        {identity.flaggedBy.length > 0 && (
+          <Badge tone="info" icon={<Flag className="h-3 w-3" />}>Flagged for review</Badge>
         )}
         <span className="inline-flex items-center gap-1.5 text-[length:var(--fs-small)] text-text-secondary">
           <NhiTypeIcon type={identity.type} className="h-4 w-4 text-text-tertiary" />
@@ -105,6 +110,31 @@ function DetailBody({
             </Button>
           )}
         </div>
+      )}
+
+      {identity.flaggedBy.length > 0 && (
+        <Section title="Flagged for review">
+          <ul className="space-y-1.5">
+            {identity.flaggedBy.map((flag) => (
+              <li key={flag.policyId}>
+                <Link
+                  to={`/govern/builder/${flag.policyId}`}
+                  className="inline-flex items-center gap-2 text-[length:var(--fs-small)] text-accent-text hover:underline"
+                >
+                  <Flag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  {flag.policyName}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {/* Says outright what the flag is, because nothing else here does. There is
+              no acknowledge, no assignee and no history: the flag is a restatement of
+              what the rule matches right now, and it clears itself. */}
+          <p className="mt-2 text-[length:var(--fs-micro)] text-text-tertiary">
+            Derived from the rules that match this identity now. It clears on its own
+            once no rule matches — there is nothing to acknowledge.
+          </p>
+        </Section>
       )}
 
       <Section title="Overview">

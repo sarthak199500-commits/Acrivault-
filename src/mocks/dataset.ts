@@ -103,7 +103,7 @@ function build(): Dataset {
     size,
     identities,
     identityById,
-    alerts: generateAlerts(identities, SEED, NOW),
+    alerts: generateAlerts(identities, policies, SEED, NOW),
     approvals,
     sessions,
     policies,

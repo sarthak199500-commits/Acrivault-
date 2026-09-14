@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { getDataset } from './dataset';
-import { listIdentities } from './api';
+import { getIdentity, listIdentities } from './api';
+import { matchesPolicy } from './policy';
 import { useUiStore } from '@/stores/ui';
 
 beforeAll(() => useUiStore.getState().setLatency(0));
@@ -89,5 +90,76 @@ describe('inventory filtering and sorting', () => {
     // The ai-agent facet under a critical-band filter equals the count of critical ai-agents.
     const criticalAgents = await listIdentities({ filter: { bands: ['critical'], types: ['ai-agent'] }, limit: 1 });
     expect(onlyCritical.counts.byType['ai-agent']).toBe(criticalAgents.total);
+  });
+});
+
+describe('review flags, derived from the active rule set', () => {
+  it('seeds at least one active review policy that matches something', async () => {
+    // Fixture coherence: every assertion below is vacuous if no Active `review`
+    // rule exists, and a count-based test would still pass on an empty match set.
+    const { policies, identities } = getDataset();
+    const active = policies.filter(
+      (p) =>
+        p.status === 'active' &&
+        p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'review'),
+    );
+    expect(active.length).toBeGreaterThan(0);
+    expect(identities.some((i) => matchesPolicy(i, active[0].tokens))).toBe(true);
+  });
+
+  it('flaggedOnly narrows to identities an active review rule matches', async () => {
+    const res = await listIdentities({ filter: { flaggedOnly: true }, limit: 100_000 });
+    expect(res.rows.length).toBeGreaterThan(0);
+    expect(res.rows.every((r) => r.flaggedBy.length > 0)).toBe(true);
+  });
+
+  it('names a rule that is active, asks for review, and actually matches the row', async () => {
+    const { policies } = getDataset();
+    const res = await listIdentities({ filter: { flaggedOnly: true }, limit: 100_000 });
+    for (const row of res.rows) {
+      for (const flag of row.flaggedBy) {
+        const policy = policies.find((p) => p.id === flag.policyId);
+        expect(policy?.status).toBe('active');
+        expect(policy && matchesPolicy(row, policy.tokens)).toBe(true);
+      }
+    }
+  });
+
+  it('leaves flaggedBy empty on an identity no review rule matches', async () => {
+    const all = await listIdentities({ limit: 100_000 });
+    expect(all.rows.some((r) => r.flaggedBy.length === 0)).toBe(true);
+  });
+
+  it('flagged facet count reconciles with the flagged filter', async () => {
+    const all = await listIdentities({ limit: 1 });
+    const flagged = await listIdentities({ filter: { flaggedOnly: true }, limit: 1 });
+    expect(flagged.total).toBe(all.counts.flagged);
+  });
+
+  it('stops flagging an identity when the rule is suspended', async () => {
+    const rule = getDataset().policies.find(
+      (p) =>
+        p.status === 'active' &&
+        p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'review'),
+    );
+    if (!rule) throw new Error('fixture: expected an active review policy');
+    const before = await listIdentities({ filter: { flaggedOnly: true }, limit: 1 });
+    rule.status = 'suspended';
+    try {
+      const after = await listIdentities({ filter: { flaggedOnly: true }, limit: 1 });
+      expect(after.total).toBeLessThan(before.total);
+    } finally {
+      rule.status = 'active';
+    }
+  });
+});
+
+describe('getIdentity', () => {
+  it('carries the same derived flags the list shows, so the panel cannot disagree', async () => {
+    const list = await listIdentities({ filter: { flaggedOnly: true }, limit: 1 });
+    const row = list.rows[0];
+    const detail = await getIdentity(row.id);
+    expect(detail?.flaggedBy).toEqual(row.flaggedBy);
+    expect(detail?.flaggedBy.length).toBeGreaterThan(0);
   });
 });

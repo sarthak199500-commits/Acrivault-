@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { AlertSource } from '@/mocks/api';
 import type { RiskBand } from '@/mocks/types';
 
 const BANDS: RiskBand[] = ['critical', 'high', 'medium', 'low', 'minimal'];
@@ -9,8 +10,8 @@ const BANDS: RiskBand[] = ['critical', 'high', 'medium', 'low', 'minimal'];
  * can deep-link into a filtered feed, the back button undoes it, and a triaging analyst
  * can share what they are looking at.
  *
- * Two orthogonal dimensions: severity, and whether the alert was raised while its
- * identity's baseline was still forming.
+ * Three orthogonal dimensions: severity, what raised the alert, and whether it was
+ * raised while its identity's baseline was still forming.
  */
 export function useMonitorFilters() {
   const [params, setParams] = useSearchParams();
@@ -18,6 +19,11 @@ export function useMonitorFilters() {
   const severity = useMemo<RiskBand | null>(() => {
     const raw = params.get('sev');
     return raw && (BANDS as string[]).includes(raw) ? (raw as RiskBand) : null;
+  }, [params]);
+
+  const source = useMemo<AlertSource | null>(() => {
+    const raw = params.get('src');
+    return raw === 'policy' || raw === 'behavior' ? raw : null;
   }, [params]);
 
   const learningOnly = params.get('baseline') === 'learning';
@@ -41,6 +47,21 @@ export function useMonitorFilters() {
   );
 
   /**
+   * Narrow to alerts a rule raised, or to those the baseline raised. Severity is left
+   * alone: unlike the learning link this pill states no count of its own, so
+   * intersecting the two cannot strand the analyst on a feed that contradicts a number
+   * they just clicked.
+   */
+  const setSource = useCallback(
+    (next: AlertSource | null) =>
+      write((params) => {
+        if (next) params.set('src', next);
+        else params.delete('src');
+      }),
+    [write],
+  );
+
+  /**
    * Focus the alerts raised during a learning window. Severity is cleared rather than
    * intersected: the strip's link states a count, and intersecting could land on a feed
    * that does not contain that many rows — or none at all.
@@ -59,5 +80,5 @@ export function useMonitorFilters() {
     [write],
   );
 
-  return { severity, setSeverity, learningOnly, showLearningOnly, clearLearningOnly };
+  return { severity, setSeverity, source, setSource, learningOnly, showLearningOnly, clearLearningOnly };
 }

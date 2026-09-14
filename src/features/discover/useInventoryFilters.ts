@@ -17,7 +17,7 @@ function parseList<T extends string>(raw: string | null): T[] {
  * and a key missing from one of them leaves a filter silently stuck on — a
  * "Clear" that doesn't clear is worse than no Clear.
  */
-const FILTER_KEYS = ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts', 'crosscloud'];
+const FILTER_KEYS = ['q', 'type', 'band', 'cloud', 'gov', 'status', 'orphaned', 'conflicts', 'crosscloud', 'flagged'];
 
 /**
  * Inventory filter + sort state, kept in the URL so dashboard drill-downs,
@@ -37,6 +37,7 @@ export function useInventoryFilters() {
       orphanedOnly: params.get('orphaned') === '1',
       conflictsOnly: params.get('conflicts') === '1',
       crossCloudOnly: params.get('crosscloud') === '1',
+      flaggedOnly: params.get('flagged') === '1',
     };
     return f;
   }, [params]);
@@ -123,6 +124,7 @@ export function useInventoryFilters() {
         if (next.orphanedOnly) n.set('orphaned', '1');
         if (next.conflictsOnly) n.set('conflicts', '1');
         if (next.crossCloudOnly) n.set('crosscloud', '1');
+        if (next.flaggedOnly) n.set('flagged', '1');
       }),
     [update],
   );
@@ -141,7 +143,8 @@ export function useInventoryFilters() {
     (filter.statuses?.length ?? 0) +
     (filter.orphanedOnly ? 1 : 0) +
     (filter.conflictsOnly ? 1 : 0) +
-    (filter.crossCloudOnly ? 1 : 0);
+    (filter.crossCloudOnly ? 1 : 0) +
+    (filter.flaggedOnly ? 1 : 0);
 
   return {
     filter,
@@ -157,6 +160,7 @@ export function useInventoryFilters() {
     toggleOrphaned: () => toggleFlag('orphaned'),
     toggleConflicts: () => toggleFlag('conflicts'),
     toggleCrossCloud: () => toggleFlag('crosscloud'),
+    toggleFlagged: () => toggleFlag('flagged'),
     setSort,
     applyFilter,
     clearAll,

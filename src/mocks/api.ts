@@ -20,6 +20,7 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
+import { reviewFlagsFor, type ReviewFlag } from './reviewFlags';
 import { ACTION_OBJECT, isCrossCloud, isFlaggedStep, NOTIFICATION_CATEGORIES } from './types';
 import type {
   Alert,
@@ -235,6 +236,12 @@ export interface IdentityFilter {
    * are a dedupe result, not a cross-cloud finding. See `spannedClouds`.
    */
   crossCloudOnly?: boolean;
+  /**
+   * Currently matched by an Active `flag for review` rule. Derived from the live
+   * rule set on every read, so this narrows to what needs eyes NOW — an identity
+   * that has fallen back out of the match set is simply not here any more.
+   */
+  flaggedOnly?: boolean;
 }
 
 export interface IdentitySort {
@@ -258,18 +265,35 @@ export interface IdentityFacetCounts {
   orphaned: number;
   conflicts: number;
   crossCloud: number;
+  flagged: number;
 }
 
+/** An inventory row, carrying the review flags resolved for it on this read. */
+export type IdentityRow = Identity & { flaggedBy: ReviewFlag[] };
+
 export interface IdentityListResult {
-  rows: Identity[];
+  rows: IdentityRow[];
   total: number;
   counts: IdentityFacetCounts;
+}
+
+/**
+ * Review flags for every identity, resolved once per request.
+ *
+ * `reviewFlagsFor` walks every Active rule, and the facet pass asks about each
+ * identity once per facet — resolving into a map first keeps the cost at
+ * identities x rules rather than identities x rules x facets.
+ */
+function reviewFlagIndex(identities: Identity[]): Map<string, ReviewFlag[]> {
+  const { policies } = getDataset();
+  return new Map(identities.map((i) => [i.id, reviewFlagsFor(i, policies)]));
 }
 
 function matchesExcept(
   identity: Identity,
   filter: IdentityFilter,
   skip: keyof IdentityFilter | null,
+  flags: Map<string, ReviewFlag[]>,
 ): boolean {
   if (skip !== 'search' && filter.search) {
     const q = filter.search.toLowerCase();
@@ -295,11 +319,17 @@ function matchesExcept(
   if (skip !== 'orphanedOnly' && filter.orphanedOnly && !identity.orphaned) return false;
   if (skip !== 'conflictsOnly' && filter.conflictsOnly && identity.conflicts.length === 0) return false;
   if (skip !== 'crossCloudOnly' && filter.crossCloudOnly && !isCrossCloud(identity)) return false;
+  if (skip !== 'flaggedOnly' && filter.flaggedOnly && (flags.get(identity.id)?.length ?? 0) === 0)
+    return false;
   return true;
 }
 
-function applyFilter(identities: Identity[], filter: IdentityFilter): Identity[] {
-  return identities.filter((i) => matchesExcept(i, filter, null));
+function applyFilter(
+  identities: Identity[],
+  filter: IdentityFilter,
+  flags: Map<string, ReviewFlag[]>,
+): Identity[] {
+  return identities.filter((i) => matchesExcept(i, filter, null, flags));
 }
 
 function sortIdentities(rows: Identity[], sort: IdentitySort): Identity[] {
@@ -324,17 +354,21 @@ function sortIdentities(rows: Identity[], sort: IdentitySort): Identity[] {
   return sorted;
 }
 
-function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFacetCounts {
+function facetCounts(
+  identities: Identity[],
+  filter: IdentityFilter,
+  flags: Map<string, ReviewFlag[]>,
+): IdentityFacetCounts {
   const byType = emptyTypeCounts();
   const byBand: Record<RiskBand, number> = { critical: 0, high: 0, medium: 0, low: 0, minimal: 0 };
   const byCloud = emptyCloudCounts();
   const byStatus = emptyStatusCounts();
   // Each facet is counted over the set filtered by every OTHER active facet.
   for (const identity of identities) {
-    if (matchesExcept(identity, filter, 'types')) byType[identity.type] += 1;
-    if (matchesExcept(identity, filter, 'bands')) byBand[identity.riskBand] += 1;
-    if (matchesExcept(identity, filter, 'statuses')) byStatus[identity.status] += 1;
-    if (matchesExcept(identity, filter, 'clouds')) {
+    if (matchesExcept(identity, filter, 'types', flags)) byType[identity.type] += 1;
+    if (matchesExcept(identity, filter, 'bands', flags)) byBand[identity.riskBand] += 1;
+    if (matchesExcept(identity, filter, 'statuses', flags)) byStatus[identity.status] += 1;
+    if (matchesExcept(identity, filter, 'clouds', flags)) {
       // An identity can span clouds; count it under each of its source providers.
       for (const cloud of new Set(identity.sources.map((s) => s.cloud))) byCloud[cloud] += 1;
     }
@@ -342,14 +376,19 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
   let orphaned = 0;
   let conflicts = 0;
   let crossCloud = 0;
+  let flagged = 0;
   let total = 0;
   for (const identity of identities) {
-    if (matchesExcept(identity, filter, 'orphanedOnly') && identity.orphaned) orphaned += 1;
-    if (matchesExcept(identity, filter, 'conflictsOnly') && identity.conflicts.length > 0) conflicts += 1;
-    if (matchesExcept(identity, filter, 'crossCloudOnly') && isCrossCloud(identity)) crossCloud += 1;
-    if (matchesExcept(identity, filter, null)) total += 1;
+    if (matchesExcept(identity, filter, 'orphanedOnly', flags) && identity.orphaned) orphaned += 1;
+    if (matchesExcept(identity, filter, 'conflictsOnly', flags) && identity.conflicts.length > 0)
+      conflicts += 1;
+    if (matchesExcept(identity, filter, 'crossCloudOnly', flags) && isCrossCloud(identity))
+      crossCloud += 1;
+    if (matchesExcept(identity, filter, 'flaggedOnly', flags) && (flags.get(identity.id)?.length ?? 0) > 0)
+      flagged += 1;
+    if (matchesExcept(identity, filter, null, flags)) total += 1;
   }
-  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud };
+  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud, flagged };
 }
 
 function emptyTypeCounts(): Record<NhiType, number> {
@@ -385,22 +424,32 @@ export function listIdentities(params: IdentityListParams = {}): Promise<Identit
           orphaned: 0,
           conflicts: 0,
           crossCloud: 0,
+          flagged: 0,
         },
       };
     }
     const { identities } = getDataset();
     const filter = params.filter ?? {};
-    const filtered = applyFilter(identities, filter);
+    const flags = reviewFlagIndex(identities);
+    const filtered = applyFilter(identities, filter, flags);
     const sorted = params.sort ? sortIdentities(filtered, params.sort) : filtered;
     const offset = params.offset ?? 0;
     const limit = params.limit ?? 100;
-    const rows = sorted.slice(offset, offset + limit);
-    return { rows, total: sorted.length, counts: facetCounts(identities, filter) };
+    const rows = sorted
+      .slice(offset, offset + limit)
+      .map((i) => ({ ...i, flaggedBy: flags.get(i.id) ?? [] }));
+    return { rows, total: sorted.length, counts: facetCounts(identities, filter, flags) };
   });
 }
 
-export function getIdentity(id: string): Promise<Identity | null> {
-  return respond(() => getDataset().identityById.get(id) ?? null);
+export function getIdentity(id: string): Promise<IdentityRow | null> {
+  return respond(() => {
+    const identity = getDataset().identityById.get(id);
+    if (!identity) return null;
+    // Resolved here too, so the detail panel and the row it was opened from can
+    // never disagree about which rules currently match.
+    return { ...identity, flaggedBy: reviewFlagsFor(identity, getDataset().policies) };
+  });
 }
 
 /**
@@ -442,11 +491,25 @@ function withAlertIdentityName(alert: Alert): AlertWithIdentity {
   };
 }
 
-export function listAlerts(severity?: RiskBand): Promise<AlertWithIdentity[]> {
+/**
+ * Where an alert came from. `behavior` is everything the baseline raised -- it is
+ * defined as the absence of a rule rather than a stored kind, so an alert cannot
+ * claim a source it has no attribution for.
+ */
+export type AlertSource = 'policy' | 'behavior';
+
+export interface AlertQuery {
+  severity?: RiskBand;
+  source?: AlertSource;
+}
+
+export function listAlerts(query: AlertQuery = {}): Promise<AlertWithIdentity[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
     let rows = getDataset().alerts.filter((a) => a.status !== 'resolved');
-    if (severity) rows = rows.filter((a) => a.severity === severity);
+    if (query.severity) rows = rows.filter((a) => a.severity === query.severity);
+    if (query.source === 'policy') rows = rows.filter((a) => a.raisedBy);
+    if (query.source === 'behavior') rows = rows.filter((a) => !a.raisedBy);
     return rows.map(withAlertIdentityName);
   });
 }

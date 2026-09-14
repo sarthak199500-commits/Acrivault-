@@ -139,6 +139,16 @@ export interface Alert {
   baseline: 'learning' | 'established';
   baselineProgress?: { day: number; of: number };
   status: AlertStatus;
+  /**
+   * The Govern rule that raised this, when a rule did. Absent on a behavioral alert,
+   * which is what makes the two separable in the feed.
+   *
+   * `policyName` is STAMPED, not resolved on read -- the same choice `PolicyAction`
+   * makes and for the same reason: an alert records something that already happened,
+   * so renaming the rule afterwards must not rewrite what the feed says was raised.
+   * (A review flag is the opposite case -- see `ReviewFlag`.)
+   */
+  raisedBy?: { policyId: string; policyName: string };
   createdAt: string;
 }
 
