@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldX } from 'lucide-react';
+import { FilterX, ShieldX } from 'lucide-react';
 import { useQuarantined } from './queries';
+import { applyQuarantineFilter, useQuarantineFilters } from './useQuarantineFilters';
+import { QuarantineToolbar } from './QuarantineToolbar';
 import { useReleaseQuarantine } from '@/features/discover/queries';
 import { NHI_TYPE_LABELS } from '@/mocks/types';
 import { screenHeaderProps } from '@/app/nav';
@@ -15,7 +17,7 @@ import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { ScrollableTable } from '@/components/ui/ScrollableTable';
 import { SkeletonTableRows } from '@/components/ui/Skeleton';
 import { useCan } from '@/components/ui/Can';
-import { dateTime, relativeTime } from '@/lib/format';
+import { count, dateTime, relativeTime } from '@/lib/format';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
 
@@ -30,12 +32,26 @@ import { errorInfo } from '@/lib/apiError';
  * which made the two exclusive -- and since only the seed could write that
  * kind, a real session review rendered as a bare admin name. A row now names
  * the person and, underneath, the replay they decided on.
+ *
+ * Filters (Sep 2026): search, Type, and a "Produced by" facet of Policy /
+ * Person / From a session replay. Those three are a PARTITION, so Person
+ * deliberately EXCLUDES the replay-backed containment even though a person
+ * produced it — the cost accepted in the design doc for a single menu over two
+ * axes. The row is unchanged and still names both, so the separation survives
+ * everywhere but the facet.
  */
 export function QuarantineScreen() {
   const query = useQuarantined();
   const release = useReleaseQuarantine();
   const canRelease = useCan('session.quarantineRelease');
   const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
+  const filters = useQuarantineFilters();
+
+  // Filtered once, here, rather than inside the boundary: the header's count and
+  // the table have to be the same number, and computing it twice is how they
+  // start disagreeing.
+  const all = useMemo(() => query.data ?? [], [query.data]);
+  const filtered = useMemo(() => applyQuarantineFilter(all, filters.filter), [all, filters.filter]);
 
   const runRelease = () => {
     if (!confirm) return;
@@ -53,6 +69,14 @@ export function QuarantineScreen() {
       <ScreenHeader
         {...screenHeaderProps('/act/quarantine')}
         description="Every contained identity, and what put it there. Quarantine is produced by a Govern policy or by a person — and where that person acted from a session replay, the row carries the session they decided on."
+        actions={
+          filters.activeCount > 0 && all.length > 0 ? (
+            <span className="hidden text-[length:var(--fs-small)] text-text-secondary sm:inline">
+              <span className="tnum">{count(filtered.length)}</span> of{' '}
+              <span className="tnum">{count(all.length)}</span>
+            </span>
+          ) : undefined
+        }
       />
 
       {!canRelease && (
@@ -79,86 +103,116 @@ export function QuarantineScreen() {
           </Card>
         }
       >
-        {(rows) => (
-          <Card>
-            <ScrollableTable label="Quarantined identities">
-              <table className="w-full text-left text-[length:var(--fs-small)]">
-                <thead>
-                  <tr className="border-b border-border text-text-tertiary">
-                    <th scope="col" className="px-4 py-2.5 font-medium">
-                      Identity
-                    </th>
-                    <th scope="col" className="px-4 py-2.5 font-medium">
-                      Type
-                    </th>
-                    <th scope="col" className="px-4 py-2.5 font-medium">
-                      Quarantined by
-                    </th>
-                    <th scope="col" className="px-4 py-2.5 font-medium">
-                      When
-                    </th>
-                    <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="border-b border-border last:border-b-0 hover:bg-surface-hover"
-                    >
-                      <td className="px-4 py-2.5 font-mono text-text">
-                        <Link to={`/discover/${row.id}`} className="hover:underline">
-                          {row.name}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2.5 text-text-secondary">{NHI_TYPE_LABELS[row.type]}</td>
-                      <td className="px-4 py-2.5 text-text-secondary">
-                        {row.byHref ? (
-                          <Link to={row.byHref} className="text-accent-text hover:underline">
-                            {row.byLabel}
-                          </Link>
-                        ) : (
-                          row.byLabel
-                        )}
-                        {/* The evidence sits UNDER the producer rather than
-                            folded into it: one names who is answerable, the
-                            other what they decided on, and an auditor follows
-                            them separately. A removed session still shows,
-                            unlinked, so the gap is visible instead of silent. */}
-                        {row.viaLabel && (
-                          <span className="mt-0.5 block text-[length:var(--fs-micro)] text-text-tertiary">
-                            {row.viaHref ? (
-                              <Link to={row.viaHref} className="text-accent-text hover:underline">
-                                {row.viaLabel}
+        {/* The toolbar lives INSIDE the boundary so it cannot appear over an
+            empty set: "Nothing is quarantined" is a fact about the tenant, and
+            filters above it would imply the emptiness might be something you did. */}
+        {() => (
+          <div className="space-y-3">
+            <QuarantineToolbar filters={filters} rows={all} />
+
+            {filtered.length === 0 ? (
+              <Card>
+                <EmptyState
+                  icon={<FilterX className="h-5 w-5" />}
+                  headline="No quarantined identities match your filters"
+                  guidance="Try a different name, or widen the type or producer filter."
+                  action={
+                    <Button variant="secondary" onClick={filters.clearAll}>
+                      Clear filters
+                    </Button>
+                  }
+                />
+              </Card>
+            ) : (
+              <Card>
+                <ScrollableTable label="Quarantined identities">
+                  <table className="w-full text-left text-[length:var(--fs-small)]">
+                    <thead>
+                      <tr className="border-b border-border text-text-tertiary">
+                        <th scope="col" className="px-4 py-2.5 font-medium">
+                          Identity
+                        </th>
+                        <th scope="col" className="px-4 py-2.5 font-medium">
+                          Type
+                        </th>
+                        <th scope="col" className="px-4 py-2.5 font-medium">
+                          Quarantined by
+                        </th>
+                        <th scope="col" className="px-4 py-2.5 font-medium">
+                          When
+                        </th>
+                        <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((row) => (
+                        <tr
+                          key={row.id}
+                          className="border-b border-border last:border-b-0 hover:bg-surface-hover"
+                        >
+                          <td className="px-4 py-2.5 font-mono text-text">
+                            <Link to={`/discover/${row.id}`} className="hover:underline">
+                              {row.name}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-2.5 text-text-secondary">
+                            {NHI_TYPE_LABELS[row.type]}
+                          </td>
+                          <td className="px-4 py-2.5 text-text-secondary">
+                            {row.byHref ? (
+                              <Link to={row.byHref} className="text-accent-text hover:underline">
+                                {row.byLabel}
                               </Link>
                             ) : (
-                              row.viaLabel
+                              row.byLabel
                             )}
-                          </span>
-                        )}
-                      </td>
-                      <td className="tnum px-4 py-2.5 text-text-tertiary" title={dateTime(row.at)}>
-                        {relativeTime(row.at)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        {canRelease && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => setConfirm({ id: row.id, name: row.name })}
+                            {/* The evidence sits UNDER the producer rather than
+                              folded into it: one names who is answerable, the
+                              other what they decided on, and an auditor follows
+                              them separately. A removed session still shows,
+                              unlinked, so the gap is visible instead of silent. */}
+                            {row.viaLabel && (
+                              <span className="mt-0.5 block text-[length:var(--fs-micro)] text-text-tertiary">
+                                {row.viaHref ? (
+                                  <Link
+                                    to={row.viaHref}
+                                    className="text-accent-text hover:underline"
+                                  >
+                                    {row.viaLabel}
+                                  </Link>
+                                ) : (
+                                  row.viaLabel
+                                )}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className="tnum px-4 py-2.5 text-text-tertiary"
+                            title={dateTime(row.at)}
                           >
-                            Release
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollableTable>
-          </Card>
+                            {relativeTime(row.at)}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {canRelease && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setConfirm({ id: row.id, name: row.name })}
+                              >
+                                Release
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ScrollableTable>
+              </Card>
+            )}
+          </div>
         )}
       </QueryBoundary>
 
