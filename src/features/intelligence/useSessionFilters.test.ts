@@ -54,7 +54,7 @@ const ROWS: Row[] = [
   row({ id: 'ses_d', identityId: 'i3', identityName: 'agent-QA-runner-003', reviewState: 'reviewed', blockedCount: 1, startedAt: '2026-08-16T09:00:00.000Z' }),
 ];
 
-const NONE: SessionFilter = { review: null, flaggedOnly: false, agentId: null, search: '', sort: 'recent' };
+const NONE: SessionFilter = { review: null, flaggedOnly: false, heldOnly: false, agentId: null, search: '', sort: 'recent' };
 const ids = (rows: Row[]) => rows.map((r) => r.id);
 
 describe('applySessionFilter', () => {
@@ -69,6 +69,12 @@ describe('applySessionFilter', () => {
 
   it('narrows to flagged sessions — anomalies or held steps', () => {
     expect(ids(applySessionFilter(ROWS, { ...NONE, flaggedOnly: true }))).toEqual(['ses_a', 'ses_d']);
+  });
+
+  // ses_a is flagged but has no held step: that is the distinction the facet
+  // exists to make, so a test using only flagged/unflagged rows would not prove it.
+  it('narrows to sessions with a held step, excluding merely-anomalous ones', () => {
+    expect(ids(applySessionFilter(ROWS, { ...NONE, heldOnly: true }))).toEqual(['ses_d']);
   });
 
   it('scopes to one agent by id — the Discover deep link', () => {

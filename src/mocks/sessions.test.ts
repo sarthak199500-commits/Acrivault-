@@ -1,7 +1,8 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideBlockedStep,
   getIdentity,
+  listAlerts,
   listAudit,
   listNotifications,
   listSessions,
@@ -199,5 +200,202 @@ describe('held steps', () => {
     const normal = session?.steps.find((st) => st.status === 'normal');
     if (!session || !normal) throw new Error('fixture: expected a session with an unflagged step');
     await expect(decideBlockedStep(session.id, normal.id, 'confirmed')).rejects.toThrow(/not held/i);
+  });
+});
+
+describe('session triage signals', () => {
+  it('flags a minority of sessions, so the Flagged facet actually narrows the feed', async () => {
+    const sessions = await listSessions();
+    const share = sessions.filter((s) => s.flagged).length / sessions.length;
+    expect(share).toBeGreaterThan(0.15);
+    expect(share).toBeLessThan(0.4);
+  });
+
+  // Coherence, not just counting: a flagged session must contain a step that could
+  // have caused the flag. A count-based assertion alone passes on incoherent data.
+  it('only flags sessions that contain an anomalous or held step', async () => {
+    const sessions = await listSessions();
+    for (const session of sessions.filter((s) => s.flagged)) {
+      const causes = session.steps.filter((s) => s.status === 'anomaly' || s.status === 'blocked');
+      expect(causes.length, session.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('links every agent alert to a session that had already started when it fired', async () => {
+    const [alerts, sessions] = await Promise.all([listAlerts(), listSessions()]);
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+    for (const alert of alerts.filter((a) => a.identityType === 'ai-agent')) {
+      const linkable = sessions.some(
+        (s) => s.identityId === alert.identityId && s.startedAt <= alert.createdAt,
+      );
+      if (!linkable) continue;
+      expect(alert.sessionId, alert.id).toBeTruthy();
+      const linked = byId.get(alert.sessionId as string);
+      expect(linked?.identityId, alert.id).toBe(alert.identityId);
+      expect(linked && linked.startedAt <= alert.createdAt, alert.id).toBe(true);
+    }
+  });
+
+  it('never seeds a reviewed session that still owes a decision on a held step', async () => {
+    const sessions = await listSessions();
+    for (const session of sessions.filter((s) => s.reviewState === 'reviewed')) {
+      const undecided = session.steps.filter((s) => s.status === 'blocked' && !s.blockDecision);
+      expect(undecided, session.id).toHaveLength(0);
+    }
+  });
+});
+
+describe('closing a session', () => {
+  it('refuses to mark a session reviewed while a held step is undecided', async () => {
+    const sessions = await listSessions();
+    const withHold = sessions.find((s) =>
+      s.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!withHold) throw new Error('fixture: expected a session with an undecided hold');
+    await expect(markSessionReviewed(withHold.id)).rejects.toThrow(/held step/i);
+  });
+
+  it('allows review once the hold is decided, and stamps who did it', async () => {
+    const sessions = await listSessions();
+    const withHold = sessions.find((s) =>
+      s.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!withHold) throw new Error('fixture: expected a session with an undecided hold');
+    const held = withHold.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+
+    await decideBlockedStep(withHold.id, held.id, 'confirmed');
+    const reviewed = await markSessionReviewed(withHold.id);
+
+    expect(reviewed.reviewState).toBe('reviewed');
+    expect(reviewed.reviewedAt).toBeTruthy();
+    // Resolved from the acting principal, so an auditor need not join two records.
+    expect(reviewed.reviewedBy).toMatch(/@/);
+  });
+});
+
+describe('seeded session coherence', () => {
+  it('names a reviewer on every seeded reviewed session, as the product would', async () => {
+    const sessions = await listSessions();
+    const reviewed = sessions.filter((s) => s.reviewState === 'reviewed');
+    expect(reviewed.length).toBeGreaterThan(0);
+    for (const session of reviewed) {
+      expect(session.reviewedBy, session.id).toMatch(/@/);
+      expect(session.reviewedAt, session.id).toBeTruthy();
+    }
+  });
+
+  it('carries the upstream agent identity so the lineage can be followed', async () => {
+    const sessions = await listSessions();
+    const delegated = sessions.filter((s) => s.provenance.spawnedBy.kind === 'agent');
+    expect(delegated.length).toBeGreaterThan(0);
+    const byId = new Map(sessions.map((s) => [s.identityId, s.identityName]));
+    for (const session of delegated) {
+      const upstream = session.provenance.spawnedBy.identityId;
+      expect(upstream, session.id).toBeTruthy();
+      // The label must name the identity the id points at, not some other agent.
+      if (byId.has(upstream as string)) {
+        expect(byId.get(upstream as string), session.id).toBe(session.provenance.spawnedBy.label);
+      }
+    }
+  });
+
+  it('leaves human- and schedule-spawned sessions without an identity id', async () => {
+    const sessions = await listSessions();
+    for (const session of sessions.filter((s) => s.provenance.spawnedBy.kind !== 'agent')) {
+      expect(session.provenance.spawnedBy.identityId, session.id).toBeUndefined();
+    }
+  });
+});
+
+describe('hold authority', () => {
+  // The role is global state; leaving it set would leak into any later suite.
+  afterEach(() => useUiStore.setState({ role: 'tenant-admin' }));
+
+  it('lets an Analyst confirm a hold — agreeing with a policy unblocks nothing', async () => {
+    useUiStore.setState({ role: 'analyst' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    const updated = await decideBlockedStep(target.id, held.id, 'confirmed');
+    const after = updated.steps.find((p) => p.id === held.id);
+    expect(after?.blockDecision?.outcome).toBe('confirmed');
+  });
+
+  it('refuses an Analyst the override — it lets a denied action proceed', async () => {
+    useUiStore.setState({ role: 'analyst' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    await expect(
+      decideBlockedStep(target.id, held.id, 'overridden', 'because I say so'),
+    ).rejects.toThrow();
+  });
+
+  it('allows a Security Admin both', async () => {
+    useUiStore.setState({ role: 'security-admin' });
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+    const updated = await decideBlockedStep(target.id, held.id, 'overridden', 'Approved runbook step.');
+    const after = updated.steps.find((p) => p.id === held.id);
+    expect(after?.blockDecision?.outcome).toBe('overridden');
+  });
+});
+
+describe('superseding a hold decision', () => {
+  afterEach(() => useUiStore.setState({ role: 'tenant-admin' }));
+
+  it('keeps the earlier decision on the record instead of editing it', async () => {
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+
+    await decideBlockedStep(target.id, held.id, 'confirmed');
+    const after = await decideBlockedStep(target.id, held.id, 'overridden', 'Runbook step, cleared with the owner.');
+    const step = after.steps.find((p) => p.id === held.id);
+
+    // The decision in force is the new one...
+    expect(step?.blockDecision?.outcome).toBe('overridden');
+    expect(step?.blockDecision?.by).toMatch(/@/);
+    // ...and the one it displaced is still there, not overwritten.
+    expect(step?.supersededDecisions).toHaveLength(1);
+    expect(step?.supersededDecisions?.[0].outcome).toBe('confirmed');
+  });
+
+  it('records the supersession in the audit trail', async () => {
+    const sessions = await listSessions();
+    const target = sessions.find((x) =>
+      x.steps.some((p) => p.status === 'blocked' && !p.blockDecision));
+    if (!target) throw new Error('fixture: expected an undecided hold');
+    const held = target.steps.find((p) => p.status === 'blocked' && !p.blockDecision);
+    if (!held) throw new Error('fixture: expected an undecided held step');
+
+    await decideBlockedStep(target.id, held.id, 'confirmed');
+    await decideBlockedStep(target.id, held.id, 'overridden', 'Cleared with the owner.');
+    const audit = await listAudit();
+    expect(audit.some((e) => /Supersedes the earlier decision/i.test(e.detail ?? ''))).toBe(true);
+  });
+
+  it('attributes a seeded decision to the reviewer who settled it', async () => {
+    const sessions = await listSessions();
+    const seeded = sessions.filter((x) =>
+      x.reviewState === 'reviewed' && x.steps.some((p) => p.blockDecision));
+    expect(seeded.length).toBeGreaterThan(0);
+    for (const session of seeded) {
+      for (const step of session.steps.filter((p) => p.blockDecision)) {
+        expect(step.blockDecision?.by, session.id).toBe(session.reviewedBy);
+      }
+    }
   });
 });
