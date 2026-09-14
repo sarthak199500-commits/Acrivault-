@@ -83,6 +83,19 @@ export function useInventoryFilters() {
     [update],
   );
 
+  /**
+   * Drop a whole axis in one write.
+   *
+   * NOT `filter.types.forEach(toggleType)`, which is what each menu's Clear used
+   * to do: `setSearchParams`'s functional form is not a `setState`-style update
+   * queue. react-router-dom hands every updater call the `searchParams` memoised
+   * from the current render's `location.search`, so N toggles in one tick all
+   * compute from identical stale params and the last `navigate()` wins — four
+   * selected types lost exactly one. `clearAll` was never affected: it deletes
+   * every key inside a single `update`.
+   */
+  const clearList = useCallback((key: string) => update((n) => n.delete(key)), [update]);
+
   const toggleFlag = useCallback(
     (key: string) =>
       update((n) => (n.get(key) === '1' ? n.delete(key) : n.set(key, '1'))),
@@ -157,6 +170,10 @@ export function useInventoryFilters() {
     toggleOrphaned: () => toggleFlag('orphaned'),
     toggleConflicts: () => toggleFlag('conflicts'),
     toggleCrossCloud: () => toggleFlag('crosscloud'),
+    clearTypes: () => clearList('type'),
+    clearBands: () => clearList('band'),
+    clearClouds: () => clearList('cloud'),
+    clearStatuses: () => clearList('status'),
     setSort,
     applyFilter,
     clearAll,

@@ -67,6 +67,19 @@ export function useUsersFilters() {
     [update],
   );
 
+  /**
+   * Drop a whole axis in one write.
+   *
+   * NOT `filter.roles.forEach(toggleRole)`, which is what each menu's Clear used
+   * to do: `setSearchParams`'s functional form is not a `setState`-style update
+   * queue. react-router-dom hands every updater call the `searchParams` memoised
+   * from the current render's `location.search`, so N toggles in one tick all
+   * compute from identical stale params and the last `navigate()` wins — three
+   * selected roles lost exactly one. `clearAll` was never affected: it deletes
+   * every key inside a single `update`.
+   */
+  const clearList = useCallback((key: string) => update((n) => n.delete(key)), [update]);
+
   const clearAll = useCallback(
     () => update((n) => ['q', 'role', 'status'].forEach((k) => n.delete(k))),
     [update],
@@ -79,6 +92,8 @@ export function useUsersFilters() {
     setSearch,
     toggleRole: (r: RoleFilter) => toggleInList('role', r),
     toggleStatus: (s: UserStatus) => toggleInList('status', s),
+    clearRoles: () => clearList('role'),
+    clearStatuses: () => clearList('status'),
     clearAll,
     activeCount,
   };

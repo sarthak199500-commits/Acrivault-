@@ -102,6 +102,19 @@ export function usePolicyFilters() {
     [update],
   );
 
+  /**
+   * Drop the status axis in one write.
+   *
+   * NOT `filter.statuses.forEach(toggleStatus)`, which is what the menu's Clear
+   * used to do: `setSearchParams`'s functional form is not a `setState`-style
+   * update queue. react-router-dom hands every updater call the `searchParams`
+   * memoised from the current render's `location.search`, so N toggles in one
+   * tick all compute from identical stale params and the last `navigate()` wins
+   * — three selected statuses lost exactly one. `clearAll` and `setTab` were
+   * never affected: each deletes every key inside a single `update`.
+   */
+  const clearStatuses = useCallback(() => update((n) => n.delete('status')), [update]);
+
   const clearAll = useCallback(
     () => update((n) => ['q', 'status', 'sort'].forEach((k) => n.delete(k))),
     [update],
@@ -129,6 +142,7 @@ export function usePolicyFilters() {
     setSearch,
     setSort,
     toggleStatus,
+    clearStatuses,
     clearAll,
     activeCount,
     policyId,
