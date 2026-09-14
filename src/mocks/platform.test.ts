@@ -3,8 +3,8 @@ import {
   listAudit,
   listNotifications,
   listRotations,
-  markNotificationRead,
   requestRotation,
+  setNotificationRead,
   updateUserRole,
 } from './api';
 import { useUiStore } from '@/stores/ui';
@@ -35,10 +35,12 @@ describe('platform', () => {
     expect(updated.role).toBe('security-admin');
   });
 
+  // Read-state behaviour, the cache-observability rule it has to hold, and the
+  // preferences and routing around it live in notifications.test.ts.
   it('marks a notification read', async () => {
     const items = await listNotifications();
     const unread = items.find((n) => !n.read) ?? items[0];
-    const updated = await markNotificationRead(unread.id);
+    const updated = await setNotificationRead(unread.id, true);
     expect(updated.read).toBe(true);
   });
 

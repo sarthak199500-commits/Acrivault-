@@ -1,5 +1,5 @@
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import { CheckCheck, CircleCheck, Lightbulb, Sparkles } from 'lucide-react';
+import { CheckCheck, CircleCheck, Lightbulb, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAlert, useAlertActions, useAlertIdentity, useAlertSession } from './queries';
 import type { AlertWithIdentity } from '@/mocks/api';
 import { Drawer } from '@/components/ui/Drawer';
@@ -32,6 +32,9 @@ function Body({ alert }: { alert: AlertWithIdentity }) {
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Badge tone={SEVERITY_TONE[alert.severity]} className="capitalize">{alert.severity}</Badge>
+        {alert.raisedBy && (
+          <Badge tone="info" icon={<ShieldCheck className="h-3 w-3" />}>policy</Badge>
+        )}
         {alert.baseline === 'learning' && <Badge tone="neutral">baseline learning</Badge>}
         <Badge tone={alert.status === 'open' ? 'warning' : 'info'} className="capitalize">{alert.status}</Badge>
       </div>
@@ -48,6 +51,28 @@ function Body({ alert }: { alert: AlertWithIdentity }) {
           This alert was raised while the baseline is still learning (day {alert.baselineProgress.day} of{' '}
           {alert.baselineProgress.of}). Treat it as a lead, not a verdict.
         </p>
+      )}
+
+      {alert.raisedBy && (
+        <section className="mb-5">
+          <h3 className="eyebrow mb-2">Raised by</h3>
+          <Link
+            to={`/govern/builder/${alert.raisedBy.policyId}`}
+            className="flex items-center justify-between gap-3 rounded-[var(--r-md)] border border-border bg-surface-2 px-3 py-2.5 hover:border-border-strong"
+          >
+            <span className="inline-flex min-w-0 items-center gap-2 text-[length:var(--fs-small)] text-accent-text">
+              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{alert.raisedBy.policyName}</span>
+            </span>
+            <span className="shrink-0 text-[length:var(--fs-small)] text-text-tertiary">Open rule</span>
+          </Link>
+          {/* The name is the one stamped when the alert was raised. Saying so matters:
+              the rule it links to may since have been renamed, re-scoped, or suspended,
+              and the link lands on what the rule is NOW, not what raised this. */}
+          <p className="mt-1.5 text-[length:var(--fs-micro)] text-text-tertiary">
+            Named as it stood when this was raised. The rule may have changed since.
+          </p>
+        </section>
       )}
 
       <section className="mb-5">
@@ -182,7 +207,10 @@ export function AlertDetailPanel() {
       onOpenChange={(o) => !o && close()}
       closeOnOutsideClick={false}
       title={!showLoading && !showError && !showEmpty && data ? data.title : 'Alert'}
-      description="Behavioral alert detail"
+      // The feed is no longer behavioral-only, and the subtitle is the one line that
+      // names the whole panel — calling a rule match "behavioral" contradicts the
+      // "policy" badge two lines below it.
+      description={data?.raisedBy ? 'Policy alert detail' : 'Behavioral alert detail'}
     >
       {showLoading ? (
         <div className="space-y-4"><Skeleton className="h-6 w-32" /><SkeletonText lines={6} /></div>

@@ -20,6 +20,7 @@ import {
   type IdentityStatus,
   type NhiType,
   type NotificationItem,
+  type NotificationPrefs,
   type Policy,
   type PolicyAction,
   type PolicyActionReason,
@@ -330,7 +331,60 @@ const ALERT_TEMPLATES: { title: string; description: string; next: string }[] = 
   },
 ];
 
-export function generateAlerts(identities: Identity[], seed: number, now: Date): Alert[] {
+/**
+ * How many identities one Active `alert` rule raises for. A real rule raises on every
+ * match; the fixture scales to 50k identities, and one alert per match would bury the
+ * behavioral feed under a single rule. Capped so the per-rule roll-up has something to
+ * roll up without the feed becoming a policy report.
+ */
+const POLICY_ALERTS_PER_RULE = 4;
+
+/**
+ * Alerts raised by an Active `raise an alert` rule, as opposed to by the baseline.
+ *
+ * These carry no `baselineProgress` and are never `learning`: a rule match is a fact
+ * about the identity right now, not an observation the monitor is still calibrating.
+ */
+function policyRaisedAlerts(
+  identities: Identity[],
+  policies: Policy[],
+  rng: Rng,
+  now: Date,
+  startIndex: number,
+): Alert[] {
+  const out: Alert[] = [];
+  const rules = policies.filter(
+    (p) =>
+      p.status === 'active' &&
+      p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'alert'),
+  );
+  for (const rule of rules) {
+    const matched = identities.filter((i) => matchesPolicy(i, rule.tokens)).slice(0, POLICY_ALERTS_PER_RULE);
+    for (const identity of matched) {
+      const band = riskBand(identity.riskScore).band;
+      out.push({
+        id: `alr_${(startIndex + out.length).toString(36).padStart(5, '0')}`,
+        identityId: identity.id,
+        severity: band === 'minimal' ? 'low' : band,
+        title: `Matched “${rule.name}”`,
+        description: rule.plainEnglish,
+        recommendedNextStep: 'Open the rule to see everything it currently matches.',
+        baseline: 'established',
+        status: rng.weighted(['open', 'acknowledged'] as const, [8, 2]),
+        raisedBy: { policyId: rule.id, policyName: rule.name },
+        createdAt: new Date(now.getTime() - rng.int(0, 6) * 3600000).toISOString(),
+      });
+    }
+  }
+  return out;
+}
+
+export function generateAlerts(
+  identities: Identity[],
+  policies: Policy[],
+  seed: number,
+  now: Date,
+): Alert[] {
   const rng = new Rng(seed ^ 0x1234567);
   const candidates = identities.filter((i) => i.riskScore >= 55 || i.orphaned);
   const alerts: Alert[] = [];
@@ -353,6 +407,7 @@ export function generateAlerts(identities: Identity[], seed: number, now: Date):
       createdAt: new Date(now.getTime() - rng.int(0, 14) * 86400000 - rng.int(0, 86400000)).toISOString(),
     });
   }
+  alerts.push(...policyRaisedAlerts(identities, policies, rng, now, alerts.length));
   return alerts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -626,6 +681,33 @@ export function generatePolicies(identities: Identity[], seed: number, now: Date
       ],
     },
     {
+      // The one Active `review` rule. Flags are derived from the live match set, so
+      // without an Active review rule the Inventory's flag column and filter are
+      // dead UI in the demo -- and any count-based test over them passes vacuously.
+      name: 'Review ungoverned AI agents',
+      status: 'active',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' },
+        { kind: 'and', subject: 'governanceStatus', operator: 'is', value: 'ungoverned' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+      ],
+    },
+    {
+      // The one Active `alert` rule -- see the review rule above for why an Active
+      // seed per action matters.
+      // Not scoped to AI agents: the fixture caps agent risk below 80, so an
+      // agent-scoped rule at this threshold is sound but matches nobody -- a dead
+      // seed that leaves the feed's policy partition empty while every test over it
+      // still passes. The name avoids the word "critical" because policy names reach
+      // the notification feed verbatim, where wording and severity must agree.
+      name: 'Alert on top-risk identities',
+      status: 'active',
+      tokens: [
+        { kind: 'when', subject: 'riskScore', operator: 'gte', value: '80' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'alert' },
+      ],
+    },
+    {
       name: 'Legacy workload sweep',
       status: 'archived',
       tokens: [
@@ -885,23 +967,135 @@ export function generateAudit(
   return entries;
 }
 
-export function generateNotifications(seed: number, now: Date): NotificationItem[] {
+/** One notification's category, severity, wording and destination as a single draw. */
+type NotificationSpec = Pick<NotificationItem, 'category' | 'severity' | 'title' | 'href'>;
+
+/**
+ * Seeded notification feed.
+ *
+ * Two invariants this generator has to hold, both of which it used to break:
+ *
+ *  1. STRICTLY DESCENDING in time. `pushNotification` unshifts live entries onto
+ *     the front, so the seeded tail has to already read newest-first. (Was
+ *     `now - i * rng.int(1, 10) * HOUR`, which scaled a fresh random multiplier
+ *     by `i` and so wandered forwards and backwards — the identical bug
+ *     `generateAudit` above carried until it was given a walking decrement.)
+ *
+ *  2. Severity, category, wording and link are ONE tuple, never four
+ *     independent draws. Drawing them apart put "Policy activated by an admin"
+ *     at critical severity, "New critical alert on an AI agent" at info, and
+ *     sent a completed rotation to the Monitor list. A feed that contradicts
+ *     itself teaches the reader to distrust the severity column.
+ */
+export function generateNotifications(
+  identities: Identity[],
+  policies: Policy[],
+  seed: number,
+  now: Date,
+): NotificationItem[] {
   const rng = new Rng(seed ^ 0x404140);
-  const titles = [
-    'New critical alert on an AI agent',
-    'Rotation completed successfully',
-    'Policy activated by an admin',
-    'Orphaned identity detected',
-    'Baseline established for monitoring',
+  // Agents where the population contains any, else the wider set: the small
+  // scales used in tests can hold no ai-agent at all.
+  const agents = identities.filter((i) => i.type === 'ai-agent');
+  const agentPool = agents.length > 0 ? agents : identities;
+
+  const specs: ReadonlyArray<() => NotificationSpec> = [
+    () => {
+      const a = rng.pick(agentPool);
+      return {
+        category: 'quarantine',
+        severity: 'critical',
+        title: a.owner
+          ? `${a.name} quarantined — ${a.owner} notified`
+          : `${a.name} quarantined — no owner to notify`,
+        href: `/discover/${a.id}`,
+      };
+    },
+    () => ({
+      category: 'alert',
+      severity: 'critical',
+      title: `Critical alert on ${rng.pick(agentPool).name}`,
+      href: '/monitor',
+    }),
+    () => ({
+      category: 'alert',
+      severity: 'high',
+      title: `Unusual credential use by ${rng.pick(identities).name}`,
+      href: '/monitor',
+    }),
+    () => {
+      const i = rng.pick(identities);
+      return {
+        category: 'alert',
+        severity: 'medium',
+        title: `${i.name} is now orphaned — no owner on record`,
+        href: `/discover/${i.id}`,
+      };
+    },
+    () => ({
+      category: 'rotation',
+      severity: 'high',
+      title: `Rotation rolled back on ${rng.pick(identities).name}`,
+      href: '/rotate',
+    }),
+    () => ({
+      category: 'rotation',
+      severity: 'info',
+      title: `Rotation completed on ${rng.pick(identities).name}`,
+      href: '/rotate',
+    }),
+    () => ({
+      category: 'policy',
+      severity: 'medium',
+      title: `Policy “${rng.pick(policies).name}” activated`,
+      href: '/govern',
+    }),
+    () => ({
+      category: 'policy',
+      severity: 'info',
+      title: `Policy “${rng.pick(policies).name}” suspended`,
+      href: '/govern',
+    }),
+    () => ({
+      category: 'system',
+      severity: 'info',
+      title: `Baseline established for ${rng.int(8, 40)} agents`,
+    }),
   ];
-  return Array.from({ length: 12 }, (_, i) => ({
-    id: `ntf_${i.toString(36).padStart(4, '0')}`,
-    at: new Date(now.getTime() - i * rng.int(1, 10) * 3600000).toISOString(),
-    severity: rng.weighted(['critical', 'high', 'medium', 'info'] as const, [2, 3, 3, 4]),
-    title: rng.pick(titles),
-    read: rng.bool(0.5),
-    href: rng.bool(0.6) ? '/monitor' : undefined,
-  }));
+
+  // Walking decrement, matching generateAudit: each step only ever moves
+  // backwards, so the result is monotonic by construction rather than by luck.
+  let at = now.getTime() - rng.int(8, 50) * 60000;
+  const items: NotificationItem[] = [];
+  for (let i = 0; i < 12; i++) {
+    items.push({
+      id: `ntf_${i.toString(36).padStart(4, '0')}`,
+      at: new Date(at).toISOString(),
+      // The unread cluster sits at the top, where a live push would land it.
+      read: i >= 3,
+      ...rng.pick(specs)(),
+    });
+    at -= rng.int(1, 7) * 3600000;
+  }
+  return items;
+}
+
+/**
+ * A person's starting delivery choices. Email is on only where a missed message
+ * costs something — containment and critical alerts — so the seeded state is not
+ * a wall of identical switches nobody reads.
+ */
+export function generateNotificationPrefs(): NotificationPrefs {
+  return {
+    categories: {
+      alert: { inApp: true, email: true },
+      rotation: { inApp: true, email: false },
+      policy: { inApp: true, email: false },
+      quarantine: { inApp: true, email: true },
+      system: { inApp: true, email: false },
+    },
+    digest: { enabled: true, day: 1, hour: 9 },
+  };
 }
 
 export function generateConnections(identities: Identity[], now: Date): CloudConnection[] {
@@ -1018,7 +1212,6 @@ export function generateTenant(now: Date): Tenant {
       usersReceived: 11,
     },
     passwordFallback: true,
-    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: iso(now, 420 * DAY),
   };
 }

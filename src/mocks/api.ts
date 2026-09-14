@@ -20,7 +20,14 @@ import { passwordError } from '@/lib/password';
 import { samlStatus, scimStatus, scimUnlocked, validateSaml, type SamlDraft } from '@/lib/sso';
 import { can, canActOnUser, canAssignRole, ROLE_LABELS, type Capability, type Role } from '@/lib/permissions';
 import { matchesPolicy } from './policy';
-import { ACTION_OBJECT, isCrossCloud, isFlaggedStep } from './types';
+import { reviewFlagsFor, type ReviewFlag } from './reviewFlags';
+import {
+  ACTION_OBJECT,
+  isCrossCloud,
+  isFlaggedStep,
+  NOTIFICATION_CATEGORIES,
+  producerFacet,
+} from './types';
 import type {
   Alert,
   AgentSession,
@@ -37,11 +44,15 @@ import type {
   IdentityStatus,
   MonitoringBaseline,
   NhiType,
+  NotificationCategory,
+  NotificationChannels,
   NotificationItem,
+  NotificationPrefs,
   Policy,
   PolicyAction,
   PolicyActionOutcome,
   PolicyToken,
+  ProducerFacet,
   QuarantineRecord,
   ReachEdge,
   ReachNode,
@@ -49,7 +60,6 @@ import type {
   RotationHistoryEntry,
   RotationJob,
   SourceHealth,
-  SessionPolicy,
   Tenant,
   User,
   UserStatus,
@@ -233,6 +243,12 @@ export interface IdentityFilter {
    * are a dedupe result, not a cross-cloud finding. See `spannedClouds`.
    */
   crossCloudOnly?: boolean;
+  /**
+   * Currently matched by an Active `flag for review` rule. Derived from the live
+   * rule set on every read, so this narrows to what needs eyes NOW — an identity
+   * that has fallen back out of the match set is simply not here any more.
+   */
+  flaggedOnly?: boolean;
 }
 
 export interface IdentitySort {
@@ -256,18 +272,35 @@ export interface IdentityFacetCounts {
   orphaned: number;
   conflicts: number;
   crossCloud: number;
+  flagged: number;
 }
 
+/** An inventory row, carrying the review flags resolved for it on this read. */
+export type IdentityRow = Identity & { flaggedBy: ReviewFlag[] };
+
 export interface IdentityListResult {
-  rows: Identity[];
+  rows: IdentityRow[];
   total: number;
   counts: IdentityFacetCounts;
+}
+
+/**
+ * Review flags for every identity, resolved once per request.
+ *
+ * `reviewFlagsFor` walks every Active rule, and the facet pass asks about each
+ * identity once per facet — resolving into a map first keeps the cost at
+ * identities x rules rather than identities x rules x facets.
+ */
+function reviewFlagIndex(identities: Identity[]): Map<string, ReviewFlag[]> {
+  const { policies } = getDataset();
+  return new Map(identities.map((i) => [i.id, reviewFlagsFor(i, policies)]));
 }
 
 function matchesExcept(
   identity: Identity,
   filter: IdentityFilter,
   skip: keyof IdentityFilter | null,
+  flags: Map<string, ReviewFlag[]>,
 ): boolean {
   if (skip !== 'search' && filter.search) {
     const q = filter.search.toLowerCase();
@@ -293,11 +326,17 @@ function matchesExcept(
   if (skip !== 'orphanedOnly' && filter.orphanedOnly && !identity.orphaned) return false;
   if (skip !== 'conflictsOnly' && filter.conflictsOnly && identity.conflicts.length === 0) return false;
   if (skip !== 'crossCloudOnly' && filter.crossCloudOnly && !isCrossCloud(identity)) return false;
+  if (skip !== 'flaggedOnly' && filter.flaggedOnly && (flags.get(identity.id)?.length ?? 0) === 0)
+    return false;
   return true;
 }
 
-function applyFilter(identities: Identity[], filter: IdentityFilter): Identity[] {
-  return identities.filter((i) => matchesExcept(i, filter, null));
+function applyFilter(
+  identities: Identity[],
+  filter: IdentityFilter,
+  flags: Map<string, ReviewFlag[]>,
+): Identity[] {
+  return identities.filter((i) => matchesExcept(i, filter, null, flags));
 }
 
 function sortIdentities(rows: Identity[], sort: IdentitySort): Identity[] {
@@ -322,17 +361,21 @@ function sortIdentities(rows: Identity[], sort: IdentitySort): Identity[] {
   return sorted;
 }
 
-function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFacetCounts {
+function facetCounts(
+  identities: Identity[],
+  filter: IdentityFilter,
+  flags: Map<string, ReviewFlag[]>,
+): IdentityFacetCounts {
   const byType = emptyTypeCounts();
   const byBand: Record<RiskBand, number> = { critical: 0, high: 0, medium: 0, low: 0, minimal: 0 };
   const byCloud = emptyCloudCounts();
   const byStatus = emptyStatusCounts();
   // Each facet is counted over the set filtered by every OTHER active facet.
   for (const identity of identities) {
-    if (matchesExcept(identity, filter, 'types')) byType[identity.type] += 1;
-    if (matchesExcept(identity, filter, 'bands')) byBand[identity.riskBand] += 1;
-    if (matchesExcept(identity, filter, 'statuses')) byStatus[identity.status] += 1;
-    if (matchesExcept(identity, filter, 'clouds')) {
+    if (matchesExcept(identity, filter, 'types', flags)) byType[identity.type] += 1;
+    if (matchesExcept(identity, filter, 'bands', flags)) byBand[identity.riskBand] += 1;
+    if (matchesExcept(identity, filter, 'statuses', flags)) byStatus[identity.status] += 1;
+    if (matchesExcept(identity, filter, 'clouds', flags)) {
       // An identity can span clouds; count it under each of its source providers.
       for (const cloud of new Set(identity.sources.map((s) => s.cloud))) byCloud[cloud] += 1;
     }
@@ -340,14 +383,19 @@ function facetCounts(identities: Identity[], filter: IdentityFilter): IdentityFa
   let orphaned = 0;
   let conflicts = 0;
   let crossCloud = 0;
+  let flagged = 0;
   let total = 0;
   for (const identity of identities) {
-    if (matchesExcept(identity, filter, 'orphanedOnly') && identity.orphaned) orphaned += 1;
-    if (matchesExcept(identity, filter, 'conflictsOnly') && identity.conflicts.length > 0) conflicts += 1;
-    if (matchesExcept(identity, filter, 'crossCloudOnly') && isCrossCloud(identity)) crossCloud += 1;
-    if (matchesExcept(identity, filter, null)) total += 1;
+    if (matchesExcept(identity, filter, 'orphanedOnly', flags) && identity.orphaned) orphaned += 1;
+    if (matchesExcept(identity, filter, 'conflictsOnly', flags) && identity.conflicts.length > 0)
+      conflicts += 1;
+    if (matchesExcept(identity, filter, 'crossCloudOnly', flags) && isCrossCloud(identity))
+      crossCloud += 1;
+    if (matchesExcept(identity, filter, 'flaggedOnly', flags) && (flags.get(identity.id)?.length ?? 0) > 0)
+      flagged += 1;
+    if (matchesExcept(identity, filter, null, flags)) total += 1;
   }
-  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud };
+  return { total, byType, byBand, byCloud, byStatus, orphaned, conflicts, crossCloud, flagged };
 }
 
 function emptyTypeCounts(): Record<NhiType, number> {
@@ -383,22 +431,32 @@ export function listIdentities(params: IdentityListParams = {}): Promise<Identit
           orphaned: 0,
           conflicts: 0,
           crossCloud: 0,
+          flagged: 0,
         },
       };
     }
     const { identities } = getDataset();
     const filter = params.filter ?? {};
-    const filtered = applyFilter(identities, filter);
+    const flags = reviewFlagIndex(identities);
+    const filtered = applyFilter(identities, filter, flags);
     const sorted = params.sort ? sortIdentities(filtered, params.sort) : filtered;
     const offset = params.offset ?? 0;
     const limit = params.limit ?? 100;
-    const rows = sorted.slice(offset, offset + limit);
-    return { rows, total: sorted.length, counts: facetCounts(identities, filter) };
+    const rows = sorted
+      .slice(offset, offset + limit)
+      .map((i) => ({ ...i, flaggedBy: flags.get(i.id) ?? [] }));
+    return { rows, total: sorted.length, counts: facetCounts(identities, filter, flags) };
   });
 }
 
-export function getIdentity(id: string): Promise<Identity | null> {
-  return respond(() => getDataset().identityById.get(id) ?? null);
+export function getIdentity(id: string): Promise<IdentityRow | null> {
+  return respond(() => {
+    const identity = getDataset().identityById.get(id);
+    if (!identity) return null;
+    // Resolved here too, so the detail panel and the row it was opened from can
+    // never disagree about which rules currently match.
+    return { ...identity, flaggedBy: reviewFlagsFor(identity, getDataset().policies) };
+  });
 }
 
 /**
@@ -440,11 +498,25 @@ function withAlertIdentityName(alert: Alert): AlertWithIdentity {
   };
 }
 
-export function listAlerts(severity?: RiskBand): Promise<AlertWithIdentity[]> {
+/**
+ * Where an alert came from. `behavior` is everything the baseline raised -- it is
+ * defined as the absence of a rule rather than a stored kind, so an alert cannot
+ * claim a source it has no attribution for.
+ */
+export type AlertSource = 'policy' | 'behavior';
+
+export interface AlertQuery {
+  severity?: RiskBand;
+  source?: AlertSource;
+}
+
+export function listAlerts(query: AlertQuery = {}): Promise<AlertWithIdentity[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
     let rows = getDataset().alerts.filter((a) => a.status !== 'resolved');
-    if (severity) rows = rows.filter((a) => a.severity === severity);
+    if (query.severity) rows = rows.filter((a) => a.severity === query.severity);
+    if (query.source === 'policy') rows = rows.filter((a) => a.raisedBy);
+    if (query.source === 'behavior') rows = rows.filter((a) => !a.raisedBy);
     return rows.map(withAlertIdentityName);
   });
 }
@@ -803,6 +875,14 @@ export function activatePolicy(id: string): Promise<Policy> {
       policy.name,
       `Enforced against ${countPhrase(policy.affectedCount)}.`,
     );
+    // The 'Policy changes' preference promised this event; until now nothing
+    // raised it, so the switch described a notification the product never sent.
+    pushNotification({
+      severity: 'medium',
+      category: 'policy',
+      title: `Policy “${policy.name}” ${reactivating ? 'reactivated' : 'activated'}`,
+      href: '/govern',
+    });
     return { ...policy };
   });
 }
@@ -1002,6 +1082,7 @@ function containIdentity(identity: Identity, note?: string, viaSessionId?: strin
   // to tell, which is itself worth surfacing rather than silently skipping.
   pushNotification({
     severity: 'critical',
+    category: 'quarantine',
     title: identity.owner
       ? `${identity.name} quarantined — ${identity.owner} notified`
       : `${identity.name} quarantined — no owner to notify`,
@@ -1081,6 +1162,12 @@ export interface QuarantinedIdentity {
   name: string;
   type: NhiType;
   at: string;
+  /**
+   * Which of the three display outcomes this row is, for Act > Quarantine's
+   * "Produced by" filter. Carried structurally so nothing has to match on
+   * `byLabel`, whose copy is free to change.
+   */
+  producer: ProducerFacet;
   /** Resolved producer, e.g. "Policy · Orphaned AI agents". */
   byLabel: string;
   /** Where the producer lives, for the link back. Absent when it has no screen. */
@@ -1157,6 +1244,7 @@ export function listQuarantined(): Promise<QuarantinedIdentity[]> {
         name: i.name,
         type: i.type,
         at: i.quarantine.at,
+        producer: producerFacet(i.quarantine.by),
         ...quarantineLabel(i.quarantine),
       }))
       .sort((a, b) => b.at.localeCompare(a.at)),
@@ -1577,6 +1665,16 @@ export function requestRotation(identityId: string, mode: 'standard' | 'emergenc
       cascade: [],
     };
     getDataset().rotations.active.unshift(job);
+    // Raised on START, which is the only rotation event this layer owns —
+    // phase progress is simulated in the UI and never reaches the mock API, so
+    // there is no completion or rollback event to hook yet. The category label
+    // says "activity" rather than "outcomes" for exactly this reason.
+    pushNotification({
+      severity: mode === 'emergency' ? 'high' : 'info',
+      category: 'rotation',
+      title: `${mode === 'emergency' ? 'Emergency rotation' : 'Rotation'} started on ${identityLabel(identityId)}`,
+      href: '/rotate',
+    });
     return { ...job };
   });
 }
@@ -1682,12 +1780,113 @@ export function listNotifications(): Promise<NotificationItem[]> {
   return respond(() => (isEmptyForced() ? [] : [...getDataset().notifications]));
 }
 
-export function markNotificationRead(id: string): Promise<NotificationItem> {
+/**
+ * Set one notification's read state.
+ *
+ * REPLACES the array entry rather than mutating it. `listNotifications` hands
+ * out the stored objects, so mutating `item.read` in place left the cache
+ * deep-equal to itself: React Query's structural sharing returned the SAME array
+ * reference on refetch, no subscriber was notified, and the header bell went on
+ * showing a stale unread count until something unrelated forced a re-render.
+ * A new object at a new array index is what makes the invalidation observable.
+ */
+export function setNotificationRead(id: string, read: boolean): Promise<NotificationItem> {
   return respond(() => {
-    const item = getDataset().notifications.find((n) => n.id === id);
-    if (!item) throw new MockApiError('Notification not found.');
-    item.read = true;
-    return { ...item };
+    const list = getDataset().notifications;
+    const index = list.findIndex((n) => n.id === id);
+    if (index === -1) throw new MockApiError('Notification not found.');
+    const updated = { ...list[index], read };
+    list[index] = updated;
+    return { ...updated };
+  });
+}
+
+/** Clear the whole unread cluster in one write. Same replace-don't-mutate rule. */
+export function markAllNotificationsRead(): Promise<NotificationItem[]> {
+  return respond(() => {
+    const ds = getDataset();
+    ds.notifications = ds.notifications.map((n) => (n.read ? n : { ...n, read: true }));
+    return ds.notifications.map((n) => ({ ...n }));
+  });
+}
+
+/**
+ * Deep copies, not spreads. The stored prefs hold a nested object per category;
+ * handing out a shallow copy would share those inner objects with the caller and
+ * reintroduce exactly the aliasing that made the bell badge go stale.
+ */
+function copyPrefs(p: NotificationPrefs): NotificationPrefs {
+  const categories = {} as Record<NotificationCategory, NotificationChannels>;
+  for (const c of NOTIFICATION_CATEGORIES) categories[c] = { ...p.categories[c] };
+  return { categories, digest: { ...p.digest } };
+}
+
+/** The signed-in actor's email, or 'system' — the same resolution appendAudit uses. */
+function currentActorEmail(): string {
+  const { id } = currentActor();
+  return getDataset().users.find((u) => u.id === id)?.email ?? 'system';
+}
+
+export function getNotificationPrefs(): Promise<NotificationPrefs> {
+  return respond(() => copyPrefs(getDataset().notificationPrefs));
+}
+
+/**
+ * Record the signed-in person's delivery choices. Audited: an attacker who turns
+ * off critical alerts has done something an auditor needs to be able to find.
+ * Every role holds `notifications.self` — these are personal, not tenant-wide.
+ */
+export function updateNotificationPrefs(patch: Partial<NotificationPrefs>): Promise<NotificationPrefs> {
+  return respond(() => {
+    assertActorCan('notifications.self');
+    const ds = getDataset();
+    const next: NotificationPrefs = {
+      categories: { ...ds.notificationPrefs.categories, ...(patch.categories ?? {}) },
+      digest: { ...ds.notificationPrefs.digest, ...(patch.digest ?? {}) },
+    };
+    ds.notificationPrefs = next;
+    const on = NOTIFICATION_CATEGORIES.filter((c) => next.categories[c].email).length;
+    appendAudit(
+      'updated notification preferences',
+      currentActorEmail(),
+      `Email on for ${on} of ${NOTIFICATION_CATEGORIES.length} categories, digest ${next.digest.enabled ? 'on' : 'off'}.`,
+    );
+    return copyPrefs(next);
+  });
+}
+
+/**
+ * Hand the Tenant Owner role to someone else (role-gated:
+ * `tenant.transferOwnership`, Owner only).
+ *
+ * A tenant has exactly one Owner, so this is a swap, not a grant: the outgoing
+ * Owner lands on Tenant Admin in the same write. Doing it as two role changes
+ * would leave a window with two Owners or none.
+ */
+export function transferOwnership(userId: string): Promise<User> {
+  return respond(() => {
+    assertActorCan('tenant.transferOwnership');
+    const ds = getDataset();
+    const target = ds.users.find((u) => u.id === userId);
+    if (!target) throw new MockApiError('User not found.', 'NOT_FOUND');
+    if (target.id === currentActor().id) {
+      throw new MockApiError('You already own this organization.', 'INVALID_TRANSITION');
+    }
+    if (target.status !== 'active') {
+      throw new MockApiError(
+        'Ownership can only pass to an active user.',
+        'INVALID_TRANSITION',
+      );
+    }
+    const outgoing = ds.users.find((u) => u.role === 'tenant-owner');
+    if (outgoing) outgoing.role = 'tenant-admin';
+    target.role = 'tenant-owner';
+    appendAudit(
+      'transferred ownership',
+      ds.tenant.name,
+      `Tenant Owner passed to ${target.email}${outgoing ? `; ${outgoing.email} is now a Tenant Admin` : ''}.`,
+    );
+    return { ...target };
   });
 }
 
@@ -1765,9 +1964,23 @@ function identityLabel(identityId: string): string {
   return getDataset().identityById.get(identityId)?.name ?? identityId;
 }
 
-/** Raise an in-app notification (spec 13.4). Newest first, unread. */
-function pushNotification(input: { severity: NotificationItem['severity']; title: string; href?: string }): void {
-  getDataset().notifications.unshift({
+/**
+ * Raise an in-app notification (spec 13.4). Newest first, unread.
+ *
+ * Honours the reader's in-app preference for the category: a switch that does
+ * not suppress anything is decoration. Delivery to email, Slack or a SIEM is
+ * upstream, so only the in-app leg is enforced here.
+ * // ASSUMPTION: external delivery and tenant routing fan-out are upstream.
+ */
+function pushNotification(input: {
+  severity: NotificationItem['severity'];
+  category: NotificationCategory;
+  title: string;
+  href?: string;
+}): void {
+  const ds = getDataset();
+  if (!ds.notificationPrefs.categories[input.category].inApp) return;
+  ds.notifications.unshift({
     id: `ntf_${Math.random().toString(36).slice(2, 8)}`,
     at: new Date().toISOString(),
     read: false,
@@ -2018,8 +2231,6 @@ export async function acceptLegal(
     // The Owner signs in with a password until federation is configured — and
     // stays able to, because they are the only account Entra will not manage.
     passwordFallback: true,
-    // Same defaults the seeded tenant carries: a new org is not a laxer org.
-    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: new Date().toISOString(),
   };
   const user: User = {
@@ -2254,32 +2465,7 @@ function cloneTenant(t: Tenant): Tenant {
     sso: { ...t.sso },
     saml: { ...t.saml, cert: t.saml.cert ? { ...t.saml.cert } : null },
     scim: { ...t.scim },
-    sessionPolicy: { ...t.sessionPolicy },
   };
-}
-
-export function getSessionPolicy(): Promise<SessionPolicy> {
-  return respond(() => ({ ...getDataset().tenant.sessionPolicy }));
-}
-
-/**
- * Record the tenant's session policy. Audited, because "how long does a session
- * live" is a question an auditor asks and a change to it is evidence.
- * // ASSUMPTION: enforcement is upstream — nothing here expires a session.
- */
-export function updateSessionPolicy(patch: Partial<SessionPolicy>): Promise<SessionPolicy> {
-  return respond(() => {
-    assertActorCan('settings.manage');
-    const { tenant } = getDataset();
-    tenant.sessionPolicy = { ...tenant.sessionPolicy, ...patch };
-    const p = tenant.sessionPolicy;
-    appendAudit(
-      'updated session policy',
-      tenant.name,
-      `Idle ${p.idleTimeoutMinutes} min, absolute ${p.absoluteSessionHours} h, step-up ${p.stepUpOnSensitive ? 'on' : 'off'}.`,
-    );
-    return { ...p };
-  });
 }
 
 /* ------------------------------------------------- single sign-on & SCIM */

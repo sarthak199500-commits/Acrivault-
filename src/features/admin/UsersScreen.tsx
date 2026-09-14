@@ -60,6 +60,7 @@ import { AssignRolesDialog } from './AssignRolesDialog';
 import { EditUserDialog } from './EditUserDialog';
 import { UsersToolbar } from './UsersToolbar';
 import { useUsersFilters } from './useUsersFilters';
+import { UsersSummary } from '@/features/platform/settings/UsersSummary';
 
 type ConfirmKind = 'suspend' | 'activate' | 'delete';
 
@@ -551,6 +552,11 @@ export function UsersScreen() {
           <RoleRestricted action="modify users" remedy="Tenant Admin" />
         </div>
       )}
+
+      {/* Followed the population summary here from the Settings card wall. Not
+          rendered on an empty tenant — the first-run banner below says more
+          about zero users than a row of zeroes does. */}
+      {list.length > 0 && <UsersSummary users={list} tenant={tenant.data} />}
 
       {firstRun && (
         // Three different reasons nobody is here, three different next actions.

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_NAV_ITEMS, NAV, detailEyebrow, screenHeaderProps, screenIdentity } from './nav';
+import {
+  ALL_NAV_ITEMS,
+  ALL_SETTINGS_ITEMS,
+  NAV,
+  SETTINGS_INDEX_ROUTE,
+  detailEyebrow,
+  screenHeaderProps,
+  screenIdentity,
+} from './nav';
 
 describe('canonical screen taxonomy', () => {
   it('gives every rail destination a title and an eyebrow', () => {
@@ -53,6 +61,40 @@ describe('canonical screen taxonomy', () => {
 
   it('spreads straight onto ScreenHeader', () => {
     expect(screenHeaderProps('/')).toEqual({ eyebrow: 'See', title: 'Dashboard' });
-    expect(screenHeaderProps('/settings/users')).toEqual({ eyebrow: 'Platform', title: 'Manage Users' });
+    // Was `Platform` alone, when Manage Users was its own rail destination. It
+    // is a settings pane now, and the eyebrow has to say where the reader is.
+    expect(screenHeaderProps('/settings/users')).toEqual({
+      eyebrow: 'Platform · Settings',
+      title: 'Manage Users',
+    });
+  });
+
+  it('gives every settings pane a title and the Settings pillar', () => {
+    for (const item of ALL_SETTINGS_ITEMS) {
+      const id = screenIdentity(item.to);
+      expect(id.title, item.to).toBe(item.title ?? item.label);
+      expect(id.eyebrow, item.to).toBe('Platform · Settings');
+    }
+  });
+
+  // Collapsing the Platform rail to Settings alone removed Users and Sources as
+  // rail destinations. They must not become unreachable by name: the command
+  // palette builds its screen list from ALL_NAV_ITEMS plus ALL_SETTINGS_ITEMS,
+  // so every pane has to carry an icon and resolve to a real title.
+  it('keeps every settings pane findable', () => {
+    expect(ALL_SETTINGS_ITEMS.length).toBeGreaterThan(0);
+    for (const item of ALL_SETTINGS_ITEMS) {
+      expect(item.to, item.label).toMatch(/^\/settings\//);
+      expect(item.icon, item.to).toBeTruthy();
+    }
+    // The panes and the rail may not claim the same route twice.
+    const railRoutes = new Set(ALL_NAV_ITEMS.map((i) => i.to));
+    for (const item of ALL_SETTINGS_ITEMS) {
+      expect(railRoutes.has(item.to), item.to).toBe(false);
+    }
+  });
+
+  it('lands a bare /settings on a real pane', () => {
+    expect(ALL_SETTINGS_ITEMS.some((i) => i.to === SETTINGS_INDEX_ROUTE)).toBe(true);
   });
 });

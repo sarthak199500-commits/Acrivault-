@@ -12,6 +12,7 @@ import {
   generateConnections,
   generateCopilotSuggestions,
   generateIdentities,
+  generateNotificationPrefs,
   generateNotifications,
   generatePolicies,
   generatePolicyActions,
@@ -73,6 +74,8 @@ export interface Dataset {
   rotations: ReturnType<typeof generateRotations>;
   audit: ReturnType<typeof generateAudit>;
   notifications: ReturnType<typeof generateNotifications>;
+  /** The signed-in person's own delivery choices. Mutable: the prefs screen writes here. */
+  notificationPrefs: ReturnType<typeof generateNotificationPrefs>;
   connections: ReturnType<typeof generateConnections>;
   rehearsals: ReturnType<typeof generateRehearsals>;
   copilot: ReturnType<typeof generateCopilotSuggestions>;
@@ -98,7 +101,7 @@ function build(): Dataset {
   // queue would open with a request to contain something already contained.
   const approvals = generateApprovals(identities, users, SEED, NOW);
   // Alerts last: they point at sessions, so sessions must exist first.
-  const alerts = generateAlerts(identities, SEED, NOW);
+  const alerts = generateAlerts(identities, policies, SEED, NOW);
   attachAlertSessions(alerts, sessions);
   return {
     size,
@@ -111,7 +114,10 @@ function build(): Dataset {
     policyActions: generatePolicyActions(identities, policies, users, SEED, NOW),
     rotations: generateRotations(identities, SEED, NOW),
     audit: generateAudit(identities, policies, users, tenant, SEED, NOW),
-    notifications: generateNotifications(SEED, NOW),
+    // Takes identities and policies so a notification can name a real record
+    // and deep-link to it, rather than pointing every row at the Monitor list.
+    notifications: generateNotifications(identities, policies, SEED, NOW),
+    notificationPrefs: generateNotificationPrefs(),
     connections: generateConnections(identities, NOW),
     rehearsals: generateRehearsals(SEED, NOW),
     copilot: generateCopilotSuggestions(identities, SEED),

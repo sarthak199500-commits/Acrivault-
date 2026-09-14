@@ -375,7 +375,7 @@ export function PolicyListScreen() {
                     }))}
                     selected={filters.filter.statuses}
                     onToggle={(v) => filters.toggleStatus(v as PolicyStatus)}
-                    onClear={() => filters.filter.statuses.forEach((s) => filters.toggleStatus(s))}
+                    onClear={filters.clearStatuses}
                   />
 
                   {/* Default size (h-9) so it lines up with the search field and the

@@ -100,6 +100,17 @@
     font-family: var(--font-ui);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /*
+     * Hold the scrollbar gutter open whether or not the page scrolls.
+     *
+     * The document is the scroller, so its scrollbar appeared and vanished as
+     * you moved between a short screen and a tall one, moving the entire layout
+     * 10px sideways each time. Most visible on the Settings tab row, where
+     * switching from Account to Notifications shifted the tabs under the
+     * pointer. No effect on overlay-scrollbar platforms, where the gutter is
+     * zero either way.
+     */
+    scrollbar-gutter: stable;
   }
 
   body {

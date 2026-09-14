@@ -8,6 +8,8 @@ import {
   listBlastOrigins,
   resolveAlert,
 } from './api';
+import { getDataset } from './dataset';
+import { matchesPolicy } from './policy';
 import { useUiStore } from '@/stores/ui';
 
 beforeAll(() => useUiStore.getState().setLatency(0));
@@ -29,7 +31,7 @@ describe('monitor alerts', () => {
   });
 
   it('filters by severity', async () => {
-    const critical = await listAlerts('critical');
+    const critical = await listAlerts({ severity: 'critical' });
     expect(critical.every((a) => a.severity === 'critical')).toBe(true);
   });
 
@@ -161,5 +163,71 @@ describe('blast radius origin search', () => {
   it('returns nothing for a name that does not exist', async () => {
     const { origins } = await listBlastOrigins({ query: 'no-such-identity-zzz' });
     expect(origins).toEqual([]);
+  });
+});
+
+describe('alerts raised by a policy', () => {
+  /** The Active rule whose THEN action is `raise an alert`. */
+  function alertPolicies() {
+    return getDataset().policies.filter(
+      (p) =>
+        p.status === 'active' &&
+        p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'alert'),
+    );
+  }
+
+  it('seeds an active alert policy, and alerts that name it', async () => {
+    // Fixture coherence: the source filter and the attribution chip are both dead
+    // UI without this, and a partition test would still pass on zero policy alerts.
+    expect(alertPolicies().length).toBeGreaterThan(0);
+    const raised = (await listAlerts()).filter((a) => a.raisedBy);
+    expect(raised.length).toBeGreaterThan(0);
+  });
+
+  it('names a rule that exists, is active, and asks for an alert', async () => {
+    const ids = new Set(alertPolicies().map((p) => p.id));
+    const raised = await listAlerts({ source: 'policy' });
+    expect(raised.every((a) => a.raisedBy && ids.has(a.raisedBy.policyId))).toBe(true);
+  });
+
+  it('raises an alert only on an identity the rule actually matches', async () => {
+    const { identityById, policies } = getDataset();
+    for (const alert of await listAlerts({ source: 'policy' })) {
+      const policy = policies.find((p) => p.id === alert.raisedBy?.policyId);
+      const identity = identityById.get(alert.identityId);
+      if (!policy || !identity) throw new Error('fixture: alert names a missing record');
+      expect(matchesPolicy(identity, policy.tokens)).toBe(true);
+    }
+  });
+
+  it('partitions the feed into policy-raised and behavioral', async () => {
+    const all = await listAlerts();
+    const policy = await listAlerts({ source: 'policy' });
+    const behavior = await listAlerts({ source: 'behavior' });
+    expect(policy.every((a) => a.raisedBy)).toBe(true);
+    expect(behavior.every((a) => !a.raisedBy)).toBe(true);
+    expect(policy.length + behavior.length).toBe(all.length);
+    expect(policy.length).toBeGreaterThan(0);
+    expect(behavior.length).toBeGreaterThan(0);
+  });
+
+  it('still filters by severity alongside the source', async () => {
+    const rows = await listAlerts({ severity: 'critical', source: 'policy' });
+    expect(rows.every((a) => a.severity === 'critical' && a.raisedBy)).toBe(true);
+  });
+
+  it('stamps the rule name, so renaming the rule cannot rewrite what was raised', async () => {
+    const policy = alertPolicies()[0];
+    const original = policy.name;
+    policy.name = 'Renamed after the fact';
+    try {
+      const raised = (await listAlerts({ source: 'policy' })).filter(
+        (a) => a.raisedBy?.policyId === policy.id,
+      );
+      expect(raised.length).toBeGreaterThan(0);
+      expect(raised.every((a) => a.raisedBy?.policyName === original)).toBe(true);
+    } finally {
+      policy.name = original;
+    }
   });
 });

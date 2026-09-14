@@ -8,10 +8,13 @@ import {
   listAlerts,
   resolveAlert,
 } from '@/mocks/api';
-import type { RiskBand } from '@/mocks/types';
+import type { AlertQuery } from '@/mocks/api';
 
-export function useAlerts(severity?: RiskBand) {
-  return useQuery({ queryKey: ['alerts', severity ?? 'all'], queryFn: () => listAlerts(severity) });
+export function useAlerts(query: AlertQuery = {}) {
+  return useQuery({
+    queryKey: ['alerts', query.severity ?? 'all', query.source ?? 'all'],
+    queryFn: () => listAlerts(query),
+  });
 }
 
 export function useAlert(id: string | undefined) {

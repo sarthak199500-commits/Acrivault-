@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UsersScreen } from './UsersScreen';
 import { TooltipProvider } from '@/components/ui/Tooltip';
@@ -70,7 +70,6 @@ function setTenant(saml: SamlConfig, scim: ScimConfig) {
     saml,
     scim,
     passwordFallback: true,
-    sessionPolicy: { idleTimeoutMinutes: 30, absoluteSessionHours: 12, stepUpOnSensitive: true },
     createdAt: '2026-08-01T00:00:00.000Z',
   };
 }
@@ -244,5 +243,64 @@ describe('reaching a user’s audit trail', () => {
     renderScreen();
     await screen.findByText('Noor Haddad');
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A filter menu's own Clear drops the WHOLE axis.
+ *
+ * It used to drop one value. Each menu's Clear called the toggle once per
+ * selected value in a single tick, and `setSearchParams`'s functional form is
+ * not a `setState`-style update queue: react-router-dom memoises `searchParams`
+ * off the current render's `location.search` and hands that same value to every
+ * updater call, so N toggles all computed from identical stale params and the
+ * last `navigate()` won. Three selected roles lost exactly one.
+ */
+describe('clearing one filter menu', () => {
+  /** Renders at `path` and returns a live view of the URL the screen has navigated to. */
+  function renderAt(path: string) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const seen = { search: '' };
+    function Probe() {
+      seen.search = useLocation().search;
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[path]}>
+            <UsersScreen />
+            <Probe />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    return seen;
+  }
+
+  it('drops every selected role, not only the last one', async () => {
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    const location = renderAt('/admin/users?role=tenant-admin,security-admin,analyst');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /role, 3 selected/i }));
+    await user.click(await screen.findByRole('button', { name: /^clear$/i }));
+
+    expect(new URLSearchParams(location.search).get('role')).toBeNull();
+  });
+
+  it('leaves the other axis alone', async () => {
+    users = [OWNER, FROM_ENTRA];
+    setTenant(FEDERATED, PROVISIONED);
+    const location = renderAt('/admin/users?role=tenant-admin,analyst&status=active');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /role, 2 selected/i }));
+    await user.click(await screen.findByRole('button', { name: /^clear$/i }));
+
+    const params = new URLSearchParams(location.search);
+    expect(params.get('role')).toBeNull();
+    expect(params.get('status')).toBe('active');
   });
 });

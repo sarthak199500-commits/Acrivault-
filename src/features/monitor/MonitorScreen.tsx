@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Activity, BellOff, ChevronRight, X } from 'lucide-react';
+import { Activity, BellOff, ChevronRight, ShieldCheck, X } from 'lucide-react';
 import { useAlerts, useMonitoringBaseline } from './queries';
 import { BaselineStrip } from './BaselineStrip';
 import { useMonitorFilters } from './useMonitorFilters';
-import type { AlertWithIdentity } from '@/mocks/api';
-import type { RiskBand } from '@/mocks/types';
-import { bucketByTime, splitAcknowledged } from './alertGrouping';
+import type { AlertSource, AlertWithIdentity } from '@/mocks/api';
+import { NHI_TYPES, NHI_TYPE_LABELS, type NhiType, type RiskBand } from '@/mocks/types';
+import { bucketByTime, rollUpByPolicy, splitAcknowledged } from './alertGrouping';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { NhiTypeIcon } from '@/components/ui/NhiTypeIcon';
+import { FilterMenu } from '@/components/ui/FilterMenu';
 import { FilterPill } from '@/components/ui/FilterPill';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -22,6 +23,34 @@ import { SEVERITY_FG } from '@/lib/tones';
 
 const SEVERITY_ORDER: RiskBand[] = ['critical', 'high', 'medium', 'low'];
 
+/**
+ * Name the dimension that emptied the feed, but only when one did. With two narrowing
+ * at once, blaming either is a guess that sends the analyst to clear the wrong one.
+ */
+function emptyHeadline({
+  severity,
+  learningOnly,
+  identityTypes,
+  source,
+}: {
+  severity: RiskBand | null;
+  learningOnly: boolean;
+  identityTypes: NhiType[];
+  source: AlertSource | null;
+}) {
+  const active = [
+    severity !== null,
+    learningOnly,
+    identityTypes.length > 0,
+    source !== null,
+  ].filter(Boolean);
+  if (active.length > 1) return 'No alerts match these filters';
+  if (learningOnly) return 'No alerts from learning identities';
+  if (identityTypes.length > 0) return 'No alerts on this identity type';
+  if (source === 'policy') return 'No alerts raised by a policy';
+  if (source === 'behavior') return 'No behavioral alerts';
+  return 'No alerts at this severity';
+}
 
 /**
  * Two lines: what happened, then who and when.
@@ -55,6 +84,15 @@ function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => v
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-text">{alert.title}</span>
+          {/* Provenance, not the rule's name — the title already carries that. Without
+              it a rule-raised row and a baseline anomaly look alike, and the two mean
+              very different things: one is a policy someone chose, the other is a
+              deviation nobody predicted. */}
+          {alert.raisedBy && (
+            <Badge tone="info" icon={<ShieldCheck className="h-3 w-3" />} className="shrink-0">
+              policy
+            </Badge>
+          )}
           {alert.baseline === 'learning' && (
             <Badge tone="neutral" className="shrink-0">learning</Badge>
           )}
@@ -81,6 +119,43 @@ function AlertRow({ alert, onOpen }: { alert: AlertWithIdentity; onOpen: () => v
         aria-hidden="true"
       />
     </button>
+  );
+}
+
+/**
+ * The rest of what one rule raised, behind its first row.
+ *
+ * Collapsed by default and counted honestly: the label states identities, because a
+ * rule raises once per identity and "3 more alerts" would invite reading it as three
+ * separate findings.
+ */
+function PolicyRollUp({
+  alerts,
+  onOpen,
+}: {
+  alerts: AlertWithIdentity[];
+  onOpen: (a: AlertWithIdentity) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-border bg-surface-2 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 py-2 pl-7 pr-3 text-left text-[length:var(--fs-micro)] text-text-secondary hover:text-text"
+      >
+        <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')} aria-hidden="true" />
+        {pluralize(alerts.length, 'more identity', 'more identities')} from this rule
+      </button>
+      {open && (
+        <div className="pl-4">
+          {alerts.map((a) => (
+            <AlertRow key={a.id} alert={a} onOpen={() => onOpen(a)} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -121,13 +196,33 @@ export function MonitorScreen() {
   const baseline = useMonitoringBaseline();
   const navigate = useNavigate();
   const location = useLocation();
-  const { severity, setSeverity, learningOnly, showLearningOnly, clearLearningOnly } =
-    useMonitorFilters();
+  const {
+    severity,
+    setSeverity,
+    identityTypes,
+    toggleIdentityType,
+    clearIdentityTypes,
+    source,
+    setSource,
+    learningOnly,
+    showLearningOnly,
+    clearLearningOnly,
+    clearAll,
+    anyActive,
+  } = useMonitorFilters();
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     (query.data ?? []).forEach((a) => (c[a.severity] = (c[a.severity] ?? 0) + 1));
     return c;
+  }, [query.data]);
+
+  // Counted over the whole feed, like the severity counts above: a pill whose number
+  // moves when you select its sibling reads as the filter having changed the estate
+  // rather than the view. The two always sum to All.
+  const sourceCounts = useMemo(() => {
+    const policy = (query.data ?? []).filter((a) => a.raisedBy).length;
+    return { policy, behavior: (query.data ?? []).length - policy };
   }, [query.data]);
 
   // Alerts the baseline caveat actually applies to — the strip's link promises this count.
@@ -180,15 +275,28 @@ export function MonitorScreen() {
       >
         {(alerts) => {
           const bySeverity = severity ? alerts.filter((a) => a.severity === severity) : alerts;
-          const filtered = learningOnly
-            ? bySeverity.filter((a) => a.baseline === 'learning')
+          // What the other two dimensions have already narrowed to. The type menu counts
+          // against this, not the whole feed: an option offering rows that the active
+          // severity has excluded is a dead end that lands on nothing.
+          const bySource = source
+            ? bySeverity.filter((a) => (source === 'policy' ? !!a.raisedBy : !a.raisedBy))
             : bySeverity;
+          const scoped = learningOnly
+            ? bySource.filter((a) => a.baseline === 'learning')
+            : bySource;
+          const typeCounts = scoped.reduce<Partial<Record<NhiType, number>>>((acc, a) => {
+            acc[a.identityType] = (acc[a.identityType] ?? 0) + 1;
+            return acc;
+          }, {});
+          const filtered = identityTypes.length
+            ? scoped.filter((a) => identityTypes.includes(a.identityType))
+            : scoped;
           const { active, acknowledged } = splitAcknowledged(filtered);
           const buckets = bucketByTime(active);
           return (
             <div>
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                <FilterPill label="All" count={alerts.length} selected={severity === null && !learningOnly} onClick={() => { setSeverity(null); clearLearningOnly(); }} />
+                <FilterPill label="All" count={alerts.length} selected={!anyActive} onClick={clearAll} />
                 {SEVERITY_ORDER.map((s) => (
                   <FilterPill
                     key={s}
@@ -199,6 +307,43 @@ export function MonitorScreen() {
                     icon={<span className={cn('inline-block h-2 w-2 rounded-full')} style={{ backgroundColor: `var(--risk-${s})` }} aria-hidden="true" />}
                   />
                 ))}
+                {/* Where an alert came from, split off by a rule under the tenant's own
+                    control rather than by the baseline. Always present, unlike the
+                    learning pill: a tenant with no active alert rule should still be
+                    able to see the feed is entirely behavioral, which a zero says
+                    outright. */}
+                <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+                <FilterPill
+                  label="From a policy"
+                  count={sourceCounts.policy}
+                  selected={source === 'policy'}
+                  onClick={() => setSource(source === 'policy' ? null : 'policy')}
+                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                />
+                <FilterPill
+                  label="Behavioral"
+                  count={sourceCounts.behavior}
+                  selected={source === 'behavior'}
+                  onClick={() => setSource(source === 'behavior' ? null : 'behavior')}
+                  icon={<Activity className="h-3.5 w-3.5" />}
+                />
+
+                {/* A menu rather than five more pills: the row already carries All, four
+                    severities, two source pills and a conditional "Still learning", and
+                    five more would wrap it to a second line. Labelled in full — "Type"
+                    belongs to the anomaly taxonomy the FRS asks for, which this is not. */}
+                <FilterMenu
+                  label="Identity type"
+                  options={NHI_TYPES.map((type) => ({
+                    value: type,
+                    label: NHI_TYPE_LABELS[type],
+                    count: typeCounts[type] ?? 0,
+                    swatch: <NhiTypeIcon type={type} className="h-3.5 w-3.5 text-text-tertiary" />,
+                  }))}
+                  selected={identityTypes}
+                  onToggle={(v) => toggleIdentityType(v as NhiType)}
+                  onClear={clearIdentityTypes}
+                />
                 {/* Only while active — the strip's link is what turns it on, so an
                     always-present pill would advertise a dimension most tenants never use. */}
                 {learningOnly && (
@@ -220,8 +365,12 @@ export function MonitorScreen() {
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={<Activity className="h-5 w-5" />}
-                    headline={learningOnly ? 'No alerts from learning identities' : 'No alerts at this severity'}
-                    guidance="Clear the filter to see all open alerts."
+                    headline={emptyHeadline({ severity, learningOnly, identityTypes, source })}
+                    guidance={
+                      source === 'policy'
+                        ? 'Only an active rule whose action is “raise an alert” puts anything here.'
+                        : 'Press All to see every open alert.'
+                    }
                   />
                 ) : (
                   <div>
@@ -231,8 +380,13 @@ export function MonitorScreen() {
                           <span>{bucket.label}</span>
                           <span className="tnum text-text-tertiary">{bucket.alerts.length}</span>
                         </h2>
-                        {bucket.alerts.map((a) => (
-                          <AlertRow key={a.id} alert={a} onOpen={() => openAlert(a)} />
+                        {rollUpByPolicy(bucket.alerts).map((group) => (
+                          <div key={group.lead.id}>
+                            <AlertRow alert={group.lead} onOpen={() => openAlert(group.lead)} />
+                            {group.rest.length > 0 && (
+                              <PolicyRollUp alerts={group.rest} onOpen={openAlert} />
+                            )}
+                          </div>
                         ))}
                       </section>
                     ))}

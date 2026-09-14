@@ -57,11 +57,6 @@ export interface AttributeConflict {
 export type GovernanceStatus = 'governed' | 'ungoverned' | 'drift';
 
 /**
- * What put an identity into quarantine. The state is reachable three ways — a
- * Govern policy action, an admin acting from the identity panel, and a session
- * review — and a terminal state with no named producer is not auditable.
- */
-/**
  * What produced a containment: a Govern policy enforcing, or a person deciding.
  *
  * There is deliberately no third `session` kind. A session review is not an
@@ -85,6 +80,27 @@ export type QuarantineSource =
 export interface QuarantineRecord {
   at: string;
   by: QuarantineSource;
+}
+
+/**
+ * Which of the three DISPLAY outcomes a containment reads as — the axis Act >
+ * Quarantine filters on.
+ *
+ * This is NOT a data-model kind. `QuarantineSource` has exactly two and stays
+ * that way (act.test.ts guards the set): a session is evidence, not an actor.
+ * This union splits the `user` kind by whether a replay evidenced the decision,
+ * which is a presentation concern and lives here as one.
+ */
+export type ProducerFacet = 'policy' | 'person' | 'replay';
+
+/** The facet a containment reads as; see `producer` on `QuarantinedIdentity` (api.ts) for why it isn't read off the label. */
+export function producerFacet(source: QuarantineSource): ProducerFacet {
+  switch (source.kind) {
+    case 'policy':
+      return 'policy';
+    case 'user':
+      return source.viaSessionId ? 'replay' : 'person';
+  }
 }
 
 export interface Identity {
@@ -146,6 +162,16 @@ export interface Alert {
   baseline: 'learning' | 'established';
   baselineProgress?: { day: number; of: number };
   status: AlertStatus;
+  /**
+   * The Govern rule that raised this, when a rule did. Absent on a behavioral alert,
+   * which is what makes the two separable in the feed.
+   *
+   * `policyName` is STAMPED, not resolved on read -- the same choice `PolicyAction`
+   * makes and for the same reason: an alert records something that already happened,
+   * so renaming the rule afterwards must not rewrite what the feed says was raised.
+   * (A review flag is the opposite case -- see `ReviewFlag`.)
+   */
+  raisedBy?: { policyId: string; policyName: string };
   createdAt: string;
 }
 
@@ -561,6 +587,12 @@ export const AUDIT_ACTIONS = [
   'enabled password sign-in',
   'disabled password sign-in',
   'updated session policy',
+  // Personal delivery choices are filed under `user`, tenant-wide routing under
+  // `tenant`: an auditor asking "who stopped getting critical alerts" and one
+  // asking "where does this org send them" are running two different queries.
+  'updated notification preferences',
+  'updated notification routing',
+  'transferred ownership',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -602,6 +634,9 @@ export const ACTION_OBJECT: Record<AuditAction, AuditObject> = {
   'assigned role': 'user',
   'synced users from Entra': 'user',
   'connected cloud': 'cloud',
+  'updated notification preferences': 'user',
+  'updated notification routing': 'tenant',
+  'transferred ownership': 'tenant',
   'updated SSO config': 'tenant',
   'saved SAML configuration': 'tenant',
   'tested SAML sign-in': 'tenant',
@@ -642,13 +677,84 @@ export interface AuditEntry {
   detail?: string;
 } // append-only
 
+/**
+ * What kind of event raised a notification.
+ *
+ * A closed set because it is the join between the feed and a preference: a
+ * toggle can only suppress what it can name. Before this existed the
+ * preferences screen offered four switches with nothing to bind to, so every
+ * one of them was decorative.
+ */
+export const NOTIFICATION_CATEGORIES = [
+  'alert',
+  'rotation',
+  'policy',
+  'quarantine',
+  'system',
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+export const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
+  alert: 'Critical alerts',
+  // "Rotation activity", not "outcomes": the only rotation event this build
+  // raises is a start (`requestRotation`). Completion is simulated in the UI and
+  // has no server-side event to hook, so promising outcomes here would put the
+  // preference screen back to describing notifications nothing sends.
+  rotation: 'Rotation activity',
+  policy: 'Policy changes',
+  quarantine: 'Quarantine actions',
+  system: 'System notices',
+};
+
+/** Short label for the per-row chip in the feed, where the pref-row wording is too long. */
+export const NOTIFICATION_CATEGORY_CHIP: Record<NotificationCategory, string> = {
+  alert: 'Alert',
+  rotation: 'Rotation',
+  policy: 'Policy',
+  quarantine: 'Quarantine',
+  system: 'System',
+};
+
 export interface NotificationItem {
   id: string;
   at: string;
   severity: RiskBand | 'info';
+  category: NotificationCategory;
   title: string;
   read: boolean;
   href?: string;
+}
+
+/** Where one category's notifications are delivered for one person. */
+export interface NotificationChannels {
+  inApp: boolean;
+  email: boolean;
+}
+
+/** 0 = Sunday, matching `Date.getDay()`. */
+export type DigestDay = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export const DIGEST_DAY_LABELS: Record<DigestDay, string> = {
+  0: 'Sunday',
+  1: 'Monday',
+  2: 'Tuesday',
+  3: 'Wednesday',
+  4: 'Thursday',
+  5: 'Friday',
+  6: 'Saturday',
+};
+
+/**
+ * One person's delivery choices. Personal, so every role holds
+ * `notifications.self` and may edit their own.
+ *
+ * The digest carries no time zone: it is rendered against the reader's own
+ * resolved zone rather than stored, so a stored value cannot drift out of step
+ * with the browser and quietly describe a delivery time nobody gets.
+ */
+export interface NotificationPrefs {
+  categories: Record<NotificationCategory, NotificationChannels>;
+  digest: { enabled: boolean; day: DigestDay; hour: number };
 }
 
 export interface CloudConnection {
@@ -734,22 +840,6 @@ export interface ScimConfig {
   usersReceived: number;
 }
 
-/**
- * Tenant session and step-up policy.
- *
- * `mfaByRole` is deliberately absent: MFA requirement per role presupposes a
- * finalised permission matrix, which is still open, so the surface states the
- * intended policy read-only rather than letting an admin save one the
- * enforcement layer cannot honour.
- * // ASSUMPTION: enforcement is upstream; this records the policy, never applies it.
- */
-export interface SessionPolicy {
-  idleTimeoutMinutes: number;
-  absoluteSessionHours: number;
-  /** Re-authenticate before a sensitive action — distinct from merely confirming it. */
-  stepUpOnSensitive: boolean;
-}
-
 export interface Tenant {
   id: string;
   name: string;
@@ -760,7 +850,6 @@ export interface Tenant {
   scim: ScimConfig;
   /** Password sign-in for accounts Entra does not manage. The way back in. */
   passwordFallback: boolean;
-  sessionPolicy: SessionPolicy;
   createdAt: string;
 }
 

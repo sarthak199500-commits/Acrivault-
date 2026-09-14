@@ -143,7 +143,10 @@ export function SamlStepCard({ tenant, now, canManage }: { tenant: Tenant; now: 
 
       {!editing ? (
         <CardBody className="space-y-3">
-          <dl className="space-y-1 text-[length:var(--fs-small)] text-text-secondary">
+          {/* A plain stack, not a <dl>. These are two sentences, not
+              term/definition pairs — the element was here for `space-y-1` and
+              axe rightly flags a definition list with no dt or dd in it. */}
+          <div className="space-y-1 text-[length:var(--fs-small)] text-text-secondary">
             <div>Last successful sign-in {lastSignIn ? timeAgo(lastSignIn, now) : '— not yet tested'}</div>
             {cert && (
               <div className={daysLeft !== null && daysLeft <= CERT_WARN_DAYS ? 'text-warn-fg' : undefined}>
@@ -153,7 +156,7 @@ export function SamlStepCard({ tenant, now, canManage }: { tenant: Tenant; now: 
                   : ''}
               </div>
             )}
-          </dl>
+          </div>
           {status === 'waiting' && (
             <InlineAlert tone="warning" title="Not proven yet.">
               The fields are saved, but nobody has signed in with them. Test it before you rely on it.
