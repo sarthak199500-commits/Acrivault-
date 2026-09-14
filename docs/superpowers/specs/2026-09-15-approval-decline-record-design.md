@@ -26,8 +26,18 @@ An approval decision is unrecoverable from the UI the moment it is made.
    decision" banner on the requester's replay screen simply vanishes — visually
    identical to having been approved.
 
+4. **The decline dialog already promises more than the screen delivers.**
+   `ApprovalsScreen.tsx:238` tells the approver that the refusal is written to the
+   audit log "so the analyst who raised it can see that it was answered". That is
+   technically satisfiable — an Analyst holds `audit.view` — but only by leaving this
+   screen and running a full-text search on another one. The promise is real and
+   already made; it is simply cashed in an inconvenient place, and it says nothing
+   about *why*, because no why is recorded.
+
 **Objective:** record the reason for a decline and who declined it, for Security
 Admin and above. Point 3 is acknowledged but deliberately out of scope (below).
+Point 4 is resolved as a side effect: scoping decided rows so an Analyst sees their
+own makes the existing claim true on this screen rather than two screens away.
 
 ## Non-goals
 
@@ -181,6 +191,12 @@ when it offers more than one option — a menu of one is chrome that can never n
   `REASON_REQUIRED` unreachable through the UI by design; the API check remains as
   the enforcing boundary, and if it does fire it surfaces as an inline error beside
   the field rather than a toast.
+- The decline dialog's description (`ApprovalsScreen.tsx:238`) is rewritten. The
+  current sentence promises the analyst "can see that it was answered" without
+  mentioning a reason, because there was none to mention. It becomes: the identity is
+  left exactly as it is, and the reason, the refusal, and who made it are recorded on
+  the request and written to the audit log, so the analyst who raised it can see what
+  was decided and why. The promise is not new — only newly kept on this screen.
 
 ### Empty states — `approvalsEmptyCopy.ts`
 
@@ -211,10 +227,11 @@ timers — Radix dialogs deadlock `userEvent` otherwise.
 
 ## Flagged — not resolved by this design
 
-- **The requester still learns nothing.** No notification is sent on any decision, and
-  the replay banner still clears rather than resolving to an outcome. An Analyst
-  discovers a decline only by visiting this screen and selecting Declined. This is a
-  deliberate scope decision, not an oversight.
+- **The requester is still never told.** No notification is sent on any decision, and
+  the replay banner still clears rather than resolving to an outcome. An Analyst can
+  now *find* a decline and its reason — by visiting this screen and selecting
+  Declined — but nothing brings it to them. Pull, not push. A deliberate scope
+  decision, not an oversight.
 - **Required remark vs. the stale-row escape hatch.** Declining is the documented way
   to clear a row when the identity was contained by some other path (`api.ts:1393`).
   A mandatory rationale adds prose to a housekeeping action. Accepted as drawn;
