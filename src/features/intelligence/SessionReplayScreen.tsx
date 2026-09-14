@@ -235,7 +235,12 @@ function BlockDecision({ session, step }: { session: AgentSessionWithIdentity; s
       {canConfirm && (
         <Button
           size="sm"
-          variant="danger"
+          // Primary, not danger: confirming agrees with the policy and stops
+          // nothing new — it is the conservative outcome. Red on this screen
+          // means "this does something consequential" (Quarantine, and Override
+          // inside its dialog), and a red button directly under the red hold
+          // banner competed with the alarm it sits beneath.
+          variant="primary"
           loading={decide.isPending && !overriding}
           onClick={() =>
             decide.mutate(
