@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Unlink, GitCompareArrows, X, Table, Network, Cloudy } from 'lucide-react';
+import { Search, Unlink, GitCompareArrows, X, Table, Network, Cloudy, Flag } from 'lucide-react';
 import { NHI_TYPES, NHI_TYPE_LABELS, CLOUDS, IDENTITY_STATUSES, IDENTITY_STATUS_LABELS, type NhiType, type IdentityStatus } from '@/mocks/types';
 import type { IdentityFacetCounts } from '@/mocks/api';
 import { RISK_BAND_ORDER, bandMeta } from '@/lib/risk';
@@ -170,6 +170,17 @@ export function InventoryFilters({
           selected={filter.crossCloudOnly ?? false}
           onClick={filters.toggleCrossCloud}
           icon={<Cloudy className="h-3.5 w-3.5" />}
+        />
+        {/* Unlike its neighbours this is not a property of the identity — it says a
+            Govern rule matches it right now. It sits here anyway because that is what
+            an analyst is filtering for; the column says which rule, and the flag
+            clears itself when the rule stops matching. */}
+        <FilterPill
+          label="Flagged for review"
+          count={counts?.flagged}
+          selected={filter.flaggedOnly ?? false}
+          onClick={filters.toggleFlagged}
+          icon={<Flag className="h-3.5 w-3.5" />}
         />
         {filters.activeCount > 0 && (
           <button

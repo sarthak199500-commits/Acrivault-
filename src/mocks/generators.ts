@@ -331,7 +331,60 @@ const ALERT_TEMPLATES: { title: string; description: string; next: string }[] = 
   },
 ];
 
-export function generateAlerts(identities: Identity[], seed: number, now: Date): Alert[] {
+/**
+ * How many identities one Active `alert` rule raises for. A real rule raises on every
+ * match; the fixture scales to 50k identities, and one alert per match would bury the
+ * behavioral feed under a single rule. Capped so the per-rule roll-up has something to
+ * roll up without the feed becoming a policy report.
+ */
+const POLICY_ALERTS_PER_RULE = 4;
+
+/**
+ * Alerts raised by an Active `raise an alert` rule, as opposed to by the baseline.
+ *
+ * These carry no `baselineProgress` and are never `learning`: a rule match is a fact
+ * about the identity right now, not an observation the monitor is still calibrating.
+ */
+function policyRaisedAlerts(
+  identities: Identity[],
+  policies: Policy[],
+  rng: Rng,
+  now: Date,
+  startIndex: number,
+): Alert[] {
+  const out: Alert[] = [];
+  const rules = policies.filter(
+    (p) =>
+      p.status === 'active' &&
+      p.tokens.some((t) => t.kind === 'then' && t.subject === 'action' && t.value === 'alert'),
+  );
+  for (const rule of rules) {
+    const matched = identities.filter((i) => matchesPolicy(i, rule.tokens)).slice(0, POLICY_ALERTS_PER_RULE);
+    for (const identity of matched) {
+      const band = riskBand(identity.riskScore).band;
+      out.push({
+        id: `alr_${(startIndex + out.length).toString(36).padStart(5, '0')}`,
+        identityId: identity.id,
+        severity: band === 'minimal' ? 'low' : band,
+        title: `Matched “${rule.name}”`,
+        description: rule.plainEnglish,
+        recommendedNextStep: 'Open the rule to see everything it currently matches.',
+        baseline: 'established',
+        status: rng.weighted(['open', 'acknowledged'] as const, [8, 2]),
+        raisedBy: { policyId: rule.id, policyName: rule.name },
+        createdAt: new Date(now.getTime() - rng.int(0, 6) * 3600000).toISOString(),
+      });
+    }
+  }
+  return out;
+}
+
+export function generateAlerts(
+  identities: Identity[],
+  policies: Policy[],
+  seed: number,
+  now: Date,
+): Alert[] {
   const rng = new Rng(seed ^ 0x1234567);
   const candidates = identities.filter((i) => i.riskScore >= 55 || i.orphaned);
   const alerts: Alert[] = [];
@@ -354,6 +407,7 @@ export function generateAlerts(identities: Identity[], seed: number, now: Date):
       createdAt: new Date(now.getTime() - rng.int(0, 14) * 86400000 - rng.int(0, 86400000)).toISOString(),
     });
   }
+  alerts.push(...policyRaisedAlerts(identities, policies, rng, now, alerts.length));
   return alerts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -550,6 +604,33 @@ export function generatePolicies(identities: Identity[], seed: number, now: Date
         { kind: 'when', subject: 'type', operator: 'is', value: 'oauth-token' },
         { kind: 'and', subject: 'governanceStatus', operator: 'is', value: 'ungoverned' },
         { kind: 'then', subject: 'action', operator: 'set', value: 'quarantine' },
+      ],
+    },
+    {
+      // The one Active `review` rule. Flags are derived from the live match set, so
+      // without an Active review rule the Inventory's flag column and filter are
+      // dead UI in the demo -- and any count-based test over them passes vacuously.
+      name: 'Review ungoverned AI agents',
+      status: 'active',
+      tokens: [
+        { kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' },
+        { kind: 'and', subject: 'governanceStatus', operator: 'is', value: 'ungoverned' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+      ],
+    },
+    {
+      // The one Active `alert` rule -- see the review rule above for why an Active
+      // seed per action matters.
+      // Not scoped to AI agents: the fixture caps agent risk below 80, so an
+      // agent-scoped rule at this threshold is sound but matches nobody -- a dead
+      // seed that leaves the feed's policy partition empty while every test over it
+      // still passes. The name avoids the word "critical" because policy names reach
+      // the notification feed verbatim, where wording and severity must agree.
+      name: 'Alert on top-risk identities',
+      status: 'active',
+      tokens: [
+        { kind: 'when', subject: 'riskScore', operator: 'gte', value: '80' },
+        { kind: 'then', subject: 'action', operator: 'set', value: 'alert' },
       ],
     },
     {

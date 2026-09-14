@@ -42,7 +42,13 @@ const AGENT_HIGH = alert('ai-agent', 'high');
 const AGENT_CRITICAL = alert('ai-agent', 'critical');
 const AGENT_LEARNING = alert('ai-agent', 'high', 'learning');
 const KEY_HIGH = alert('api-key', 'high');
-const KEY_MEDIUM = alert('api-key', 'medium');
+// Exactly ONE policy-raised alert, on purpose: two from the same rule would collapse
+// behind a roll-up and drop a row out of the DOM, quietly changing every count the
+// identity-type tests above assert.
+const KEY_MEDIUM: AlertWithIdentity = {
+  ...alert('api-key', 'medium'),
+  raisedBy: { policyId: 'pol_0004', policyName: 'Alert on top-risk identities' },
+};
 const SVC_HIGH = alert('service-account', 'high');
 
 const ALERTS = [AGENT_HIGH, AGENT_CRITICAL, AGENT_LEARNING, KEY_HIGH, KEY_MEDIUM, SVC_HIGH];
@@ -187,5 +193,91 @@ describe('Monitor identity-type filter', () => {
     await user.click(screen.getByRole('button', { name: /show 1 alert/i }));
 
     expect(feed()).toEqual([AGENT_LEARNING.identityName]);
+  });
+});
+
+/**
+ * The alert-source filter, added alongside the identity type. A fourth dimension on the
+ * same URL and the same pill row is where the feed's two standing promises break
+ * quietly: "All" has to clear a key it was never written for, and the baseline strip's
+ * link has to drop a dimension that did not exist when it was written.
+ */
+describe('Monitor alert-source filter', () => {
+  it('narrows the feed to alerts a rule raised', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+
+    await user.click(screen.getByRole('button', { name: /^From a policy/ }));
+
+    expect(feed()).toEqual([KEY_MEDIUM.identityName]);
+    // All must stop claiming to be the active view the moment a source narrows it.
+    expect(screen.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('narrows to everything the baseline raised, defined as the absence of a rule', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+
+    await user.click(screen.getByRole('button', { name: /^Behavioral/ }));
+
+    expect(feed()).not.toContain(KEY_MEDIUM.identityName);
+    expect(feed()).toHaveLength(5);
+  });
+
+  it('counts both sources over the whole feed, so the pair always sums to All', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+
+    await user.click(screen.getByRole('button', { name: /^Critical/ }));
+
+    expect(screen.getByRole('button', { name: /^From a policy/ })).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /^Behavioral/ })).toHaveTextContent('5');
+  });
+
+  // The promise "All really clears" now spans four keys, not three.
+  it('clears the source filter when All is pressed', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+    await user.click(screen.getByRole('button', { name: /^From a policy/ }));
+    await pickType(user, 'API Key');
+    expect(feed()).toEqual([KEY_MEDIUM.identityName]);
+
+    await user.click(screen.getByRole('button', { name: /^All/ }));
+
+    expect(new URLSearchParams(search).toString()).toBe('');
+    expect(feed()).toHaveLength(6);
+  });
+
+  // Same reason severity and type are dropped: the strip advertises a count, and
+  // intersecting it with a source could land on fewer rows than promised, or none.
+  it('drops a source filter when the baseline link is followed', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+    await user.click(screen.getByRole('button', { name: /^From a policy/ }));
+
+    await user.click(screen.getByRole('button', { name: /show 1 alert/i }));
+
+    expect(feed()).toEqual([AGENT_LEARNING.identityName]);
+  });
+
+  // The type menu counts against what the other dimensions have already narrowed to.
+  // Source joins that scope, or the menu offers options that land on nothing.
+  it('counts each type within the active source', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await screen.findByText(SVC_HIGH.identityName);
+
+    await user.click(screen.getByRole('button', { name: /^From a policy/ }));
+    await user.click(await screen.findByRole('button', { name: /identity type/i }));
+
+    const row = (label: string) =>
+      screen.getByRole('checkbox', { name: label }).closest('label') as HTMLElement;
+    expect(row('API Key')).toHaveTextContent('1');
+    expect(row('AI Agent')).toHaveTextContent('0');
   });
 });

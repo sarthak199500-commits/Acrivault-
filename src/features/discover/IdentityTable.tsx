@@ -15,6 +15,7 @@ import {
   ChevronsUpDown,
   Unlink,
   GitCompareArrows,
+  Flag,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -25,7 +26,7 @@ import {
   type Identity,
   type SourceInstance,
 } from '@/mocks/types';
-import type { IdentitySort } from '@/mocks/api';
+import type { IdentityRow, IdentitySort } from '@/mocks/api';
 import { NOW } from '@/mocks/dataset';
 import { cn } from '@/lib/cn';
 import { pluralize, relativeDays } from '@/lib/format';
@@ -194,7 +195,7 @@ export function IdentityTable({
   onOpen,
   density,
 }: {
-  rows: Identity[];
+  rows: IdentityRow[];
   sort: IdentitySort;
   onSort: (col: SortCol) => void;
   selected: Set<string>;
@@ -444,6 +445,21 @@ export function IdentityTable({
                       </Tooltip>
                     )}
                     <CrossCloudBadge sources={identity.sources} />
+                    {/* Sits with the other markers rather than in a column of its own:
+                        the name cell is already where a row states its findings, and a
+                        ninth column would pay grid width for something most rows leave
+                        empty. Unlike its neighbours this is not a property of the
+                        identity — the tooltip names the rule, because without it the
+                        mark says an identity needs review and not why. */}
+                    {identity.flaggedBy.length > 0 && (
+                      <Tooltip
+                        content={`Flagged for review by ${identity.flaggedBy.map((f) => f.policyName).join(', ')}`}
+                      >
+                        <span className="inline-flex shrink-0 text-info-fg">
+                          <Flag className="h-3.5 w-3.5" aria-label="Flagged for review" />
+                        </span>
+                      </Tooltip>
+                    )}
                   </div>
                   {/* type */}
                   <div role="gridcell" className="flex min-w-0 items-center gap-1.5 text-[length:var(--fs-small)] text-text-secondary">

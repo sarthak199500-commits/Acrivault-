@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { AlertSource } from '@/mocks/api';
 import { NHI_TYPES, type NhiType, type RiskBand } from '@/mocks/types';
 
 const BANDS: RiskBand[] = ['critical', 'high', 'medium', 'low', 'minimal'];
@@ -10,7 +11,7 @@ const BANDS: RiskBand[] = ['critical', 'high', 'medium', 'low', 'minimal'];
  * of it, so clearing three keys with three calls lets the last write win and quietly
  * restores the first two.
  */
-const FILTER_KEYS = ['sev', 'itype', 'baseline'];
+const FILTER_KEYS = ['sev', 'itype', 'src', 'baseline'];
 
 /**
  * Identity type rides on `itype`, not `type`. FRS 3.7 asks the feed to carry the type
@@ -24,8 +25,8 @@ const TYPE_KEY = 'itype';
  * can deep-link into a filtered feed, the back button undoes it, and a triaging analyst
  * can share what they are looking at.
  *
- * Three orthogonal dimensions: severity, the identity's type, and whether the alert was
- * raised while its identity's baseline was still forming.
+ * Four orthogonal dimensions: severity, the identity's type, what raised the alert, and
+ * whether it was raised while its identity's baseline was still forming.
  */
 export function useMonitorFilters() {
   const [params, setParams] = useSearchParams();
@@ -36,6 +37,11 @@ export function useMonitorFilters() {
   }, [params]);
 
   const identityTypes = useMemo<NhiType[]>(() => parseTypes(params.get(TYPE_KEY)), [params]);
+
+  const source = useMemo<AlertSource | null>(() => {
+    const raw = params.get('src');
+    return raw === 'policy' || raw === 'behavior' ? raw : null;
+  }, [params]);
 
   const learningOnly = params.get('baseline') === 'learning';
 
@@ -72,6 +78,16 @@ export function useMonitorFilters() {
 
   const clearIdentityTypes = useCallback(() => write((next) => next.delete(TYPE_KEY)), [write]);
 
+  /** Narrow to alerts a rule raised, or to those the baseline raised. */
+  const setSource = useCallback(
+    (next: AlertSource | null) =>
+      write((params) => {
+        if (next) params.set('src', next);
+        else params.delete('src');
+      }),
+    [write],
+  );
+
   /**
    * Focus the alerts raised during a learning window. The other dimensions are cleared
    * rather than intersected: the strip's link states a count, and intersecting could
@@ -82,6 +98,7 @@ export function useMonitorFilters() {
       write((next) => {
         next.delete('sev');
         next.delete(TYPE_KEY);
+        next.delete('src');
         next.set('baseline', 'learning');
       }),
     [write],
@@ -94,7 +111,8 @@ export function useMonitorFilters() {
     [write],
   );
 
-  const anyActive = severity !== null || learningOnly || identityTypes.length > 0;
+  const anyActive =
+    severity !== null || learningOnly || identityTypes.length > 0 || source !== null;
 
   return {
     severity,
@@ -102,6 +120,8 @@ export function useMonitorFilters() {
     identityTypes,
     toggleIdentityType,
     clearIdentityTypes,
+    source,
+    setSource,
     learningOnly,
     showLearningOnly,
     clearLearningOnly,
