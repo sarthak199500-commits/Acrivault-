@@ -66,14 +66,14 @@ export function UsersToolbar({ filters, users }: { filters: Filters; users: User
         options={roleOptions}
         selected={filter.roles}
         onToggle={(v) => filters.toggleRole(v as RoleFilter)}
-        onClear={() => filter.roles.forEach((r) => filters.toggleRole(r))}
+        onClear={filters.clearRoles}
       />
       <FilterMenu
         label="Status"
         options={statusOptions}
         selected={filter.statuses}
         onToggle={(v) => filters.toggleStatus(v as UserStatus)}
-        onClear={() => filter.statuses.forEach((s) => filters.toggleStatus(s))}
+        onClear={filters.clearStatuses}
       />
 
       {filters.activeCount > 0 && (

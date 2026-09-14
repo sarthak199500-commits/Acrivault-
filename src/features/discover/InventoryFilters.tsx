@@ -101,28 +101,28 @@ export function InventoryFilters({
           options={typeOptions}
           selected={filter.types ?? []}
           onToggle={(v) => filters.toggleType(v as NhiType)}
-          onClear={() => (filter.types ?? []).forEach((t) => filters.toggleType(t))}
+          onClear={filters.clearTypes}
         />
         <FilterMenu
           label="Source"
           options={providerOptions}
           selected={filter.clouds ?? []}
           onToggle={(v) => filters.toggleCloud(v as (typeof CLOUDS)[number])}
-          onClear={() => (filter.clouds ?? []).forEach((c) => filters.toggleCloud(c))}
+          onClear={filters.clearClouds}
         />
         <FilterMenu
           label="Severity"
           options={riskOptions}
           selected={filter.bands ?? []}
           onToggle={(v) => filters.toggleBand(v as (typeof RISK_BAND_ORDER)[number])}
-          onClear={() => (filter.bands ?? []).forEach((b) => filters.toggleBand(b))}
+          onClear={filters.clearBands}
         />
         <FilterMenu
           label="Status"
           options={statusOptions}
           selected={filter.statuses ?? []}
           onToggle={(v) => filters.toggleStatus(v as IdentityStatus)}
-          onClear={() => (filter.statuses ?? []).forEach((s) => filters.toggleStatus(s))}
+          onClear={filters.clearStatuses}
         />
 
         <SavedViews
