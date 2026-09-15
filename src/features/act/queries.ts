@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { decideApproval, listApprovals, listQuarantined, requestApproval } from '@/mocks/api';
 import type { ApprovalOutcome } from '@/mocks/api';
+import { useAuthStore } from '@/stores/auth';
+import { useUiStore } from '@/stores/ui';
 
 export function useQuarantined() {
   return useQuery({ queryKey: ['quarantined'], queryFn: listQuarantined });
@@ -25,11 +27,24 @@ export function useQuarantined() {
  * `Kai Mensah · 4` would mean "4 within Declined" while looking like a fact
  * about the queue.
  *
- * What the actor may see is decided inside `listApprovals` from the current
- * actor, so there is no scope argument to key on.
+ * The ACTOR is in the key, though, because the rows themselves now depend on it:
+ * `listApprovals` hides other people's decided requests from anyone who cannot
+ * decide. Nothing invalidates React Query when the dev Role Switcher changes the
+ * role — it only writes to the ui store — so without this an admin could load
+ * the queue, switch to Analyst, and go on reading decided rows out of the cache
+ * that the Analyst is not entitled to. Caught driving the real screen.
+ *
+ * Keying by actor is NOT the per-status split this comment warns about: each
+ * viewer still gets one complete entry, so the counts computed over it remain
+ * counts over everything that viewer can see.
  */
 export function useApprovals() {
-  return useQuery({ queryKey: ['approvals'], queryFn: () => listApprovals() });
+  const role = useUiStore((s) => s.role);
+  const userId = useAuthStore((s) => s.userId);
+  return useQuery({
+    queryKey: ['approvals', userId, role],
+    queryFn: () => listApprovals(),
+  });
 }
 
 /**
