@@ -14,8 +14,6 @@ export const PRODUCER_LABELS: Record<ProducerFacet, string> = {
   replay: 'From a session replay',
 };
 
-export { MIN_SEARCH_CHARS };
-
 export interface QuarantineFilter {
   search: string;
   types: NhiType[];

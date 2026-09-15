@@ -6,8 +6,6 @@ import { MIN_SEARCH_CHARS } from '@/lib/filters';
 
 const REVIEW_STATES: SessionReviewState[] = ['open', 'reviewed'];
 
-export { MIN_SEARCH_CHARS };
-
 export interface SessionFilter {
   review: SessionReviewState | null;
   /** Spec 10.2's "Flagged only / All sessions" filter. */
