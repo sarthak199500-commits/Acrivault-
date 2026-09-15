@@ -765,12 +765,19 @@ export function savePolicy(input: PolicySaveInput): Promise<Policy> {
       existing.tokens = input.tokens;
       existing.plainEnglish = input.plainEnglish;
       existing.generatedCode = input.generatedCode;
-      existing.affectedCount = affectedCount;
       existing.updatedAt = new Date().toISOString();
       // An Active policy keeps enforcing its activated version until the edit is
       // re-tested and re-activated (FR-008); only authoring statuses move here.
+      //
+      // `affectedCount` is held back by the same rule, and for the same reason.
+      // Written unconditionally, saving a draft edit to an Active policy immediately
+      // changed the count shown against that Active row — a figure describing a rule
+      // that was not the one being enforced. Enforcement was never at risk
+      // (`activatePolicy` re-checks `testedTokens`), but in a compliance surface a
+      // number that disagrees with live behaviour is its own defect.
       if (existing.status !== 'active' && existing.status !== 'suspended') {
         existing.status = input.status;
+        existing.affectedCount = affectedCount;
       }
       return { ...existing };
     }
@@ -815,10 +822,15 @@ export function testPolicy(input: PolicySaveInput): Promise<PolicyTestResult> {
       policy.tokens = input.tokens;
       policy.plainEnglish = input.plainEnglish;
       policy.generatedCode = input.generatedCode;
-      policy.affectedCount = matched.length;
       policy.updatedAt = now;
-      // Testing never revives an Active/Suspended policy's enforcement state.
-      if (policy.status === 'draft' || policy.status === 'tested') policy.status = 'tested';
+      // Testing never revives an Active/Suspended policy's enforcement state — and
+      // by the same logic it must not move the count shown against one. A dry run
+      // proves what a rule *would* affect, not what is being enforced; only
+      // `activatePolicy` makes a rule live, and it refreshes the count there.
+      if (policy.status === 'draft' || policy.status === 'tested') {
+        policy.status = 'tested';
+        policy.affectedCount = matched.length;
+      }
     } else {
       policy = {
         id: `pol_${Math.random().toString(36).slice(2, 8)}`,
@@ -870,6 +882,13 @@ export function activatePolicy(id: string): Promise<Policy> {
     policy.status = 'active';
     policy.updatedAt = now;
     policy.activatedAt ??= now;
+    // Activation is the moment this rule becomes the enforced one, so it is the
+    // moment its count becomes true. `savePolicy` and `testPolicy` deliberately
+    // leave the count alone once a policy is Active or Suspended; this is the
+    // single place it is refreshed for them. The invariant that buys: on an
+    // Active or Suspended policy, `affectedCount` always describes the rule
+    // actually in force — never an unactivated edit.
+    policy.affectedCount = affectedFor(policy.tokens);
     appendAudit(
       reactivating ? 'reactivated policy' : 'activated policy',
       policy.name,
