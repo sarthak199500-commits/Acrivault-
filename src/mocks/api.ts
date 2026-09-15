@@ -1289,12 +1289,27 @@ export interface ApprovalWithContext extends ApprovalRequest {
   requesterName: string;
   /** Display label, or an em dash where Entra sent a person but nobody has given them a role. */
   requesterRole: string;
+  /**
+   * Who decided, resolved the same way. Present exactly when `decided` is.
+   *
+   * Resolved on READ rather than stamped, matching `quarantineLabel` above — the
+   * closest analogue, and also a historical record. A decision is a fact about
+   * what happened, but the NAME attached to it is a fact about a person, and the
+   * useful one is their current name, not the one they had that afternoon.
+   */
+  deciderName?: string;
+  deciderRole?: string;
 }
 
 function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
   const ds = getDataset();
   const identity = ds.identityById.get(request.identityId);
   const user = ds.users.find((u) => u.id === request.requestedBy);
+  // Bound to a local const so the narrowing survives into the spread below;
+  // a narrowed property access does not (same reason quarantineLabel binds
+  // `record.by`), and a non-null assertion is banned.
+  const decided = request.decided;
+  const decider = decided ? ds.users.find((u) => u.id === decided.by) : undefined;
   return {
     ...request,
     identityName: identity?.name ?? request.identityId,
@@ -1308,18 +1323,34 @@ function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
     // quarantineLabel above.
     requesterName: !user || user.status === 'deleted' ? 'Removed user' : user.name,
     requesterRole: user && user.role ? ROLE_LABELS[user.role] : '—',
+    ...(decided
+      ? {
+          deciderName: !decider || decider.status === 'deleted' ? 'Removed user' : decider.name,
+          deciderRole: decider && decider.role ? ROLE_LABELS[decider.role] : '—',
+        }
+      : {}),
   };
 }
 
 /**
  * The queue, newest-first. `status` omitted returns every request, whatever its
  * state, so a decided one stays auditable rather than vanishing.
+ *
+ * PENDING rows are the shared queue: a proposer is promised sight of "what is
+ * waiting" (the RoleRestricted copy on the screen says so), and that is
+ * unchanged. A DECIDED row is a record, and below Security Admin you see only
+ * the ones you raised. The scope is applied HERE rather than in the component
+ * and takes no parameter, so there is no argument a screen could pass — or
+ * forget to pass — that would widen it.
  */
 export function listApprovals(status?: ApprovalStatus): Promise<ApprovalWithContext[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
+    const actor = currentActor();
+    const seesEveryDecision = can(actor.role, 'session.quarantine');
     return getDataset()
       .approvals.filter((a) => !status || a.status === status)
+      .filter((a) => a.status === 'pending' || seesEveryDecision || a.requestedBy === actor.id)
       .map(withApprovalContext)
       .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
   });
@@ -1394,6 +1425,17 @@ export function requestApproval(input: {
 }
 
 /**
+ * What an approver decided, and the evidence the decision has to carry.
+ *
+ * A union rather than `(id, decision, note?)`: the asymmetry between the two
+ * outcomes is real — an approval's record is the containment it produces, a
+ * refusal's record is the sentence the approver writes — and a union makes the
+ * compiler hold that asymmetry instead of a reviewer. `note` cannot be passed on
+ * an approval and cannot be omitted on a decline.
+ */
+export type ApprovalOutcome = { decision: 'approved' } | { decision: 'declined'; note: string };
+
+/**
  * Approve or decline a pending request — the second pair of hands.
  *
  * Approving runs the SAME containment a direct quarantine does (containIdentity
@@ -1402,10 +1444,7 @@ export function requestApproval(input: {
  * Declining does not touch the identity at all — the request is answered and
  * nothing is enforced.
  */
-export function decideApproval(
-  id: string,
-  decision: 'approved' | 'declined',
-): Promise<ApprovalRequest> {
+export function decideApproval(id: string, outcome: ApprovalOutcome): Promise<ApprovalRequest> {
   return respond(() => {
     const ds = getDataset();
     const request = ds.approvals.find((a) => a.id === id);
@@ -1417,21 +1456,35 @@ export function decideApproval(
       );
     }
     assertActorCan('session.quarantine');
+
+    // Validated BEFORE anything is written. The union already stops a MISSING
+    // note at compile time; this catches the whitespace-only string a textarea
+    // can still produce, and it throws while the request is still untouched — a
+    // refusal nobody can read the reason for must not be half-recorded.
+    const note = outcome.decision === 'declined' ? outcome.note.trim() : undefined;
+    if (outcome.decision === 'declined' && !note) {
+      throw new MockApiError('A reason is required to decline a request.', 'REASON_REQUIRED');
+    }
+
     const identity = findAgent(request.identityId);
 
     // Approving an already-contained identity would overwrite its existing
     // QuarantineRecord and reassign responsibility for a containment this
     // approver did not produce. Declining stays available, and is how the stale
     // row gets cleared.
-    if (decision === 'approved' && identity.status === 'quarantined') {
+    if (outcome.decision === 'approved' && identity.status === 'quarantined') {
       throw new MockApiError(
         `${identity.name} is already quarantined. Decline this request to clear it.`,
         'ALREADY_QUARANTINED',
       );
     }
 
-    request.status = decision;
-    request.decided = { by: currentActor().id, at: new Date().toISOString() };
+    request.status = outcome.decision;
+    request.decided = {
+      by: currentActor().id,
+      at: new Date().toISOString(),
+      ...(note ? { note } : {}),
+    };
 
     // `AgentSession.quarantineRecommendedAt` marks an OPEN recommendation — the
     // replay screen renders it as "awaiting a decision in Act > Approvals".
@@ -1447,11 +1500,16 @@ export function decideApproval(
     // The authorization is written BEFORE the containment so the log, which is
     // newest-first, reads containment-above-decision — the order they happened.
     appendAudit(
-      decision === 'approved' ? 'approved quarantine request' : 'declined quarantine request',
+      outcome.decision === 'approved'
+        ? 'approved quarantine request'
+        : 'declined quarantine request',
       identity.name,
       [
         `Request ${request.id}, raised by ${ds.users.find((u) => u.id === request.requestedBy)?.email ?? 'a removed user'}.`,
-        decision === 'declined' ? 'The identity was left as it was.' : null,
+        outcome.decision === 'declined' ? 'The identity was left as it was.' : null,
+        // Same shape requestApproval uses for the requester's reason, so the two
+        // halves of one conversation read alike in the log.
+        note ? `Reason: ${note}` : null,
       ]
         .filter(Boolean)
         .join(' '),
@@ -1460,7 +1518,9 @@ export function decideApproval(
     // containIdentity), but the evidence they granted it on is the requester's
     // replay. The session already reached the queue on the request -- before
     // this it stopped there, and the containment cited nothing.
-    if (decision === 'approved') containIdentity(identity, request.reason, request.fromSessionId);
+    if (outcome.decision === 'approved') {
+      containIdentity(identity, request.reason, request.fromSessionId);
+    }
     return { ...request };
   });
 }

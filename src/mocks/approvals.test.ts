@@ -1,9 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getDataset } from './dataset';
 import { decideApproval, listApprovals, listAudit, quarantineAgent, requestApproval } from './api';
 import type { Identity } from './types';
 import { can } from '@/lib/permissions';
-import { CURRENT_USER_ID } from '@/stores/auth';
+import { CURRENT_USER_ID, useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 
 beforeAll(() => useUiStore.getState().setLatency(0));
@@ -11,7 +11,23 @@ beforeAll(() => useUiStore.getState().setLatency(0));
 // Every test that decides a request needs a role holding `session.quarantine`;
 // every test that raises one needs `session.quarantineRecommend`. Security Admin
 // holds both, so it is the default here and the exceptions are explicit.
-beforeEach(() => useUiStore.getState().setRole('security-admin'));
+//
+// `useAuthStore` is reset here too, not just `useUiStore`: it is the SAME kind
+// of module-level state shared across every test in this file, and the "who can
+// see a decided request" describe below is the first to call `signIn` on it.
+// Resetting before every test means one that forgets to sign back out cannot
+// leave the NEXT test running as the wrong person -- belt to the `afterEach`
+// below's suspenders, not a replacement for it, since a test that throws before
+// its own cleanup still needs one of the two to run.
+beforeEach(() => {
+  useUiStore.getState().setRole('security-admin');
+  useAuthStore.getState().signIn(CURRENT_USER_ID);
+});
+
+// Cleans up immediately after a test that signed in as someone else, rather
+// than waiting for the next test's `beforeEach` to paper over it -- the same
+// reasoning, applied on the other side of the boundary.
+afterEach(() => useAuthStore.getState().signIn(CURRENT_USER_ID));
 
 /**
  * An identity a quarantine could actually be proposed for: not already
@@ -163,8 +179,12 @@ describe('Act > Approvals — deciding a request', () => {
   it('refuses an Analyst, who may propose but not decide', async () => {
     useUiStore.getState().setRole('analyst');
     const created = await requestApproval({ identityId: pickCandidate().id });
-    await expect(decideApproval(created.id, 'approved')).rejects.toThrow(/permission/i);
-    await expect(decideApproval(created.id, 'declined')).rejects.toThrow(/permission/i);
+    await expect(decideApproval(created.id, { decision: 'approved' })).rejects.toThrow(
+      /permission/i,
+    );
+    await expect(
+      decideApproval(created.id, { decision: 'declined', note: 'Not my call to make.' }),
+    ).rejects.toThrow(/permission/i);
     // The refusal must not have half-applied.
     expect(getDataset().approvals.find((a) => a.id === created.id)?.status).toBe('pending');
   });
@@ -178,7 +198,7 @@ describe('Act > Approvals — deciding a request', () => {
     const row = (await listApprovals('pending')).find((a) => a.requestedBy !== CURRENT_USER_ID);
     if (!row) throw new Error('fixture: expected a seeded request raised by someone else');
 
-    const decided = await decideApproval(row.id, 'approved');
+    const decided = await decideApproval(row.id, { decision: 'approved' });
     expect(decided.status).toBe('approved');
     expect(decided.decided?.by).toBe(CURRENT_USER_ID);
     expect(typeof decided.decided?.at).toBe('string');
@@ -190,7 +210,7 @@ describe('Act > Approvals — deciding a request', () => {
 
   it('audits the authorization alongside the containment it authorized', async () => {
     const [row] = await listApprovals('pending');
-    await decideApproval(row.id, 'approved');
+    await decideApproval(row.id, { decision: 'approved' });
 
     const entries = await listAudit();
     // Newest-first: the containment, then the decision that authorized it.
@@ -202,7 +222,10 @@ describe('Act > Approvals — deciding a request', () => {
 
   it('leaves the identity untouched when declined, and audits the refusal', async () => {
     const [row] = await listApprovals('pending');
-    const decided = await decideApproval(row.id, 'declined');
+    const decided = await decideApproval(row.id, {
+      decision: 'declined',
+      note: 'Owner is accountable; leaving it in place.',
+    });
 
     expect(decided.status).toBe('declined');
     expect(decided.decided?.by).toBe(CURRENT_USER_ID);
@@ -217,13 +240,22 @@ describe('Act > Approvals — deciding a request', () => {
 
   it('refuses a second decision on the same request', async () => {
     const [row] = await listApprovals('pending');
-    await decideApproval(row.id, 'declined');
-    await expect(decideApproval(row.id, 'approved')).rejects.toThrow(/already decided/i);
-    await expect(decideApproval(row.id, 'declined')).rejects.toThrow(/already decided/i);
+    await decideApproval(row.id, { decision: 'declined', note: 'Clearing a stale row.' });
+    await expect(decideApproval(row.id, { decision: 'approved' })).rejects.toThrow(
+      /already decided/i,
+    );
+    // Same note as above deliberately: this call is rejected for being already
+    // decided, not for the note being wrong, and a different note here would
+    // leave it ambiguous which check fired.
+    await expect(
+      decideApproval(row.id, { decision: 'declined', note: 'Clearing a stale row.' }),
+    ).rejects.toThrow(/already decided/i);
   });
 
   it('refuses a decision on a request that does not exist', async () => {
-    await expect(decideApproval('apr_nope', 'approved')).rejects.toThrow(/not found/i);
+    await expect(decideApproval('apr_nope', { decision: 'approved' })).rejects.toThrow(
+      /not found/i,
+    );
   });
 
   // Approving would otherwise overwrite the existing QuarantineRecord and
@@ -238,17 +270,25 @@ describe('Act > Approvals — deciding a request', () => {
     await quarantineAgent(target.id);
     const producedAt = getDataset().identityById.get(target.id)?.quarantine?.at;
 
-    await expect(decideApproval(created.id, 'approved')).rejects.toThrow(/already quarantined/i);
+    await expect(decideApproval(created.id, { decision: 'approved' })).rejects.toThrow(
+      /already quarantined/i,
+    );
     expect(getDataset().identityById.get(target.id)?.quarantine?.at).toBe(producedAt);
 
-    const declined = await decideApproval(created.id, 'declined');
+    const declined = await decideApproval(created.id, {
+      decision: 'declined',
+      note: 'Already contained by policy; clearing the row.',
+    });
     expect(declined.status).toBe('declined');
   });
 
   it('moves a decided request out of the pending list and into its own status bucket', async () => {
     const before = await listApprovals('pending');
     const [row] = before;
-    await decideApproval(row.id, 'declined');
+    await decideApproval(row.id, {
+      decision: 'declined',
+      note: 'Already contained; clearing the row.',
+    });
 
     const after = await listApprovals('pending');
     expect(after.some((a) => a.id === row.id)).toBe(false);
@@ -294,7 +334,7 @@ describe('Act > Approvals - the evidence an approval was granted on', () => {
   it('records the session the request was raised from, not just the approver', async () => {
     const { identity, session } = pickReplayCandidate();
     const request = await requestApproval({ identityId: identity.id, fromSessionId: session.id });
-    await decideApproval(request.id, 'approved');
+    await decideApproval(request.id, { decision: 'approved' });
 
     const record = getDataset().identityById.get(identity.id)?.quarantine;
     expect(record?.by).toEqual({
@@ -307,9 +347,171 @@ describe('Act > Approvals - the evidence an approval was granted on', () => {
   it('cites no session when the request was raised outside a replay', async () => {
     const identity = pickCandidate();
     const request = await requestApproval({ identityId: identity.id });
-    await decideApproval(request.id, 'approved');
+    await decideApproval(request.id, { decision: 'approved' });
 
     const record = getDataset().identityById.get(identity.id)?.quarantine;
     expect(Object.keys(record?.by ?? {}).sort()).toEqual(['kind', 'userId']);
+  });
+});
+
+describe('Act > Approvals — the decline reason', () => {
+  it('stores the approver’s reason on the request and writes it to the audit log', async () => {
+    const identity = pickCandidate();
+    useUiStore.getState().setRole('analyst');
+    const created = await requestApproval({ identityId: identity.id });
+    useUiStore.getState().setRole('security-admin');
+
+    const decided = await decideApproval(created.id, {
+      decision: 'declined',
+      note: 'Owner found in the CMDB; handover in flight.',
+    });
+
+    expect(decided.status).toBe('declined');
+    expect(decided.decided?.note).toBe('Owner found in the CMDB; handover in flight.');
+
+    // NOTE: the plan draft that specified this test named the field `e.details`;
+    // the real AuditEntry field (src/mocks/types.ts) is `detail` (singular), and
+    // listAudit() takes an optional AuditFilter rather than nothing. Adapted both
+    // below rather than left to fail against a field that doesn't exist.
+    const entry = (await listAudit()).find((e) => e.detail?.includes(created.id));
+    if (!entry) throw new Error('expected an audit entry naming the request');
+    expect(entry.action).toBe('declined quarantine request');
+    expect(entry.detail).toContain('Owner found in the CMDB; handover in flight.');
+  });
+
+  it('refuses a blank reason without half-deciding the request', async () => {
+    const identity = pickCandidate();
+    useUiStore.getState().setRole('analyst');
+    const created = await requestApproval({ identityId: identity.id });
+    useUiStore.getState().setRole('security-admin');
+
+    const auditBefore = (await listAudit()).length;
+    await expect(
+      decideApproval(created.id, { decision: 'declined', note: '   ' }),
+    ).rejects.toThrow(/reason is required/i);
+
+    // Nothing may have moved: a decline that cannot be recorded must not happen.
+    const still = getDataset().approvals.find((a) => a.id === created.id);
+    expect(still?.status).toBe('pending');
+    expect(still?.decided).toBeUndefined();
+    expect((await listAudit()).length).toBe(auditBefore);
+  });
+
+  it('records an approval with no note, and still contains the identity', async () => {
+    const identity = pickCandidate();
+    useUiStore.getState().setRole('analyst');
+    const created = await requestApproval({ identityId: identity.id });
+    useUiStore.getState().setRole('security-admin');
+
+    const decided = await decideApproval(created.id, { decision: 'approved' });
+
+    expect(decided.status).toBe('approved');
+    expect(decided.decided?.note).toBeUndefined();
+    expect(getDataset().identityById.get(identity.id)?.status).toBe('quarantined');
+  });
+});
+
+describe('Act > Approvals — who can see a decided request', () => {
+  /**
+   * Raises a pending request while signed in as someone OTHER than
+   * CURRENT_USER_ID, so "someone else's row" is data this test creates rather
+   * than a scarce seeded one several tests would have to compete for.
+   *
+   * An earlier version of this describe mined `generateApprovals`'s 3 seeded
+   * rows for a `requestedBy !== CURRENT_USER_ID` match instead. That ran out:
+   * the seed's proposer rotation happens to cycle one of its 3 slots onto
+   * CURRENT_USER_ID itself, leaving only 2 candidates, and an earlier describe
+   * in this file already claims one of those before this one runs — one
+   * fixture row cannot cover the 3 distinct "someone else, still pending" rows
+   * these four tests collectively need. `useAuthStore.getState().signIn`
+   * sidesteps the scarcity entirely: unlike the role switcher (which only
+   * changes `currentActor().role`), it genuinely changes `currentActor().id`,
+   * so `requestApproval` records a REAL other person as `requestedBy`.
+   *
+   * The other user is read off the dataset with the same filter
+   * `generateApprovals` uses for its own proposers — active, holds
+   * `session.quarantineRecommend` — plus excluding CURRENT_USER_ID, rather than
+   * a hardcoded id: hardcoding one is exactly the coupling to the seed's exact
+   * shape that ran the fixture-mining version dry.
+   */
+  async function raiseSomeoneElsesRequest(): Promise<string> {
+    const other = getDataset().users.find(
+      (u) =>
+        u.id !== CURRENT_USER_ID &&
+        u.status === 'active' &&
+        u.role !== null &&
+        can(u.role, 'session.quarantineRecommend'),
+    );
+    if (!other || !other.role) {
+      throw new Error(
+        'fixture: expected an active user other than CURRENT_USER_ID holding session.quarantineRecommend',
+      );
+    }
+    // Bound to a local const for the same reason withApprovalContext binds
+    // `decided` in api.ts: narrowing `other.role` doesn't survive being read
+    // again after the `signIn` call below.
+    const role = other.role;
+    const identity = pickCandidate();
+    const priorRole = useUiStore.getState().role;
+    useAuthStore.getState().signIn(other.id);
+    useUiStore.getState().setRole(role);
+    try {
+      const created = await requestApproval({ identityId: identity.id });
+      return created.id;
+    } finally {
+      // Runs even if requestApproval throws — a half-raised request must not
+      // leave the file signed in as someone else.
+      useAuthStore.getState().signIn(CURRENT_USER_ID);
+      useUiStore.getState().setRole(priorRole);
+    }
+  }
+
+  it('shows every decided request to a role that can decide', async () => {
+    const id = await raiseSomeoneElsesRequest();
+    await decideApproval(id, { decision: 'declined', note: 'Owner is accountable; leaving it.' });
+
+    const rows = await listApprovals();
+    expect(rows.some((a) => a.id === id)).toBe(true);
+  });
+
+  it('hides another user’s decided request from an Analyst, but keeps their own', async () => {
+    const theirs = await raiseSomeoneElsesRequest();
+    await decideApproval(theirs, { decision: 'declined', note: 'Owner is accountable.' });
+
+    const identity = pickCandidate();
+    useUiStore.getState().setRole('analyst');
+    const mine = await requestApproval({ identityId: identity.id });
+    useUiStore.getState().setRole('security-admin');
+    await decideApproval(mine.id, { decision: 'declined', note: 'Risk is inside appetite.' });
+
+    useUiStore.getState().setRole('analyst');
+    const rows = await listApprovals();
+    expect(rows.some((a) => a.id === mine.id)).toBe(true);
+    expect(rows.some((a) => a.id === theirs)).toBe(false);
+  });
+
+  it('still shows an Analyst every PENDING request, whoever raised it', async () => {
+    const theirs = await raiseSomeoneElsesRequest();
+    useUiStore.getState().setRole('analyst');
+    const rows = await listApprovals('pending');
+    expect(rows.some((a) => a.id === theirs)).toBe(true);
+  });
+
+  it('resolves who decided, so the row can say more than a user id', async () => {
+    const id = await raiseSomeoneElsesRequest();
+    await decideApproval(id, { decision: 'declined', note: 'Handover in flight.' });
+
+    const row = (await listApprovals('declined')).find((a) => a.id === id);
+    if (!row) throw new Error('expected the decided row back');
+    expect(row.deciderName).toBe(getDataset().users.find((u) => u.id === CURRENT_USER_ID)?.name);
+    // Tenant Admin, not Security Admin: `deciderRole` resolves from the
+    // DECIDER'S STORED profile role (CURRENT_USER_ID / Alex Kim is seeded as
+    // 'tenant-admin' in generators.ts), the same way `requesterRole` already
+    // does — never from whatever the dev role switcher is previewing at the
+    // moment the decision is made. The switcher changes what `currentActor()`
+    // is ALLOWED to do; it was never wired to change what a person's profile
+    // says about them, and `withApprovalContext` was never asked to resolve it
+    // that way either.
+    expect(row.deciderRole).toBe('Tenant Admin');
   });
 });

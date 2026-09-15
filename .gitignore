@@ -29,3 +29,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Brainstorming companion session state (mockups + server scratch). Machine-local.
+.superpowers/

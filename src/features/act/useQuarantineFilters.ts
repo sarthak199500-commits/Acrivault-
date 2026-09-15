@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { NHI_TYPES, type NhiType, type ProducerFacet } from '@/mocks/types';
+import { MIN_SEARCH_CHARS } from '@/lib/filters';
 
 export type { ProducerFacet };
 
@@ -12,9 +13,6 @@ export const PRODUCER_LABELS: Record<ProducerFacet, string> = {
   person: 'Person',
   replay: 'From a session replay',
 };
-
-/** Borrowed from the session list: don't run a search until it can narrow anything. */
-export const MIN_SEARCH_CHARS = 2;
 
 export interface QuarantineFilter {
   search: string;
