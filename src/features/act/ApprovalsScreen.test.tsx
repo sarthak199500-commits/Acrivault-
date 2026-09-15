@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,9 +36,22 @@ const DECLINED: ApprovalWithContext = {
   deciderRole: 'Security Admin',
 };
 
+/**
+ * Role-aware on purpose. The real `listApprovals` hides other people's decided
+ * requests from anyone without `session.quarantine`; that rule is tested against
+ * the real dataset in mocks/approvals.test.ts. What this double exists to expose
+ * is the SCREEN's half of it — whether the queue refetches when the acting role
+ * changes, or goes on rendering rows fetched under the previous one. It reads
+ * the real permission matrix rather than hardcoding which roles qualify, so it
+ * cannot drift from the rule it stands in for.
+ */
 vi.mock('@/mocks/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/mocks/api')>()),
-  listApprovals: () => Promise.resolve([PENDING, DECLINED]),
+  listApprovals: async () => {
+    const { useUiStore: store } = await import('@/stores/ui');
+    const { can } = await import('@/lib/permissions');
+    return can(store.getState().role, 'session.quarantine') ? [PENDING, DECLINED] : [PENDING];
+  },
 }));
 
 function renderScreen(path = '/act/approvals') {
@@ -81,6 +94,31 @@ describe('Act > Approvals', () => {
     const row = (await screen.findByText('svc-legacy-etl-runner')).closest('li');
     if (!row) throw new Error('expected the declined row');
     expect(within(row).queryByRole('button', { name: /decline/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Regression, found by driving the real screen rather than by any test here.
+   * `listApprovals` became actor-dependent, but nothing invalidates React Query
+   * when the dev Role Switcher changes role — it only writes to the ui store.
+   * An admin could load the queue, switch to Analyst, and go on reading decided
+   * rows out of the cache that the Analyst is not entitled to see.
+   */
+  it('refetches when the viewing role changes rather than serving the old role’s rows', async () => {
+    renderScreen('/act/approvals?status=all');
+    expect(await screen.findByText('svc-legacy-etl-runner')).toBeInTheDocument();
+
+    act(() => useUiStore.getState().setRole('analyst'));
+
+    // Both assertions inside one waitFor: the declined row disappears the moment
+    // the refetch starts and the boundary swaps in its skeleton, so waiting only
+    // on its absence passes during the loading state — before the re-scoped rows
+    // have actually arrived, which is the thing worth proving.
+    await waitFor(() => {
+      expect(screen.queryByText('svc-legacy-etl-runner')).not.toBeInTheDocument();
+      // Pending is unaffected: it is the shared queue, and a proposer is
+      // promised sight of what is waiting.
+      expect(screen.getByText('svc-billing-sync-prod')).toBeInTheDocument();
+    });
   });
 
   it('will not let a decline through without a reason', async () => {
