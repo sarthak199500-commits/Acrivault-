@@ -473,6 +473,73 @@ describe('FR-005 · test-before-activate', () => {
   });
 });
 
+describe('affectedCount never runs ahead of enforcement', () => {
+  /** A rule matching every AI Agent; distinct match count from the orphan rule below. */
+  const agents: PolicyToken[] = [
+    { kind: 'when', subject: 'type', operator: 'is', value: 'ai-agent' },
+    { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+  ];
+  const orphans: PolicyToken[] = [
+    { kind: 'when', subject: 'orphaned', operator: 'is', value: 'true' },
+    { kind: 'then', subject: 'action', operator: 'set', value: 'review' },
+  ];
+
+  /** Activate a policy on `agents` and hand back its live count. */
+  async function activeOnAgents(name: string) {
+    const { policy } = await testPolicy(draft(name, agents));
+    const active = await activatePolicy(policy.id);
+    return active;
+  }
+
+  it('reports the activated rule, not a saved draft edit', async () => {
+    const active = await activeOnAgents('Active then edited');
+    expect(active.affectedCount).toBe(matchCount(agents));
+
+    // Edit to a rule with a genuinely different match count, and save without testing.
+    expect(matchCount(orphans)).not.toBe(matchCount(agents));
+    const edited = await savePolicy({
+      ...draft('Active then edited', orphans),
+      id: active.id,
+      status: 'tested',
+    });
+
+    expect(edited.status).toBe('active');
+    expect(edited.affectedCount).toBe(matchCount(agents));
+  });
+
+  it('reports the activated rule, not a dry run of an edit', async () => {
+    const active = await activeOnAgents('Active then re-tested');
+
+    // A dry run proves what a rule *would* affect. It must not move the count on a
+    // policy whose enforcement has not changed.
+    const { policy } = await testPolicy({ ...draft('Active then re-tested', orphans), id: active.id });
+
+    expect(policy.status).toBe('active');
+    expect(policy.affectedCount).toBe(matchCount(agents));
+  });
+
+  it('catches up the moment the edit is activated', async () => {
+    const active = await activeOnAgents('Active then re-activated');
+    await savePolicy({ ...draft('Active then re-activated', orphans), id: active.id, status: 'tested' });
+    await testPolicy({ ...draft('Active then re-activated', orphans), id: active.id });
+
+    // Suspend so activation is legal again, then re-activate the edited rule.
+    await suspendPolicy(active.id);
+    const reactivated = await activatePolicy(active.id);
+
+    expect(reactivated.status).toBe('active');
+    expect(reactivated.affectedCount).toBe(matchCount(orphans));
+  });
+
+  it('still tracks every edit while a policy is a draft', async () => {
+    const saved = await savePolicy(draft('Draft tracks edits', agents));
+    expect(saved.affectedCount).toBe(matchCount(agents));
+
+    const edited = await savePolicy({ ...draft('Draft tracks edits', orphans), id: saved.id });
+    expect(edited.affectedCount).toBe(matchCount(orphans));
+  });
+});
+
 // FR-006 — lifecycle actions are gated server-side, not just hidden in the UI.
 describe('FR-006 · lifecycle actions are role-gated in the API', () => {
   it('forbids an analyst from activating a tested policy', async () => {
