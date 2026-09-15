@@ -15,6 +15,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = 'Cancel',
   confirmVariant = 'primary',
+  confirmDisabled,
   pending,
   onConfirm,
   children,
@@ -26,6 +27,13 @@ export function ConfirmDialog({
   confirmLabel: string;
   cancelLabel?: string;
   confirmVariant?: ButtonVariant;
+  /**
+   * Hold the confirm button closed until `children` are in a state worth
+   * confirming — a dialog that collects something before it acts (a required
+   * reason, an acknowledgement) has nothing to submit until then. Separate from
+   * `pending`, which means the submit is already in flight.
+   */
+  confirmDisabled?: boolean;
   pending?: boolean;
   onConfirm: () => void;
   children?: ReactNode;
@@ -42,7 +50,12 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={pending}>
             {cancelLabel}
           </Button>
-          <Button variant={confirmVariant} loading={pending} onClick={onConfirm}>
+          <Button
+            variant={confirmVariant}
+            loading={pending}
+            disabled={confirmDisabled}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </Button>
         </>

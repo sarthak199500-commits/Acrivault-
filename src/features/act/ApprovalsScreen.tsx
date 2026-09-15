@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardCheck, ShieldX, Sparkles, UserRound } from 'lucide-react';
+import { ClipboardCheck, Gavel, ShieldX, Sparkles, UserRound } from 'lucide-react';
 import { useApprovals, useDecideApproval } from './queries';
-import type { ApprovalWithContext } from '@/mocks/api';
+import { ApprovalsToolbar } from './ApprovalsToolbar';
+import { applyApprovalFilter, useApprovalFilters } from './useApprovalFilters';
+import { approvalsEmptyCopy } from './approvalsEmptyCopy';
+import type { ApprovalOutcome, ApprovalWithContext } from '@/mocks/api';
 import { NHI_TYPE_LABELS } from '@/mocks/types';
 import { screenHeaderProps } from '@/app/nav';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
@@ -14,13 +17,49 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RoleRestricted } from '@/components/ui/RoleRestricted';
 import { SkeletonText } from '@/components/ui/Skeleton';
+import { Textarea } from '@/components/ui/Textarea';
 import { useCan } from '@/components/ui/Can';
+import { cn } from '@/lib/cn';
 import { count, dateTime, relativeTime } from '@/lib/format';
 import { toast } from '@/stores/toast';
 import { errorInfo } from '@/lib/apiError';
 
 /** Which decision a confirmation dialog is holding, and about what. */
 type Decision = { id: string; identityName: string; outcome: 'approved' | 'declined' };
+
+/**
+ * What an approver decided, and why, on a row that is no longer actionable.
+ *
+ * An inset panel rather than a second left-ruled blockquote: the requester's
+ * reason above IS a quotation, and this is the answer to it. Giving both the
+ * same treatment would read as two peer quotes rather than a question and its
+ * reply.
+ */
+function DecisionPanel({ request }: { request: ApprovalWithContext }) {
+  // Bound to a local so the narrowing survives into the JSX below; a narrowed
+  // property access does not, and a non-null assertion is banned.
+  const decided = request.decided;
+  if (!decided) return null;
+  return (
+    <div className="mt-3 max-w-2xl rounded-[var(--r-md)] border border-border bg-surface-2 px-3 py-2.5">
+      <p className="flex flex-wrap items-center gap-1.5 text-[length:var(--fs-small)] text-text">
+        <Gavel className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
+        <span className="font-medium">
+          {request.status === 'approved' ? 'Approved' : 'Declined'} by {request.deciderName}
+        </span>
+        <span className="text-text-tertiary">· {request.deciderRole} ·</span>
+        <span className="tnum text-text-tertiary" title={dateTime(decided.at)}>
+          {relativeTime(decided.at)}
+        </span>
+      </p>
+      {decided.note && (
+        <p className="mt-1.5 text-[length:var(--fs-small)] leading-[18px] text-text-secondary">
+          {decided.note}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function RequestRow({
   request,
@@ -31,18 +70,39 @@ function RequestRow({
   canDecide: boolean;
   onDecide: (decision: Decision) => void;
 }) {
+  const pending = request.status === 'pending';
   return (
-    <li className="border-b border-border px-5 py-4 last:border-b-0">
+    <li
+      className={cn(
+        'border-b border-border px-5 py-4 last:border-b-0',
+        // A decided row recedes so the pending rows above it keep the weight in
+        // the All view. This is the price of putting the record on the worklist
+        // rather than on a screen of its own, and it is paid here.
+        !pending && 'bg-surface-2/40',
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to={`/discover/${request.identityId}`}
-              className="font-mono text-[length:var(--fs-body)] text-text hover:underline"
+              className={cn(
+                'font-mono text-[length:var(--fs-body)] hover:underline',
+                pending ? 'text-text' : 'text-text-secondary',
+              )}
             >
               {request.identityName}
             </Link>
             <Badge tone="neutral">{NHI_TYPE_LABELS[request.identityType]}</Badge>
+            {/* Approved is `critical` and declined is `neutral` on purpose: the
+                tone tracks whether state actually CHANGED. An approval contained
+                an identity; a decline left it exactly as it was, which is what
+                the screen's own description promises. */}
+            {!pending && (
+              <Badge tone={request.status === 'approved' ? 'critical' : 'neutral'}>
+                {request.status === 'approved' ? 'Approved' : 'Declined'}
+              </Badge>
+            )}
           </div>
           {/* The requester and their ROLE together: an approver has to be able to
               see that the person asking holds propose-only rights, which is the
@@ -80,9 +140,10 @@ function RequestRow({
               Raised from session {request.fromSessionId}
             </Link>
           )}
+          <DecisionPanel request={request} />
         </div>
 
-        {canDecide && (
+        {canDecide && pending && (
           <div className="flex shrink-0 items-center gap-2">
             <Button
               size="sm"
@@ -127,16 +188,38 @@ function RequestRow({
  * member, and the empty state below for what it tells the reader.
  */
 export function ApprovalsScreen() {
-  const query = useApprovals('pending');
+  const query = useApprovals();
+  const filters = useApprovalFilters();
   const decide = useDecideApproval();
   const canDecide = useCan('session.quarantine');
   const canPropose = useCan('session.quarantineRecommend');
   const [confirm, setConfirm] = useState<Decision | null>(null);
+  const [note, setNote] = useState('');
+
+  // Memoised for the same reason QuarantineScreen memoises its own: `?? []`
+  // builds a fresh array on every render while the query is still loading, which
+  // would make the filter below recompute forever.
+  const all = useMemo(() => query.data ?? [], [query.data]);
+  const rows = useMemo(() => applyApprovalFilter(all, filters.filter), [all, filters.filter]);
+  // Counted over the whole permitted set, not `rows`: the badge answers "how
+  // much is waiting on me", which does not change because the reader switched
+  // to Declined. The old expression was `query.data.length`, correct only while
+  // the query fetched nothing but pending.
+  const pendingCount = all.filter((a) => a.status === 'pending').length;
+
+  /** Closing the dialog drops the draft, so a reason typed for one request can
+   *  never be submitted against another. */
+  const closeDialog = () => {
+    setConfirm(null);
+    setNote('');
+  };
 
   const runDecision = () => {
     if (!confirm) return;
+    const outcome: ApprovalOutcome =
+      confirm.outcome === 'approved' ? { decision: 'approved' } : { decision: 'declined', note };
     decide.mutate(
-      { id: confirm.id, decision: confirm.outcome },
+      { id: confirm.id, outcome },
       {
         onSuccess: () => {
           toast(
@@ -148,10 +231,10 @@ export function ApprovalsScreen() {
               description:
                 confirm.outcome === 'approved'
                   ? 'You are recorded as the approver. Synthetic — no upstream state changes.'
-                  : 'The identity was left as it was.',
+                  : 'The identity was left as it was. Your reason is on the request.',
             },
           );
-          setConfirm(null);
+          closeDialog();
         },
         onError: (err) => toast(errorInfo(err).message, { tone: 'critical' }),
       },
@@ -163,13 +246,13 @@ export function ApprovalsScreen() {
       <ScreenHeader
         {...screenHeaderProps('/act/approvals')}
         badge={
-          query.data && query.data.length > 0 ? (
+          pendingCount > 0 ? (
             <Badge tone="warning" className="tnum">
-              {count(query.data.length)} pending
+              {count(pendingCount)} pending
             </Badge>
           ) : undefined
         }
-        description="Quarantines an Analyst has proposed and an admin has yet to decide. Approving contains the identity and records you as the approver; declining leaves it exactly as it is. Either way the decision is written to the audit log."
+        description="Quarantines an Analyst has proposed and an admin has yet to decide. Approving contains the identity and records you as the approver; declining leaves it exactly as it is, with your reason. Either way the decision is written to the audit log."
       />
 
       {!canDecide && (
@@ -184,6 +267,15 @@ export function ApprovalsScreen() {
         </div>
       )}
 
+      {/* Above the boundary, not inside it: a filter you cannot clear because
+          the list it emptied has been replaced by an empty state is a trap.
+          Gated on there being anything at all to filter. */}
+      {all.length > 0 && (
+        <div className="mb-4">
+          <ApprovalsToolbar filters={filters} rows={all} />
+        </div>
+      )}
+
       <QueryBoundary
         query={query}
         loadingFallback={
@@ -191,26 +283,26 @@ export function ApprovalsScreen() {
             <SkeletonText lines={6} />
           </Card>
         }
-        isEmpty={(d) => d.length === 0}
+        // Both of these read the FILTERED rows, not the boundary's own data:
+        // what the screen shows is `rows`, and an empty state keyed on the raw
+        // query would never appear for a filter that matched nothing.
+        isEmpty={() => rows.length === 0}
         empty={
           <Card>
-            {/* Says outright what this queue does and does not cover. The audit
-                finding claimed "every state-changing action requires approval by
-                design"; the FRS does not, and an empty table that implied it
-                would misrepresent the product. Quarantine is the one action the
-                permission model splits — everything else executes directly for
-                a role that holds the capability. */}
             <EmptyState
               icon={<ClipboardCheck className="h-5 w-5" />}
-              headline="Nothing is waiting for a decision"
-              guidance="Quarantine is the one action Wave 1 splits between proposing and carrying out: an Analyst recommends it and an admin decides. Every other action — rotation, policy activation, release from quarantine, alert resolution — executes directly for a role that holds the capability, and is recorded in the audit log rather than queued here."
+              {...approvalsEmptyCopy({
+                view: filters.filter.view,
+                requesters: filters.filter.requesters.length,
+                search: filters.filter.search.trim(),
+              })}
             />
           </Card>
         }
       >
-        {(rows) => (
+        {() => (
           <Card className="overflow-hidden">
-            <ul aria-label="Pending approval requests">
+            <ul aria-label="Approval requests">
               {rows.map((request) => (
                 <RequestRow
                   key={request.id}
@@ -226,7 +318,7 @@ export function ApprovalsScreen() {
 
       <ConfirmDialog
         open={confirm !== null}
-        onOpenChange={(o) => !o && setConfirm(null)}
+        onOpenChange={(o) => !o && closeDialog()}
         title={
           confirm?.outcome === 'approved'
             ? `Quarantine ${confirm.identityName}?`
@@ -235,13 +327,33 @@ export function ApprovalsScreen() {
         description={
           confirm?.outcome === 'approved'
             ? 'The identity keeps existing but is blocked from acting until released, and you are recorded as the approver who produced that state. Synthetic — no upstream state changes.'
-            : 'The identity is left exactly as it is. The refusal and who made it are written to the audit log, so the analyst who raised it can see that it was answered.'
+            : // The old copy already promised the analyst "can see that it was
+              // answered" — true only via a full-text search of the audit log on
+              // another screen, and silent about why. Now that a decline keeps
+              // its reason and an Analyst can read their own decided rows here,
+              // the promise is one this screen keeps.
+              'The identity is left exactly as it is. Your reason, the refusal, and who made it are recorded on the request and written to the audit log, so the analyst who raised it can see what you decided and why.'
         }
         confirmLabel={confirm?.outcome === 'approved' ? 'Approve and quarantine' : 'Decline'}
         confirmVariant={confirm?.outcome === 'approved' ? 'danger' : 'primary'}
+        // Trimmed, so whitespace is not a reason. This makes the API's
+        // REASON_REQUIRED unreachable through the UI by design; that check stays
+        // as the enforcing boundary rather than as this dialog's error path.
+        confirmDisabled={confirm?.outcome === 'declined' && note.trim().length === 0}
         pending={decide.isPending}
         onConfirm={runDecision}
-      />
+      >
+        {confirm?.outcome === 'declined' && (
+          <Textarea
+            label="Why are you declining?"
+            hint="Kept on the request and shown to the Analyst who raised it."
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={500}
+            showCount
+          />
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

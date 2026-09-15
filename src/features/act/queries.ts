@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { decideApproval, listApprovals, listQuarantined, requestApproval } from '@/mocks/api';
-import type { ApprovalStatus } from '@/mocks/types';
+import type { ApprovalOutcome } from '@/mocks/api';
 
 export function useQuarantined() {
   return useQuery({ queryKey: ['quarantined'], queryFn: listQuarantined });
@@ -14,24 +14,32 @@ export function useQuarantined() {
 /* ------------------------------------------------------------------ approvals */
 
 /**
- * The propose-and-approve queue. One query key per status so the rail's pending
- * count and the screen's pending list share a single fetch rather than each
- * pulling the whole set and filtering it.
+ * The propose-and-approve queue — every request the actor may see, in ONE cache
+ * entry. Status is applied client-side (`applyApprovalFilter`) rather than by
+ * re-fetching per status.
+ *
+ * That is not just a saved request. The toolbar's requester counts are computed
+ * over the whole loaded set, pre-filter, so they hold still while you narrow
+ * (the rule QuarantineToolbar follows). Cache the set per status and "the whole
+ * set" quietly becomes "the whole set WITHIN the loaded status" — a chip reading
+ * `Kai Mensah · 4` would mean "4 within Declined" while looking like a fact
+ * about the queue.
+ *
+ * What the actor may see is decided inside `listApprovals` from the current
+ * actor, so there is no scope argument to key on.
  */
-export function useApprovals(status?: ApprovalStatus) {
-  return useQuery({
-    queryKey: ['approvals', status ?? 'all'],
-    queryFn: () => listApprovals(status),
-  });
+export function useApprovals() {
+  return useQuery({ queryKey: ['approvals'], queryFn: () => listApprovals() });
 }
 
 /**
- * How many requests are waiting. Reads the same query as the screen, so opening
- * Act > Approvals costs nothing extra and the count can never disagree with the
- * list it summarises.
+ * How many requests are waiting. Derived from the same single entry the screen
+ * reads, so the count cannot disagree with the list it summarises — previously
+ * that was a promise resting on two cache entries being invalidated in step, and
+ * it is now a property of there being one.
  */
 export function usePendingApprovalCount(): number {
-  return useApprovals('pending').data?.length ?? 0;
+  return useApprovals().data?.filter((a) => a.status === 'pending').length ?? 0;
 }
 
 /**
@@ -70,17 +78,12 @@ export function useRequestApproval() {
 export function useDecideApproval() {
   const qc = useQueryClient();
   return useMutation({
-    // STOPGAP: decideApproval now takes an ApprovalOutcome union that requires a
-    // non-blank `note` on a decline (src/mocks/api.ts) — a decline's record is
-    // the reason the approver wrote, and the union makes that a compile error
-    // rather than a runtime one. This hook's caller (the ConfirmDialog in
-    // ApprovalsScreen) has no note field yet, so a decline made through it is
-    // widened to the shape decideApproval accepts but with an empty note, which
-    // decideApproval will reject with REASON_REQUIRED. Approve is unaffected.
-    // Wiring an actual reason field through this mutation is follow-up work; this
-    // change is only wide enough to keep `tsc -b` green in the meantime.
-    mutationFn: ({ id, decision }: { id: string; decision: 'approved' | 'declined' }) =>
-      decideApproval(id, decision === 'approved' ? { decision } : { decision, note: '' }),
+    // The outcome travels as the union rather than as a bare decision plus an
+    // optional note: the caller has to have decided which shape it is building
+    // before it reaches here, so a decline with nothing written cannot be
+    // assembled at all.
+    mutationFn: ({ id, outcome }: { id: string; outcome: ApprovalOutcome }) =>
+      decideApproval(id, outcome),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['approvals'] });
       qc.invalidateQueries({ queryKey: ['quarantined'] });
