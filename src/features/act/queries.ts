@@ -70,8 +70,17 @@ export function useRequestApproval() {
 export function useDecideApproval() {
   const qc = useQueryClient();
   return useMutation({
+    // STOPGAP: decideApproval now takes an ApprovalOutcome union that requires a
+    // non-blank `note` on a decline (src/mocks/api.ts) — a decline's record is
+    // the reason the approver wrote, and the union makes that a compile error
+    // rather than a runtime one. This hook's caller (the ConfirmDialog in
+    // ApprovalsScreen) has no note field yet, so a decline made through it is
+    // widened to the shape decideApproval accepts but with an empty note, which
+    // decideApproval will reject with REASON_REQUIRED. Approve is unaffected.
+    // Wiring an actual reason field through this mutation is follow-up work; this
+    // change is only wide enough to keep `tsc -b` green in the meantime.
     mutationFn: ({ id, decision }: { id: string; decision: 'approved' | 'declined' }) =>
-      decideApproval(id, decision),
+      decideApproval(id, decision === 'approved' ? { decision } : { decision, note: '' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['approvals'] });
       qc.invalidateQueries({ queryKey: ['quarantined'] });

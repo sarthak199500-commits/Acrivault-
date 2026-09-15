@@ -1359,6 +1359,17 @@ export function requestApproval(input: {
 }
 
 /**
+ * What an approver decided, and the evidence the decision has to carry.
+ *
+ * A union rather than `(id, decision, note?)`: the asymmetry between the two
+ * outcomes is real — an approval's record is the containment it produces, a
+ * refusal's record is the sentence the approver writes — and a union makes the
+ * compiler hold that asymmetry instead of a reviewer. `note` cannot be passed on
+ * an approval and cannot be omitted on a decline.
+ */
+export type ApprovalOutcome = { decision: 'approved' } | { decision: 'declined'; note: string };
+
+/**
  * Approve or decline a pending request — the second pair of hands.
  *
  * Approving runs the SAME containment a direct quarantine does (containIdentity
@@ -1367,10 +1378,7 @@ export function requestApproval(input: {
  * Declining does not touch the identity at all — the request is answered and
  * nothing is enforced.
  */
-export function decideApproval(
-  id: string,
-  decision: 'approved' | 'declined',
-): Promise<ApprovalRequest> {
+export function decideApproval(id: string, outcome: ApprovalOutcome): Promise<ApprovalRequest> {
   return respond(() => {
     const ds = getDataset();
     const request = ds.approvals.find((a) => a.id === id);
@@ -1382,21 +1390,35 @@ export function decideApproval(
       );
     }
     assertActorCan('session.quarantine');
+
+    // Validated BEFORE anything is written. The union already stops a MISSING
+    // note at compile time; this catches the whitespace-only string a textarea
+    // can still produce, and it throws while the request is still untouched — a
+    // refusal nobody can read the reason for must not be half-recorded.
+    const note = outcome.decision === 'declined' ? outcome.note.trim() : undefined;
+    if (outcome.decision === 'declined' && !note) {
+      throw new MockApiError('A reason is required to decline a request.', 'REASON_REQUIRED');
+    }
+
     const identity = findAgent(request.identityId);
 
     // Approving an already-contained identity would overwrite its existing
     // QuarantineRecord and reassign responsibility for a containment this
     // approver did not produce. Declining stays available, and is how the stale
     // row gets cleared.
-    if (decision === 'approved' && identity.status === 'quarantined') {
+    if (outcome.decision === 'approved' && identity.status === 'quarantined') {
       throw new MockApiError(
         `${identity.name} is already quarantined. Decline this request to clear it.`,
         'ALREADY_QUARANTINED',
       );
     }
 
-    request.status = decision;
-    request.decided = { by: currentActor().id, at: new Date().toISOString() };
+    request.status = outcome.decision;
+    request.decided = {
+      by: currentActor().id,
+      at: new Date().toISOString(),
+      ...(note ? { note } : {}),
+    };
 
     // `AgentSession.quarantineRecommendedAt` marks an OPEN recommendation — the
     // replay screen renders it as "awaiting a decision in Act > Approvals".
@@ -1412,11 +1434,16 @@ export function decideApproval(
     // The authorization is written BEFORE the containment so the log, which is
     // newest-first, reads containment-above-decision — the order they happened.
     appendAudit(
-      decision === 'approved' ? 'approved quarantine request' : 'declined quarantine request',
+      outcome.decision === 'approved'
+        ? 'approved quarantine request'
+        : 'declined quarantine request',
       identity.name,
       [
         `Request ${request.id}, raised by ${ds.users.find((u) => u.id === request.requestedBy)?.email ?? 'a removed user'}.`,
-        decision === 'declined' ? 'The identity was left as it was.' : null,
+        outcome.decision === 'declined' ? 'The identity was left as it was.' : null,
+        // Same shape requestApproval uses for the requester's reason, so the two
+        // halves of one conversation read alike in the log.
+        note ? `Reason: ${note}` : null,
       ]
         .filter(Boolean)
         .join(' '),
@@ -1425,7 +1452,9 @@ export function decideApproval(
     // containIdentity), but the evidence they granted it on is the requester's
     // replay. The session already reached the queue on the request -- before
     // this it stopped there, and the containment cited nothing.
-    if (decision === 'approved') containIdentity(identity, request.reason, request.fromSessionId);
+    if (outcome.decision === 'approved') {
+      containIdentity(identity, request.reason, request.fromSessionId);
+    }
     return { ...request };
   });
 }

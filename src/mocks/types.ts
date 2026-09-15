@@ -495,12 +495,19 @@ export interface ApprovalRequest {
   fromSessionId?: string;
   status: ApprovalStatus;
   /**
-   * Who decided, and when. Nested so the two can never disagree, and absent
-   * exactly while `status` is 'pending' — the same status/record pairing
-   * `Identity.status === 'quarantined'` has with `Identity.quarantine`.
-   * Asserted in approvals.test.ts so the invariant is not left to convention.
+   * Who decided, when, and — for a refusal — why. Nested so the parts can never
+   * disagree, and absent exactly while `status` is 'pending' — the same
+   * status/record pairing `Identity.status === 'quarantined'` has with
+   * `Identity.quarantine`. Asserted in approvals.test.ts so the invariant is not
+   * left to convention.
+   *
+   * `note` is optional on the type because an APPROVAL carries none: the
+   * containment it produces is itself the record, and the requester's `reason`
+   * above already travels into it. A DECLINE must carry one, which is enforced
+   * at the API boundary by `ApprovalOutcome` rather than here — a required
+   * property would make the approve path lie about what it stores.
    */
-  decided?: { by: string; at: string };
+  decided?: { by: string; at: string; note?: string };
 }
 
 export const AUDIT_OBJECTS = ['identity', 'session', 'policy', 'user', 'cloud', 'tenant'] as const;
