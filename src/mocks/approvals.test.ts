@@ -394,3 +394,61 @@ describe('Act > Approvals — the decline reason', () => {
     expect(getDataset().identityById.get(identity.id)?.status).toBe('quarantined');
   });
 });
+
+describe('Act > Approvals — who can see a decided request', () => {
+  /**
+   * A seeded request raised by SOMEONE ELSE. The role switcher changes the
+   * actor's role but never their id, so a request raised inside a test is always
+   * `usr_1`'s — only the fixture can supply another person's. Throws rather than
+   * skips: a fixture that stopped producing one would silently turn this into a
+   * test of nothing.
+   */
+  function pickSomeoneElsesPending(): string {
+    const found = getDataset().approvals.find(
+      (a) => a.status === 'pending' && a.requestedBy !== CURRENT_USER_ID,
+    );
+    if (!found) throw new Error('fixture: expected a pending request raised by another user');
+    return found.id;
+  }
+
+  it('shows every decided request to a role that can decide', async () => {
+    const id = pickSomeoneElsesPending();
+    await decideApproval(id, { decision: 'declined', note: 'Owner is accountable; leaving it.' });
+
+    const rows = await listApprovals();
+    expect(rows.some((a) => a.id === id)).toBe(true);
+  });
+
+  it('hides another user’s decided request from an Analyst, but keeps their own', async () => {
+    const theirs = pickSomeoneElsesPending();
+    await decideApproval(theirs, { decision: 'declined', note: 'Owner is accountable.' });
+
+    const identity = pickCandidate();
+    useUiStore.getState().setRole('analyst');
+    const mine = await requestApproval({ identityId: identity.id });
+    useUiStore.getState().setRole('security-admin');
+    await decideApproval(mine.id, { decision: 'declined', note: 'Risk is inside appetite.' });
+
+    useUiStore.getState().setRole('analyst');
+    const rows = await listApprovals();
+    expect(rows.some((a) => a.id === mine.id)).toBe(true);
+    expect(rows.some((a) => a.id === theirs)).toBe(false);
+  });
+
+  it('still shows an Analyst every PENDING request, whoever raised it', async () => {
+    const theirs = pickSomeoneElsesPending();
+    useUiStore.getState().setRole('analyst');
+    const rows = await listApprovals('pending');
+    expect(rows.some((a) => a.id === theirs)).toBe(true);
+  });
+
+  it('resolves who decided, so the row can say more than a user id', async () => {
+    const id = pickSomeoneElsesPending();
+    await decideApproval(id, { decision: 'declined', note: 'Handover in flight.' });
+
+    const row = (await listApprovals('declined')).find((a) => a.id === id);
+    if (!row) throw new Error('expected the decided row back');
+    expect(row.deciderName).toBe(getDataset().users.find((u) => u.id === CURRENT_USER_ID)?.name);
+    expect(row.deciderRole).toBe('Security Admin');
+  });
+});

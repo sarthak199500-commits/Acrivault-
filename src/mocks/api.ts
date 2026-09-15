@@ -1257,12 +1257,27 @@ export interface ApprovalWithContext extends ApprovalRequest {
   requesterName: string;
   /** Display label, or an em dash where Entra sent a person but nobody has given them a role. */
   requesterRole: string;
+  /**
+   * Who decided, resolved the same way. Present exactly when `decided` is.
+   *
+   * Resolved on READ rather than stamped, matching `quarantineLabel` above — the
+   * closest analogue, and also a historical record. A decision is a fact about
+   * what happened, but the NAME attached to it is a fact about a person, and the
+   * useful one is their current name, not the one they had that afternoon.
+   */
+  deciderName?: string;
+  deciderRole?: string;
 }
 
 function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
   const ds = getDataset();
   const identity = ds.identityById.get(request.identityId);
   const user = ds.users.find((u) => u.id === request.requestedBy);
+  // Bound to a local const so the narrowing survives into the spread below;
+  // a narrowed property access does not (same reason quarantineLabel binds
+  // `record.by`), and a non-null assertion is banned.
+  const decided = request.decided;
+  const decider = decided ? ds.users.find((u) => u.id === decided.by) : undefined;
   return {
     ...request,
     identityName: identity?.name ?? request.identityId,
@@ -1276,18 +1291,34 @@ function withApprovalContext(request: ApprovalRequest): ApprovalWithContext {
     // quarantineLabel above.
     requesterName: !user || user.status === 'deleted' ? 'Removed user' : user.name,
     requesterRole: user && user.role ? ROLE_LABELS[user.role] : '—',
+    ...(decided
+      ? {
+          deciderName: !decider || decider.status === 'deleted' ? 'Removed user' : decider.name,
+          deciderRole: decider && decider.role ? ROLE_LABELS[decider.role] : '—',
+        }
+      : {}),
   };
 }
 
 /**
  * The queue, newest-first. `status` omitted returns every request, whatever its
  * state, so a decided one stays auditable rather than vanishing.
+ *
+ * PENDING rows are the shared queue: a proposer is promised sight of "what is
+ * waiting" (the RoleRestricted copy on the screen says so), and that is
+ * unchanged. A DECIDED row is a record, and below Security Admin you see only
+ * the ones you raised. The scope is applied HERE rather than in the component
+ * and takes no parameter, so there is no argument a screen could pass — or
+ * forget to pass — that would widen it.
  */
 export function listApprovals(status?: ApprovalStatus): Promise<ApprovalWithContext[]> {
   return respond(() => {
     if (isEmptyForced()) return [];
+    const actor = currentActor();
+    const seesEveryDecision = can(actor.role, 'session.quarantine');
     return getDataset()
       .approvals.filter((a) => !status || a.status === status)
+      .filter((a) => a.status === 'pending' || seesEveryDecision || a.requestedBy === actor.id)
       .map(withApprovalContext)
       .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
   });
