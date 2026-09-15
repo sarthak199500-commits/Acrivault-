@@ -4,7 +4,7 @@ import { AlertTriangle, ChevronRight, FlaskConical, Save, ShieldCheck, Sparkles 
 import { Link } from 'react-router-dom';
 import { usePolicy, useEvaluate, useSavePolicy, useTestPolicy, useActivatePolicy } from './queries';
 import { TokenCanvas } from './TokenCanvas';
-import type { PolicyToken } from '@/mocks/types';
+import { CLOUD_LABELS, type Cloud, type PolicyToken } from '@/mocks/types';
 import {
   defaultTokens,
   generatedCode,
@@ -118,7 +118,12 @@ function TestResult({ result }: { result: PolicyEvalResult }) {
                       <Link
                         to={`/discover/${s.id}`}
                         className="group grid grid-cols-[var(--cols)] items-center bg-surface-2 px-2.5 py-2 transition-colors hover:bg-surface-hover"
-                        aria-label={`${s.name}, risk ${s.riskScore}, owner ${s.owner ?? 'unassigned'}, last seen ${relativeTime(s.lastSeen)}. Open identity.`}
+                        // The clouds belong in here because the cell that shows them
+                        // is brand logos only, and `ProviderMark` is aria-hidden. Without
+                        // this the Source column is visual-only — the one column a
+                        // reviewer cannot get any other way, on a screen whose whole job
+                        // is judging what a rule would hit.
+                        aria-label={`${s.name}, risk ${s.riskScore}, source ${cloudPhrase(s.clouds)}, owner ${s.owner ?? 'unassigned'}, last seen ${relativeTime(s.lastSeen)}. Open identity.`}
                       >
                         <span className="flex min-w-0 items-center gap-2.5">
                           <NhiTypeIcon type={s.type} className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
@@ -169,6 +174,16 @@ function TestResult({ result }: { result: PolicyEvalResult }) {
       </CardBody>
     </Card>
   );
+}
+
+/**
+ * "AWS", "AWS and Azure", "AWS, Azure and Google Cloud" — read aloud, so a plain
+ * join on " and " ("AWS and Azure and Google Cloud") is the wrong shape.
+ */
+function cloudPhrase(clouds: Cloud[]): string {
+  const names = clouds.map((c) => CLOUD_LABELS[c]);
+  if (names.length <= 1) return names[0] ?? 'no source';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 export function PolicyBuilderScreen() {
