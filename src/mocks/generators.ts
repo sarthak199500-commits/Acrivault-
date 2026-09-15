@@ -36,7 +36,7 @@ import {
   type User,
 } from './types';
 import { riskBand } from '@/lib/risk';
-import { can } from '@/lib/permissions';
+import { can, type Role } from '@/lib/permissions';
 import { generatedCode, matchesPolicy, plainEnglish } from './policy';
 
 /* ----------------------------------------------------------------- seeded RNG */
