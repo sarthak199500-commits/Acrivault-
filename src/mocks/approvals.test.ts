@@ -1,9 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getDataset } from './dataset';
 import { decideApproval, listApprovals, listAudit, quarantineAgent, requestApproval } from './api';
 import type { Identity } from './types';
 import { can } from '@/lib/permissions';
-import { CURRENT_USER_ID } from '@/stores/auth';
+import { CURRENT_USER_ID, useAuthStore } from '@/stores/auth';
 import { useUiStore } from '@/stores/ui';
 
 beforeAll(() => useUiStore.getState().setLatency(0));
@@ -11,7 +11,23 @@ beforeAll(() => useUiStore.getState().setLatency(0));
 // Every test that decides a request needs a role holding `session.quarantine`;
 // every test that raises one needs `session.quarantineRecommend`. Security Admin
 // holds both, so it is the default here and the exceptions are explicit.
-beforeEach(() => useUiStore.getState().setRole('security-admin'));
+//
+// `useAuthStore` is reset here too, not just `useUiStore`: it is the SAME kind
+// of module-level state shared across every test in this file, and the "who can
+// see a decided request" describe below is the first to call `signIn` on it.
+// Resetting before every test means one that forgets to sign back out cannot
+// leave the NEXT test running as the wrong person -- belt to the `afterEach`
+// below's suspenders, not a replacement for it, since a test that throws before
+// its own cleanup still needs one of the two to run.
+beforeEach(() => {
+  useUiStore.getState().setRole('security-admin');
+  useAuthStore.getState().signIn(CURRENT_USER_ID);
+});
+
+// Cleans up immediately after a test that signed in as someone else, rather
+// than waiting for the next test's `beforeEach` to paper over it -- the same
+// reasoning, applied on the other side of the boundary.
+afterEach(() => useAuthStore.getState().signIn(CURRENT_USER_ID));
 
 /**
  * An identity a quarantine could actually be proposed for: not already
@@ -397,22 +413,61 @@ describe('Act > Approvals — the decline reason', () => {
 
 describe('Act > Approvals — who can see a decided request', () => {
   /**
-   * A seeded request raised by SOMEONE ELSE. The role switcher changes the
-   * actor's role but never their id, so a request raised inside a test is always
-   * `usr_1`'s — only the fixture can supply another person's. Throws rather than
-   * skips: a fixture that stopped producing one would silently turn this into a
-   * test of nothing.
+   * Raises a pending request while signed in as someone OTHER than
+   * CURRENT_USER_ID, so "someone else's row" is data this test creates rather
+   * than a scarce seeded one several tests would have to compete for.
+   *
+   * An earlier version of this describe mined `generateApprovals`'s 3 seeded
+   * rows for a `requestedBy !== CURRENT_USER_ID` match instead. That ran out:
+   * the seed's proposer rotation happens to cycle one of its 3 slots onto
+   * CURRENT_USER_ID itself, leaving only 2 candidates, and an earlier describe
+   * in this file already claims one of those before this one runs — one
+   * fixture row cannot cover the 3 distinct "someone else, still pending" rows
+   * these four tests collectively need. `useAuthStore.getState().signIn`
+   * sidesteps the scarcity entirely: unlike the role switcher (which only
+   * changes `currentActor().role`), it genuinely changes `currentActor().id`,
+   * so `requestApproval` records a REAL other person as `requestedBy`.
+   *
+   * The other user is read off the dataset with the same filter
+   * `generateApprovals` uses for its own proposers — active, holds
+   * `session.quarantineRecommend` — plus excluding CURRENT_USER_ID, rather than
+   * a hardcoded id: hardcoding one is exactly the coupling to the seed's exact
+   * shape that ran the fixture-mining version dry.
    */
-  function pickSomeoneElsesPending(): string {
-    const found = getDataset().approvals.find(
-      (a) => a.status === 'pending' && a.requestedBy !== CURRENT_USER_ID,
+  async function raiseSomeoneElsesRequest(): Promise<string> {
+    const other = getDataset().users.find(
+      (u) =>
+        u.id !== CURRENT_USER_ID &&
+        u.status === 'active' &&
+        u.role !== null &&
+        can(u.role, 'session.quarantineRecommend'),
     );
-    if (!found) throw new Error('fixture: expected a pending request raised by another user');
-    return found.id;
+    if (!other || !other.role) {
+      throw new Error(
+        'fixture: expected an active user other than CURRENT_USER_ID holding session.quarantineRecommend',
+      );
+    }
+    // Bound to a local const for the same reason withApprovalContext binds
+    // `decided` in api.ts: narrowing `other.role` doesn't survive being read
+    // again after the `signIn` call below.
+    const role = other.role;
+    const identity = pickCandidate();
+    const priorRole = useUiStore.getState().role;
+    useAuthStore.getState().signIn(other.id);
+    useUiStore.getState().setRole(role);
+    try {
+      const created = await requestApproval({ identityId: identity.id });
+      return created.id;
+    } finally {
+      // Runs even if requestApproval throws — a half-raised request must not
+      // leave the file signed in as someone else.
+      useAuthStore.getState().signIn(CURRENT_USER_ID);
+      useUiStore.getState().setRole(priorRole);
+    }
   }
 
   it('shows every decided request to a role that can decide', async () => {
-    const id = pickSomeoneElsesPending();
+    const id = await raiseSomeoneElsesRequest();
     await decideApproval(id, { decision: 'declined', note: 'Owner is accountable; leaving it.' });
 
     const rows = await listApprovals();
@@ -420,7 +475,7 @@ describe('Act > Approvals — who can see a decided request', () => {
   });
 
   it('hides another user’s decided request from an Analyst, but keeps their own', async () => {
-    const theirs = pickSomeoneElsesPending();
+    const theirs = await raiseSomeoneElsesRequest();
     await decideApproval(theirs, { decision: 'declined', note: 'Owner is accountable.' });
 
     const identity = pickCandidate();
@@ -436,19 +491,27 @@ describe('Act > Approvals — who can see a decided request', () => {
   });
 
   it('still shows an Analyst every PENDING request, whoever raised it', async () => {
-    const theirs = pickSomeoneElsesPending();
+    const theirs = await raiseSomeoneElsesRequest();
     useUiStore.getState().setRole('analyst');
     const rows = await listApprovals('pending');
     expect(rows.some((a) => a.id === theirs)).toBe(true);
   });
 
   it('resolves who decided, so the row can say more than a user id', async () => {
-    const id = pickSomeoneElsesPending();
+    const id = await raiseSomeoneElsesRequest();
     await decideApproval(id, { decision: 'declined', note: 'Handover in flight.' });
 
     const row = (await listApprovals('declined')).find((a) => a.id === id);
     if (!row) throw new Error('expected the decided row back');
     expect(row.deciderName).toBe(getDataset().users.find((u) => u.id === CURRENT_USER_ID)?.name);
-    expect(row.deciderRole).toBe('Security Admin');
+    // Tenant Admin, not Security Admin: `deciderRole` resolves from the
+    // DECIDER'S STORED profile role (CURRENT_USER_ID / Alex Kim is seeded as
+    // 'tenant-admin' in generators.ts), the same way `requesterRole` already
+    // does — never from whatever the dev role switcher is previewing at the
+    // moment the decision is made. The switcher changes what `currentActor()`
+    // is ALLOWED to do; it was never wired to change what a person's profile
+    // says about them, and `withApprovalContext` was never asked to resolve it
+    // that way either.
+    expect(row.deciderRole).toBe('Tenant Admin');
   });
 });
