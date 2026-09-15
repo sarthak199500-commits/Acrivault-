@@ -2,11 +2,11 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SessionReviewState, SessionStep } from '@/mocks/types';
 import { comparerFor, SESSION_SORTS, type SessionSort } from './sessionRanking';
+import { MIN_SEARCH_CHARS } from '@/lib/filters';
 
 const REVIEW_STATES: SessionReviewState[] = ['open', 'reviewed'];
 
-/** Spec 10.2's validation rule: don't run a search until it can narrow anything. */
-export const MIN_SEARCH_CHARS = 2;
+export { MIN_SEARCH_CHARS };
 
 export interface SessionFilter {
   review: SessionReviewState | null;
